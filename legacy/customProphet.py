@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
@@ -189,17 +190,18 @@ class CustomProphet:
 
         return minus_log_posterior, gradient
         
-    def fit(self, df: pd.DataFrame, analytic: bool=False, use_combined: bool=False, optimizer: str='L-BFGS-B') -> Tuple[float, float, np.array, np.array]:
+    def fit(self, df: pd.DataFrame, analytic: bool=False, use_combined: bool=False, optimizer: str='L-BFGS-B',
+            initial_params: dict=None, fixed_sigma_obs: float=None) -> Tuple[float, float, np.array, np.array]:
         if analytic and use_combined:
             raise ValueError("Both 'analytic' and 'use_combined' cannot be True at the same time.")
 
         self.y = df['y'].values
-        
+
         if df['ds'].dtype != 'datetime64[ns]':
             self.ds = pd.to_datetime(df['ds'])
         else:
             self.ds = df['ds']
-        
+
         self.t_scaled = np.array((self.ds - self.ds.min()) / (self.ds.max() - self.ds.min()))
         self.T = df.shape[0]
 
@@ -216,6 +218,10 @@ class CustomProphet:
             'sigma_obs': SIGMA_OBS_INIT,
             'beta': np.zeros((2 * n_yearly,))
         }
+        if initial_params is not None:
+            initial_params_dict.update(initial_params)
+        if fixed_sigma_obs is not None:
+            initial_params_dict['sigma_obs'] = fixed_sigma_obs
 
         loss_over_iterations = []
 
@@ -225,8 +231,11 @@ class CustomProphet:
 
         initial_params_array = from_dict_to_array(initial_params_dict)
 
-        # sigma_obs must stay positive, mirroring Stan's `real<lower=0> sigma_obs`
-        bounds = [(None, None)] * SIGMA_OBS_IDX + [(1e-6, None)] + \
+        # sigma_obs must stay positive, mirroring Stan's `real<lower=0> sigma_obs`.
+        # fixed_sigma_obs collapses that bound to a single point, pinning sigma_obs
+        # for parity with fit_cpp()'s compiled optimizer, which never estimates it.
+        sigma_obs_bounds = (fixed_sigma_obs, fixed_sigma_obs) if fixed_sigma_obs is not None else (1e-6, None)
+        bounds = [(None, None)] * SIGMA_OBS_IDX + [sigma_obs_bounds] + \
                  [(None, None)] * (len(initial_params_array) - SIGMA_OBS_IDX - 1)
 
         if use_combined:
@@ -257,36 +266,44 @@ class CustomProphet:
         self.sigma_obs = opt_params.x[SIGMA_OBS_IDX]
         self.loss_over_iterations = loss_over_iterations
     
-    def fit_cpp(self, df: pd.DataFrame) -> Tuple[float, float, np.array, np.array]:
+    def fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None) -> Tuple[float, float, np.array, np.array]:
         self.y = df['y'].values
-        
+
         if df['ds'].dtype != 'datetime64[ns]':
             self.ds = pd.to_datetime(df['ds'])
         else:
             self.ds = df['ds']
-        
+
         self.t_scaled = np.array((self.ds - self.ds.min()) / (self.ds.max() - self.ds.min()))
         self.T = df.shape[0]
 
         self.scale_period = (self.ds.max() - self.ds.min()).days
         self._normalize_y()
         self._generate_change_points()
-        
+
         # Initialize parameters
-        # 0 + init_r * N(0, 1) - STAN initialization
+        # 0 + init_r * N(0, 1) - STAN initialization, unless overridden by
+        # initial_params (e.g. to match fit()'s starting point for a parity test)
         init_r = 2.0
-        k_init = init_r * self.rng.normal()
-        m_init = init_r * self.rng.normal()
-        delta_init = self.rng.normal(loc=0.0, scale=init_r, size=(25,))
-        beta_init = self.rng.normal(loc=0.0, scale=init_r, size=(2 * n_yearly,))
+        defaults = {
+            'k': init_r * self.rng.normal(),
+            'm': init_r * self.rng.normal(),
+            'delta': self.rng.normal(loc=0.0, scale=init_r, size=(25,)),
+            'beta': self.rng.normal(loc=0.0, scale=init_r, size=(2 * n_yearly,)),
+        }
+        if initial_params is not None:
+            defaults.update(initial_params)
 
         # The compiled optimizer's own extract_params expects (k, m, delta, beta)
         # with no sigma_obs slot -- it does not estimate sigma_obs, which stays
         # fixed at self.sigma_obs and is passed to it separately below.
-        params = np.concatenate(([k_init], [m_init], delta_init, beta_init))
+        params = np.concatenate(([defaults['k']], [defaults['m']], defaults['delta'], defaults['beta']))
 
-        # Load the shared library
-        lib = ctypes.CDLL('./liboptimization.so')
+        # Load the shared library. Defaults to the compiled library sitting next
+        # to this module; lib_path lets tests point at one built into a temp dir.
+        if lib_path is None:
+            lib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'liboptimization.so')
+        lib = ctypes.CDLL(lib_path)
 
         # Define argument and return types for the optimize function
         lib.optimize.argtypes = [np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),
