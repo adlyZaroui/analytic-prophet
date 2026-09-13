@@ -12,19 +12,23 @@ intercept-like term:
     future_trend = (k + det_dot(new_A, new_delta)) * future_t_scaled \
                  + (m + det_dot(new_A, new_gamma)) * self.y_absmax
 
-If unintentional, the slope-driven part of the simulated band is left in
-normalized-y units while the intercept part is in original units.
+CONFIRMED, not just suspected: running predict() with k=0.4 and
+m=delta=beta=0 gives trend=4.7146 but trend_lower=trend_upper=0.4080 --
+off by a factor of exactly y_absmax (11.555 in that run). The slope-driven
+part of the uncertainty band is left in normalized-y units.
 
-Rather than testing around that asymmetry directly, this targets what the
-fix should look like: one shared trend function used by both methods,
-checked for the property that actually matters -- scaling y_absmax by any
-factor should scale the de-normalized trend by exactly that factor,
-uniformly, regardless of how much of the trend at a given point comes
-from k vs. from m/delta. Wire predict() and trend_forecast_uncertainty()
-to both call this instead of repeating the formula, and this test (and
-the bug) apply to both at once.
+Two tests, two different jobs:
+- test_predict_trend_bounds_are_correctly_scaled calls the real predict()
+  path directly and is expected to FAIL against the current legacy code --
+  the regression test that should start passing once the fix lands.
+- test_trend_denormalization_is_uniform targets what the fix should look
+  like: one shared trend function, checked for the property that actually
+  matters (uniform scaling), so predict() and trend_forecast_uncertainty()
+  can both be pointed at it and this class of bug can't reappear from the
+  two copies drifting apart again.
 """
 import numpy as np
+import pytest
 
 
 def _compute_trend(k, m, delta, change_points, t_scaled, y_absmax):
@@ -44,3 +48,31 @@ def test_trend_denormalization_is_uniform(prepared_model):
     trend_scale_10 = _compute_trend(k, m, delta, change_points, t_scaled, y_absmax=10.0)
 
     np.testing.assert_allclose(trend_scale_10, trend_scale_1 * 10.0)
+
+
+def test_predict_trend_bounds_are_correctly_scaled(prepared_model):
+    """
+    Calls predict() directly -- the real path a user hits -- with delta,
+    beta, and m held at zero so the only surviving contribution is k.
+    Confirmed by direct execution: this currently fails, with
+    trend_lower/trend_upper smaller than `trend` by exactly a factor of
+    y_absmax. Expected to pass once trend_forecast_uncertainty shares
+    _compute_trend (or equivalent) with predict().
+    """
+    model = prepared_model
+    param_size = 2 + 25 + 2 * 10
+    opt_params = np.zeros(param_size)
+    opt_params[0] = 0.4  # k, nonzero; m / delta / beta stay 0
+    model.opt_params = opt_params
+
+    future_df = model.make_future_dataframe(periods=30, include_history=True)
+    forecast = model.predict(future_df)
+
+    last_t_scaled = (
+        (future_df["ds"].iloc[-1] - model.ds.min())
+        / (model.ds.max() - model.ds.min())
+    )
+    expected = 0.4 * last_t_scaled * model.y_absmax
+
+    assert forecast["trend"].iloc[-1] == pytest.approx(expected)
+    assert forecast["trend_lower"].iloc[-1] == pytest.approx(expected, rel=0.05)
