@@ -37,6 +37,15 @@ def from_dict_to_array(params):
     beta = np.zeros((2 * 10,))
     return np.concatenate((k, m, delta, beta))
 
+def compute_trend(k, m, delta, change_points, t_scaled, y_absmax):
+    """Piecewise-linear trend in normalized-y space, de-normalized once at
+    the end. Shared by predict() and trend_forecast_uncertainty() so the
+    de-normalization can't drift apart between the two again."""
+    A = (t_scaled[:, None] > change_points) * 1
+    gamma = -change_points * delta
+    trend_normalized = (k + det_dot(A, delta)) * t_scaled + (m + det_dot(A, gamma))
+    return trend_normalized * y_absmax
+
 class CustomProphet:
     
     def __init__(self):
@@ -324,9 +333,8 @@ class CustomProphet:
             new_changepoints = future_t_scaled[sample <= probability_changepoint]
             
             new_delta = np.r_[delta, self.rng.laplace(0, lambda_mle, new_changepoints.shape[0])]
-            new_A = (future_t_scaled[:, None] > np.r_[self.change_points, new_changepoints]) * 1
-            new_gamma = -np.r_[self.change_points, new_changepoints] * new_delta
-            future_trend = (k + det_dot(new_A, new_delta)) * future_t_scaled + (m + det_dot(new_A, new_gamma)) * self.y_absmax
+            new_change_points = np.r_[self.change_points, new_changepoints]
+            future_trend = compute_trend(k, m, new_delta, new_change_points, future_t_scaled, self.y_absmax)
             future_trend = future_trend[:horizon]  # Ensure only the required horizon is included
             
             forecast.append(future_trend)
@@ -344,22 +352,19 @@ class CustomProphet:
         future_df['t_scaled'] = (pd.to_datetime(future_df['ds']) - self.ds.min()) / (self.ds.max() - self.ds.min())
         
         # Trend component calculation
-        A = (future_df['t_scaled'].values[:, None] > np.array(self.change_points)) * 1
-        gamma = -self.change_points * delta
-        trend = (k + A.dot(delta)) * future_df['t_scaled'].values + (m + A.dot(gamma))
-        
+        trend = compute_trend(k, m, delta, self.change_points, future_df['t_scaled'].values, self.y_absmax)
+
         # Seasonality component calculation
         period = 365.25 / self.scale_period
         x = fourier_components(future_df['t_scaled'].values, period, n_yearly)
         seasonality = x.dot(beta)
-        
+
         # Combine trend and seasonality for the forecast
-        yhat = trend + seasonality
-        yhat = yhat * self.y_absmax  # De-normalize the forecasted values
-        
+        yhat = trend + seasonality * self.y_absmax  # De-normalize the forecasted values
+
         # Create forecast DataFrame
         forecast = future_df[['ds']].copy()
-        forecast['trend'] = trend * self.y_absmax
+        forecast['trend'] = trend
         
         # Add uncertainty intervals for trend
         _, quantiles = self.trend_forecast_uncertainty(horizon=len(future_df))
