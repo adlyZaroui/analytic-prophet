@@ -50,7 +50,7 @@ def test_trend_denormalization_is_uniform(prepared_model):
     np.testing.assert_allclose(trend_scale_10, trend_scale_1 * 10.0)
 
 
-def test_predict_trend_bounds_are_correctly_scaled(prepared_model):
+def test_predict_trend_bounds_are_correctly_scaled(prepared_model, param_size):
     """
     Calls predict() directly -- the real path a user hits -- with delta,
     beta, and m held at zero so the only surviving contribution is k.
@@ -60,7 +60,6 @@ def test_predict_trend_bounds_are_correctly_scaled(prepared_model):
     _compute_trend (or equivalent) with predict().
     """
     model = prepared_model
-    param_size = 2 + 25 + 2 * 10
     opt_params = np.zeros(param_size)
     opt_params[0] = 0.4  # k, nonzero; m / delta / beta stay 0
     model.opt_params = opt_params

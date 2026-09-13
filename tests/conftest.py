@@ -15,10 +15,10 @@ import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "legacy"))
-from customProphet import CustomProphet, N_CHANGE_POINTS, n_yearly  # noqa: E402
+from customProphet import CustomProphet, N_CHANGE_POINTS, n_yearly, SIGMA_OBS_IDX  # noqa: E402
 
 DATA_PATH = Path(__file__).parent / "data" / "peyton_manning.csv"
-PARAM_SIZE = 2 + N_CHANGE_POINTS + 2 * n_yearly  # k, m, delta, beta -> 47
+PARAM_SIZE = 2 + N_CHANGE_POINTS + 1 + 2 * n_yearly  # k, m, delta, sigma_obs, beta -> 48
 
 
 @pytest.fixture
@@ -53,6 +53,14 @@ def param_size():
 def random_params(param_size):
     """A point in parameter space away from delta=0, so the plain
     numerical-gradient check lands in a smooth region. The kink itself
-    (delta=0 exactly) gets its own dedicated test."""
+    (delta=0 exactly) gets its own dedicated test.
+
+    sigma_obs is forced positive after the draw: it's a standard deviation
+    (appears as log(sigma_obs) and 1/sigma_obs**3 in the posterior/gradient),
+    so a random draw landing at/below zero would make the objective undefined
+    rather than exercising a legitimate point in parameter space.
+    """
     rng = np.random.default_rng(seed=0)
-    return rng.normal(scale=0.5, size=param_size)
+    params = rng.normal(scale=0.5, size=param_size)
+    params[SIGMA_OBS_IDX] = abs(params[SIGMA_OBS_IDX]) + 0.1
+    return params

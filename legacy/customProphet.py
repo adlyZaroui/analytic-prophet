@@ -8,11 +8,20 @@ import ctypes # for the `fit_cpp` method
 N_CHANGE_POINTS = 25 # number of change points - hyperparameter
 TAU = 0.05 # changepoint prior scale - hyperparameter
 SIGMA = 10 # seasonality prior scale - hyperparameter
-SIGMA_OBS_STD = 0.05 # observation noise - hyperparameter
+SIGMA_OBS_PRIOR_SCALE = 0.5 # prior scale on sigma_obs, matches Prophet's `sigma_obs ~ normal(0, 0.5)`
+SIGMA_OBS_INIT = 1.0 # MAP init value for sigma_obs, matches Prophet's stan_init
 
 n_yearly = 10  # Number of Fourier terms for yearly seasonality
 sigma_k = 5  # Prior scale for rate changes
 sigma_m = 5  # Prior scale for rate offsets
+
+# Parameter vector layout shared by the analytic posterior/gradient and by
+# predict()/trend_forecast_uncertainty(): [k, m, delta (S), sigma_obs, beta (2*n_yearly)]
+K_IDX = 0
+M_IDX = 1
+DELTA_SLICE = slice(2, 2 + N_CHANGE_POINTS)
+SIGMA_OBS_IDX = DELTA_SLICE.stop
+BETA_SLICE = slice(SIGMA_OBS_IDX + 1, SIGMA_OBS_IDX + 1 + 2 * n_yearly)
 
 def det_dot(a, b):
     return (a * b[None, :]).sum(axis=-1)
@@ -24,18 +33,20 @@ def fourier_components(t_days, period, n):
     return x
 
 def extract_params(params):
-    k = params[0]
-    m = params[1]
-    delta = params[2:27]
-    beta = params[27:47]
-    return k, m, delta, beta
+    k = params[K_IDX]
+    m = params[M_IDX]
+    delta = params[DELTA_SLICE]
+    sigma_obs = params[SIGMA_OBS_IDX]
+    beta = params[BETA_SLICE]
+    return k, m, delta, sigma_obs, beta
 
 def from_dict_to_array(params):
     k = np.array([params['k']])
     m = np.array([params['m']])
     delta = params['delta']
+    sigma_obs = np.array([params['sigma_obs']])
     beta = np.zeros((2 * 10,))
-    return np.concatenate((k, m, delta, beta))
+    return np.concatenate((k, m, delta, sigma_obs, beta))
 
 def compute_trend(k, m, delta, change_points, t_scaled, y_absmax):
     """Piecewise-linear trend in normalized-y space, de-normalized once at
@@ -64,7 +75,7 @@ class CustomProphet:
         
         self.tau = TAU # sparse prior on rate adjustments delta
         self.sigma = SIGMA # prior on fourier coefficients beta
-        self.sigma_obs = self.rng.normal(0, SIGMA_OBS_STD) #halfcauchy.rvs(loc=0, scale=SIGMA_OBS_STD, size=1)[0]
+        self.sigma_obs = SIGMA_OBS_INIT # estimated by fit(); fit_cpp() keeps this fixed
 
         self.m = None
         self.k = None
@@ -93,81 +104,89 @@ class CustomProphet:
 
         
     def _minus_log_posterior(self, params: np.array) -> float:
-        k, m, delta, beta = extract_params(params)
-        
+        k, m, delta, sigma_obs, beta = extract_params(params)
+
         # trend component
         A = (self.t_scaled[:, None] > self.change_points) * 1
         gamma = -self.change_points * delta
         g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
-        
+
         # seasonality component
         period = 365.25 / self.scale_period
         x = fourier_components(self.t_scaled, period, 10)
         s = np.dot(x, beta)
-        
+
         y_pred = g + s
         y_true = self.normalized_y
-        
-        minus_log_posterior = np.sum((y_true - y_pred)**2) / (2*self.sigma_obs**2) + \
+
+        # T*log(sigma_obs) is the Gaussian normalizing constant -- it can't be
+        # dropped now that sigma_obs is itself a parameter being optimized.
+        minus_log_posterior = self.T * np.log(sigma_obs) + \
+                      np.sum((y_true - y_pred)**2) / (2*sigma_obs**2) + \
+                      sigma_obs**2 / (2*SIGMA_OBS_PRIOR_SCALE**2) + \
                       k**2 / (2*self.sigma_k**2) + \
                       m**2 / (2*self.sigma_m**2) + \
                       np.sum(beta**2) / (2*self.sigma**2) + \
                       np.sum(np.abs(delta)) / self.tau
-                      
+
         return minus_log_posterior
-    
+
     def _gradient(self, params: np.array) -> np.array:
-        k, m, delta, beta = extract_params(params)
-        
+        k, m, delta, sigma_obs, beta = extract_params(params)
+
         # trend component
         A = (self.t_scaled[:, None] > self.change_points) * 1
         gamma = -self.change_points * delta
         g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
-        
+
         # seasonality component
         period = 365.25 / self.scale_period
         x = fourier_components(self.t_scaled, period, 10)
         s = np.dot(x, beta)
-    
+
         r = self.normalized_y - g - s
 
-        dk = np.array([-np.sum(r * self.t_scaled) / self.sigma_obs**2 + k / self.sigma_k**2])
-        dm = np.array([-np.sum(r) / self.sigma_obs**2 + m / self.sigma_m**2])
-        ddelta = -np.sum(r[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / self.sigma_obs**2 + np.sign(delta) / self.tau
-        dbeta = -np.dot(r, x) / self.sigma_obs**2 + beta / self.sigma**2
-    
-        gradient = np.concatenate([dk, dm, ddelta, dbeta])
-    
+        dk = np.array([-np.sum(r * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
+        dm = np.array([-np.sum(r) / sigma_obs**2 + m / self.sigma_m**2])
+        ddelta = -np.sum(r[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2 + np.sign(delta) / self.tau
+        dsigma_obs = np.array([self.T / sigma_obs - np.sum(r**2) / sigma_obs**3 + sigma_obs / SIGMA_OBS_PRIOR_SCALE**2])
+        dbeta = -np.dot(r, x) / sigma_obs**2 + beta / self.sigma**2
+
+        gradient = np.concatenate([dk, dm, ddelta, dsigma_obs, dbeta])
+
         return gradient
-    
+
     def _minus_log_posteriorAndGradient(self, params: np.array) -> Tuple[float, np.array]:
-        k, m, delta, beta = extract_params(params)
-        
+        k, m, delta, sigma_obs, beta = extract_params(params)
+
         # trend component
         A = (self.t_scaled[:, None] > self.change_points) * 1
         gamma = -self.change_points * delta
         g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
-        
+
         # seasonality component
         period = 365.25 / self.scale_period
         x = fourier_components(self.t_scaled, period, 10)
         s = np.dot(x, beta)
-        
+
         r = self.normalized_y - g - s
-        
-        minus_log_posterior = np.sum(r**2) / (2*self.sigma_obs**2) + \
+
+        minus_log_posterior = self.T * np.log(sigma_obs) + \
+                      np.sum(r**2) / (2*sigma_obs**2) + \
+                      sigma_obs**2 / (2*SIGMA_OBS_PRIOR_SCALE**2) + \
                       k**2 / (2*self.sigma_k**2) + \
                       m**2 / (2*self.sigma_m**2) + \
                       np.sum(beta**2) / (2*self.sigma**2) + \
                       np.sum(np.abs(delta)) / self.tau
 
-        dk = np.array([-np.sum(r * self.t_scaled) / self.sigma_obs**2 + k / self.sigma_k**2])
-        dm = np.array([-np.sum(r) / self.sigma_obs**2 + m / self.sigma_m**2])
-        ddelta = -np.sum(r[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / self.sigma_obs**2 + np.sign(delta) / self.tau
-        dbeta = -np.dot(r, x) / self.sigma_obs**2 + beta / self.sigma**2
-        
-        gradient = np.concatenate([dk, dm, ddelta, dbeta])
-        
+        dk = np.array([-np.sum(r * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
+        dm = np.array([-np.sum(r) / sigma_obs**2 + m / self.sigma_m**2])
+        ddelta = -np.sum(r[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2 + np.sign(delta) / self.tau
+        dsigma_obs = np.array([self.T / sigma_obs - np.sum(r**2) / sigma_obs**3 + sigma_obs / SIGMA_OBS_PRIOR_SCALE**2])
+        dbeta = -np.dot(r, x) / sigma_obs**2 + beta / self.sigma**2
+
+        gradient = np.concatenate([dk, dm, ddelta, dsigma_obs, dbeta])
+
         return minus_log_posterior, gradient
         
     def fit(self, df: pd.DataFrame, analytic: bool=False, use_combined: bool=False, optimizer: str='L-BFGS-B') -> Tuple[float, float, np.array, np.array]:
@@ -194,21 +213,27 @@ class CustomProphet:
             'k': 0,
             'm': 0,
             'delta': np.zeros((25,)),
+            'sigma_obs': SIGMA_OBS_INIT,
             'beta': np.zeros((2 * n_yearly,))
         }
-        
+
         loss_over_iterations = []
 
         def callback(x):
             fobj = self._minus_log_posterior(x)
             loss_over_iterations.append(fobj)
-        
+
         initial_params_array = from_dict_to_array(initial_params_dict)
-        
+
+        # sigma_obs must stay positive, mirroring Stan's `real<lower=0> sigma_obs`
+        bounds = [(None, None)] * SIGMA_OBS_IDX + [(1e-6, None)] + \
+                 [(None, None)] * (len(initial_params_array) - SIGMA_OBS_IDX - 1)
+
         if use_combined:
             opt_params = minimize(self._minus_log_posteriorAndGradient,
                     initial_params_array,
                     method=optimizer,
+                    bounds=bounds,
                     options={'maxiter': 10000},
                     callback=callback,
                     jac=True)
@@ -216,6 +241,7 @@ class CustomProphet:
             opt_params = minimize(self._minus_log_posterior,
                     initial_params_array,
                     method=optimizer,
+                    bounds=bounds,
                     options={'maxiter': 10000},
                     callback=callback,
                     jac=lambda x: self._gradient(x))
@@ -223,10 +249,12 @@ class CustomProphet:
             opt_params = minimize(self._minus_log_posterior,
                             initial_params_array,
                             method=optimizer,
+                            bounds=bounds,
                             options={'maxiter': 10000},
                             callback=callback)
         self.opt = opt_params
         self.opt_params = opt_params.x
+        self.sigma_obs = opt_params.x[SIGMA_OBS_IDX]
         self.loss_over_iterations = loss_over_iterations
     
     def fit_cpp(self, df: pd.DataFrame) -> Tuple[float, float, np.array, np.array]:
@@ -247,15 +275,16 @@ class CustomProphet:
         # Initialize parameters
         # 0 + init_r * N(0, 1) - STAN initialization
         init_r = 2.0
-        params_dict = {
-            'k': init_r * self.rng.normal(),
-            'm': init_r * self.rng.normal(),
-            'delta': self.rng.normal(loc=0.0, scale=init_r, size=(25,)),
-            'beta': self.rng.normal(loc=0.0, scale=init_r, size=(2 * n_yearly,))
-        }
+        k_init = init_r * self.rng.normal()
+        m_init = init_r * self.rng.normal()
+        delta_init = self.rng.normal(loc=0.0, scale=init_r, size=(25,))
+        beta_init = self.rng.normal(loc=0.0, scale=init_r, size=(2 * n_yearly,))
 
-        params = from_dict_to_array(params_dict)
-        
+        # The compiled optimizer's own extract_params expects (k, m, delta, beta)
+        # with no sigma_obs slot -- it does not estimate sigma_obs, which stays
+        # fixed at self.sigma_obs and is passed to it separately below.
+        params = np.concatenate(([k_init], [m_init], delta_init, beta_init))
+
         # Load the shared library
         lib = ctypes.CDLL('./liboptimization.so')
 
@@ -291,9 +320,12 @@ class CustomProphet:
              self.sigma_m,
              self.sigma,
              self.tau)
-        
-        self.opt_params = params
-    
+
+        # Splice the fixed sigma_obs into the canonical (k, m, delta, sigma_obs,
+        # beta) layout so predict()/trend_forecast_uncertainty() work the same
+        # regardless of which fit method produced opt_params.
+        self.opt_params = np.concatenate((params[:SIGMA_OBS_IDX], [self.sigma_obs], params[SIGMA_OBS_IDX:]))
+
         # Return whatever values are necessary
         return -1
         
@@ -316,7 +348,7 @@ class CustomProphet:
         return future_df
     
     def trend_forecast_uncertainty(self, horizon=30, n_samples=500):
-        k, m, delta, beta = extract_params(self.opt_params)
+        k, m, delta, _sigma_obs, beta = extract_params(self.opt_params)
         x = fourier_components(self.t_scaled, 365.25, n_yearly)
         s = det_dot(x, beta)
         probability_changepoint = self.n_changepoints / self.T
@@ -346,7 +378,7 @@ class CustomProphet:
     
     def predict(self, future_df):
         # Extract optimal parameters
-        k, m, delta, beta = extract_params(self.opt_params)
+        k, m, delta, _sigma_obs, beta = extract_params(self.opt_params)
         
         # Normalize future dates
         future_df['t_scaled'] = (pd.to_datetime(future_df['ds']) - self.ds.min()) / (self.ds.max() - self.ds.min())
