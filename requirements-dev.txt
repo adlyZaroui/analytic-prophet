@@ -1,0 +1,7 @@
+# Dependencies for running the legacy/ reference implementation and its
+# tests. Temporary -- superseded once pyproject.toml declares the real
+# package's dependencies after the C++ consolidation.
+numpy
+pandas
+scipy
+pytest
