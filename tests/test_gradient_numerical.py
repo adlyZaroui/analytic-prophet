@@ -6,6 +6,8 @@ the C++ layer, or anything else. This checks the calculus itself.
 import numpy as np
 import pytest
 
+from customProphet import SIGMA_OBS_IDX
+
 
 def numerical_gradient(f, x, eps=1e-6):
     grad = np.zeros_like(x)
@@ -44,7 +46,12 @@ def test_gradient_finite_at_delta_equals_zero(prepared_model, param_size):
     this point. np.sign(0) == 0 (confirmed, not NaN), which is what
     _gradient relies on; this pins that down explicitly so it can't
     silently regress if the implementation ever changes.
+
+    sigma_obs is set to fit()'s actual init value (1.0), not left at 0 --
+    it appears as log(sigma_obs) and 1/sigma_obs**3 in the objective, so a
+    literal zero there is a genuine domain violation, not a kink to probe.
     """
     params_at_kink = np.zeros(param_size)
+    params_at_kink[SIGMA_OBS_IDX] = 1.0
     grad = prepared_model._gradient(params_at_kink)
     assert np.all(np.isfinite(grad)), "gradient must be finite at delta=0, got NaN/inf"
