@@ -49,6 +49,33 @@ def from_dict_to_array(params):
     beta = np.zeros((2 * 10,))
     return np.concatenate((k, m, delta, sigma_obs, beta))
 
+def canonical_to_split(params):
+    """(k, m, delta, sigma_obs, beta) -> (k, m, delta_pos, delta_neg, sigma_obs, beta).
+
+    The Laplace prior on delta puts |delta|/tau in the objective, which is not
+    differentiable at delta=0 -- and that is exactly where the optimum sits,
+    since the prior is what drives most changepoint rates to zero. L-BFGS-B
+    assumes a smooth objective and stalls on those kinks well short of the
+    optimum (while still reporting success).
+
+    Splitting delta into non-negative parts, delta = delta_pos - delta_neg,
+    turns |delta| into delta_pos + delta_neg: smooth, with the non-smoothness
+    pushed into simple bound constraints L-BFGS-B handles natively. At an
+    optimum at most one of each pair is non-zero, so the two problems have the
+    same solution. This is the same fix the C++ core gets from OWL-QN.
+    """
+    k, m, delta, sigma_obs, beta = extract_params(params)
+    return np.concatenate(([k], [m], np.maximum(delta, 0), np.maximum(-delta, 0), [sigma_obs], beta))
+
+def split_to_canonical(z, n_delta=N_CHANGE_POINTS):
+    """Inverse of canonical_to_split: delta = delta_pos - delta_neg."""
+    k, m = z[0], z[1]
+    delta_pos = z[2:2 + n_delta]
+    delta_neg = z[2 + n_delta:2 + 2 * n_delta]
+    sigma_obs = z[2 + 2 * n_delta]
+    beta = z[3 + 2 * n_delta:]
+    return np.concatenate(([k], [m], delta_pos - delta_neg, [sigma_obs], beta))
+
 def compute_trend(k, m, delta, change_points, t_scaled, y_absmax):
     """Piecewise-linear trend in normalized-y space, de-normalized once at
     the end. Shared by predict() and trend_forecast_uncertainty() so the
@@ -104,7 +131,7 @@ class CustomProphet:
         self.change_points = np.linspace(0, self.changepoint_range * max_t_scaled, self.n_changepoints + 1)[1:]
 
         
-    def _minus_log_posterior(self, params: np.array) -> float:
+    def _minus_log_posterior(self, params: np.array, include_l1_prior: bool=True) -> float:
         k, m, delta, sigma_obs, beta = extract_params(params)
 
         # trend component
@@ -127,12 +154,14 @@ class CustomProphet:
                       sigma_obs**2 / (2*SIGMA_OBS_PRIOR_SCALE**2) + \
                       k**2 / (2*self.sigma_k**2) + \
                       m**2 / (2*self.sigma_m**2) + \
-                      np.sum(beta**2) / (2*self.sigma**2) + \
-                      np.sum(np.abs(delta)) / self.tau
+                      np.sum(beta**2) / (2*self.sigma**2)
+
+        if include_l1_prior:
+            minus_log_posterior += np.sum(np.abs(delta)) / self.tau
 
         return minus_log_posterior
 
-    def _gradient(self, params: np.array) -> np.array:
+    def _gradient(self, params: np.array, include_l1_prior: bool=True) -> np.array:
         k, m, delta, sigma_obs, beta = extract_params(params)
 
         # trend component
@@ -149,15 +178,18 @@ class CustomProphet:
 
         dk = np.array([-np.sum(r * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
         dm = np.array([-np.sum(r) / sigma_obs**2 + m / self.sigma_m**2])
-        ddelta = -np.sum(r[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2 + np.sign(delta) / self.tau
+        ddelta = -np.sum(r[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
         dsigma_obs = np.array([self.T / sigma_obs - np.sum(r**2) / sigma_obs**3 + sigma_obs / SIGMA_OBS_PRIOR_SCALE**2])
         dbeta = -np.dot(r, x) / sigma_obs**2 + beta / self.sigma**2
+
+        if include_l1_prior:
+            ddelta = ddelta + np.sign(delta) / self.tau
 
         gradient = np.concatenate([dk, dm, ddelta, dsigma_obs, dbeta])
 
         return gradient
 
-    def _minus_log_posteriorAndGradient(self, params: np.array) -> Tuple[float, np.array]:
+    def _minus_log_posteriorAndGradient(self, params: np.array, include_l1_prior: bool=True) -> Tuple[float, np.array]:
         k, m, delta, sigma_obs, beta = extract_params(params)
 
         # trend component
@@ -177,19 +209,55 @@ class CustomProphet:
                       sigma_obs**2 / (2*SIGMA_OBS_PRIOR_SCALE**2) + \
                       k**2 / (2*self.sigma_k**2) + \
                       m**2 / (2*self.sigma_m**2) + \
-                      np.sum(beta**2) / (2*self.sigma**2) + \
-                      np.sum(np.abs(delta)) / self.tau
+                      np.sum(beta**2) / (2*self.sigma**2)
 
         dk = np.array([-np.sum(r * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
         dm = np.array([-np.sum(r) / sigma_obs**2 + m / self.sigma_m**2])
-        ddelta = -np.sum(r[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2 + np.sign(delta) / self.tau
+        ddelta = -np.sum(r[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
         dsigma_obs = np.array([self.T / sigma_obs - np.sum(r**2) / sigma_obs**3 + sigma_obs / SIGMA_OBS_PRIOR_SCALE**2])
         dbeta = -np.dot(r, x) / sigma_obs**2 + beta / self.sigma**2
+
+        if include_l1_prior:
+            minus_log_posterior += np.sum(np.abs(delta)) / self.tau
+            ddelta = ddelta + np.sign(delta) / self.tau
 
         gradient = np.concatenate([dk, dm, ddelta, dsigma_obs, dbeta])
 
         return minus_log_posterior, gradient
-        
+
+    # --- split-space (delta = delta_pos - delta_neg) wrappers --------------
+    # These are what fit() optimizes over. They evaluate the posterior without
+    # its L1 term and add (delta_pos + delta_neg)/tau instead, which is the
+    # same value but differentiable -- see canonical_to_split for why.
+
+    def _split_l1_penalty(self, z):
+        n_delta = len(self.change_points)
+        return np.sum(z[2:2 + 2 * n_delta]) / self.tau
+
+    def _split_minus_log_posterior(self, z: np.array) -> float:
+        smooth = self._minus_log_posterior(split_to_canonical(z), include_l1_prior=False)
+        return smooth + self._split_l1_penalty(z)
+
+    def _split_gradient(self, z: np.array) -> np.array:
+        return self._canonical_gradient_to_split(
+            self._gradient(split_to_canonical(z), include_l1_prior=False))
+
+    def _split_minus_log_posteriorAndGradient(self, z: np.array) -> Tuple[float, np.array]:
+        smooth, gradient = self._minus_log_posteriorAndGradient(
+            split_to_canonical(z), include_l1_prior=False)
+        return smooth + self._split_l1_penalty(z), self._canonical_gradient_to_split(gradient)
+
+    def _canonical_gradient_to_split(self, gradient):
+        """d/d(delta_pos) = d/d(delta) + 1/tau, d/d(delta_neg) = -d/d(delta) + 1/tau."""
+        ddelta = gradient[DELTA_SLICE]
+        return np.concatenate((
+            gradient[:2],
+            ddelta + 1 / self.tau,
+            -ddelta + 1 / self.tau,
+            [gradient[SIGMA_OBS_IDX]],
+            gradient[BETA_SLICE],
+        ))
+
     def fit(self, df: pd.DataFrame, analytic: bool=False, use_combined: bool=False, optimizer: str='L-BFGS-B',
             initial_params: dict=None, fixed_sigma_obs: float=None) -> Tuple[float, float, np.array, np.array]:
         if analytic and use_combined:
@@ -225,8 +293,8 @@ class CustomProphet:
 
         loss_over_iterations = []
 
-        def callback(x):
-            fobj = self._minus_log_posterior(x)
+        def callback(z):
+            fobj = self._minus_log_posterior(split_to_canonical(z))
             loss_over_iterations.append(fobj)
 
         initial_params_array = from_dict_to_array(initial_params_dict)
@@ -235,38 +303,34 @@ class CustomProphet:
         # fixed_sigma_obs collapses that bound to a single point, pinning sigma_obs
         # for parity with fit_cpp()'s compiled optimizer, which never estimates it.
         sigma_obs_bounds = (fixed_sigma_obs, fixed_sigma_obs) if fixed_sigma_obs is not None else (1e-6, None)
-        bounds = [(None, None)] * SIGMA_OBS_IDX + [sigma_obs_bounds] + \
-                 [(None, None)] * (len(initial_params_array) - SIGMA_OBS_IDX - 1)
+        n_delta = len(self.change_points)
+        # Split-space bounds: k, m free; delta_pos/delta_neg >= 0; then sigma_obs, beta
+        bounds = [(None, None)] * 2 + [(0, None)] * (2 * n_delta) + [sigma_obs_bounds] + \
+                 [(None, None)] * (2 * n_yearly)
+
+        z0 = canonical_to_split(initial_params_array)
 
         if use_combined:
-            opt_params = minimize(self._minus_log_posteriorAndGradient,
-                    initial_params_array,
-                    method=optimizer,
-                    bounds=bounds,
-                    options={'maxiter': 10000},
-                    callback=callback,
-                    jac=True)
+            objective, jac = self._split_minus_log_posteriorAndGradient, True
         elif analytic:
-            opt_params = minimize(self._minus_log_posterior,
-                    initial_params_array,
-                    method=optimizer,
-                    bounds=bounds,
-                    options={'maxiter': 10000},
-                    callback=callback,
-                    jac=lambda x: self._gradient(x))
+            objective, jac = self._split_minus_log_posterior, self._split_gradient
         else:
-            opt_params = minimize(self._minus_log_posterior,
-                            initial_params_array,
-                            method=optimizer,
-                            bounds=bounds,
-                            options={'maxiter': 10000},
-                            callback=callback)
+            objective, jac = self._split_minus_log_posterior, None
+
+        opt_params = minimize(objective,
+                        z0,
+                        method=optimizer,
+                        bounds=bounds,
+                        options={'maxiter': 10000},
+                        callback=callback,
+                        jac=jac)
+
         self.opt = opt_params
-        self.opt_params = opt_params.x
-        self.sigma_obs = opt_params.x[SIGMA_OBS_IDX]
+        self.opt_params = split_to_canonical(opt_params.x)
+        self.sigma_obs = self.opt_params[SIGMA_OBS_IDX]
         self.loss_over_iterations = loss_over_iterations
     
-    def fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None) -> Tuple[float, float, np.array, np.array]:
+    def fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None, verbose: bool=False) -> Tuple[float, float, np.array, np.array]:
         self.y = df['y'].values
 
         if df['ds'].dtype != 'datetime64[ns]':
@@ -319,10 +383,20 @@ class CustomProphet:
                          ctypes.c_double,
                          ctypes.c_double,
                          ctypes.c_double,
-                         ctypes.c_double]
-        
+                         ctypes.c_double,
+                         np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),
+                         ctypes.c_int,
+                         ctypes.POINTER(ctypes.c_int),
+                         ctypes.POINTER(ctypes.c_int),
+                         ctypes.c_int]
+
         lib.optimize.restype = None
-        
+
+        max_iterations = 10000
+        loss_over_iterations = np.zeros(max_iterations)
+        n_iterations = ctypes.c_int(0)
+        status = ctypes.c_int(0)
+
         lib.optimize(params,
              len(params),
              self.t_scaled,
@@ -333,10 +407,20 @@ class CustomProphet:
              self.normalized_y,
              len(self.normalized_y),
              self.sigma_obs,
-             self.sigma_k, 
+             self.sigma_k,
              self.sigma_m,
              self.sigma,
-             self.tau)
+             self.tau,
+             loss_over_iterations,
+             max_iterations,
+             ctypes.byref(n_iterations),
+             ctypes.byref(status),
+             int(verbose))
+
+        # Mirrors fit(): the per-iteration objective, so both fit paths expose
+        # a directly comparable loss trajectory.
+        self.loss_over_iterations = list(loss_over_iterations[:n_iterations.value])
+        self.opt_status = status.value
 
         # Splice the fixed sigma_obs into the canonical (k, m, delta, sigma_obs,
         # beta) layout so predict()/trend_forecast_uncertainty() work the same
