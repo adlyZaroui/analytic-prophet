@@ -1,9 +1,17 @@
+#include <pybind11/pybind11.h>
+#include <pybind11/eigen.h>
+#include <pybind11/stl.h>
+
 #include <Eigen/Dense>
 #include <cmath>
 #include <tuple>
 #include <iostream>
 #include <lbfgs.h>
 #include <cstring>
+#include <string>
+#include <vector>
+
+namespace py = pybind11;
 
 Eigen::MatrixXd fourier_components(const Eigen::VectorXd& t_days, double period, int n) {
     Eigen::VectorXd x = Eigen::VectorXd::LinSpaced(n, 1, n) * (2 * M_PI / period);
@@ -109,11 +117,13 @@ struct OptimizationData {
     double sigma;
     double tau;
     // Per-iteration loss, so callers can compare the optimizer's trajectory
-    // against the Python reference instead of scraping it from stdout.
-    double* loss_out;
-    int loss_out_size;
+    // against the Python reference instead of scraping it from stdout. A
+    // std::vector grows as needed -- the ctypes binding this replaced needed a
+    // caller-preallocated buffer plus its length, since it could only pass
+    // pointers.
+    std::vector<double> loss_over_iterations;
     int n_iterations;
-    int verbose;
+    bool verbose;
 };
 
 lbfgsfloatval_t evaluate(void* instance, const lbfgsfloatval_t* x, lbfgsfloatval_t* g, const int n, const lbfgsfloatval_t step) {
@@ -145,9 +155,7 @@ int progress(void* instance, const lbfgsfloatval_t* x, const lbfgsfloatval_t* g,
 
     // fx already includes the L1 term: OWL-QN adds orthantwise_c * |x|_1 to
     // whatever evaluate() returned, so this is the full minus-log-posterior.
-    if (data->loss_out != nullptr && k >= 1 && (k - 1) < data->loss_out_size) {
-        data->loss_out[k - 1] = fx;
-    }
+    data->loss_over_iterations.push_back(fx);
     data->n_iterations = k;
 
     if (data->verbose) {
@@ -156,26 +164,68 @@ int progress(void* instance, const lbfgsfloatval_t* x, const lbfgsfloatval_t* g,
     return 0;
 }
 
-extern "C" {
-    void optimize(double* params,
-                  int params_size,
-                  double* t_scaled,
-                  int t_scaled_size,
-                  double* change_points,
-                  int change_points_size,
-                  double scale_period,
-                  double* normalized_y,
-                  int normalized_y_size,
-                  double sigma_obs,
-                  double sigma_k,
-                  double sigma_m,
-                  double sigma,
-                  double tau,
-                  double* loss_out,
-                  int loss_out_size,
-                  int* n_iterations_out,
-                  int* status_out,
-                  int verbose) {
+// Result of one optimization run. Bound as a Python object with named
+// attributes, so the caller reads result.status instead of unpacking
+// out-parameters the way the ctypes binding forced.
+struct OptimizeResult {
+    Eigen::VectorXd params;
+    std::vector<double> loss_over_iterations;
+    int n_iterations;
+    int status;
+    std::string status_message;
+};
+
+// liblbfgs only returns a bare integer code. Spelling them out here means a
+// caller sees "the line search stepped across a non-differentiable point"
+// rather than -1001, which previously had to be looked up in lbfgs.h by hand.
+std::string lbfgs_status_message(int code) {
+    switch (code) {
+        case LBFGS_SUCCESS:                 return "converged";
+        case LBFGS_STOP:                    return "stopped by the progress callback";
+        case LBFGS_ALREADY_MINIMIZED:       return "the initial point is already a minimizer";
+        case LBFGSERR_MAXIMUMITERATION:     return "reached max_iterations before converging";
+        case LBFGSERR_MAXIMUMLINESEARCH:    return "line search hit max_linesearch evaluations";
+        case LBFGSERR_ROUNDING_ERROR:       return "rounding error in the line search; no step satisfied the "
+                                                   "sufficient-decrease and curvature conditions";
+        case LBFGSERR_MINIMUMSTEP:          return "line search step became smaller than min_step";
+        case LBFGSERR_MAXIMUMSTEP:          return "line search step grew larger than max_step";
+        case LBFGSERR_INCREASEGRADIENT:     return "the current search direction increases the objective";
+        case LBFGSERR_INVALID_LINESEARCH:   return "invalid line search for the configured method";
+        case LBFGSERR_OUTOFMEMORY:          return "out of memory";
+        default:                            return "liblbfgs error code " + std::to_string(code);
+    }
+}
+
+OptimizeResult optimize(Eigen::VectorXd params,
+                        const Eigen::Ref<const Eigen::VectorXd>& t_scaled,
+                        const Eigen::Ref<const Eigen::VectorXd>& change_points,
+                        double scale_period,
+                        const Eigen::Ref<const Eigen::VectorXd>& normalized_y,
+                        double sigma_obs,
+                        double sigma_k,
+                        double sigma_m,
+                        double sigma,
+                        double tau,
+                        bool verbose) {
+
+        const int params_size = static_cast<int>(params.size());
+        const int change_points_size = static_cast<int>(change_points.size());
+
+        // Checks the ctypes binding could not make: it received bare pointers
+        // with caller-supplied lengths, so a mismatch corrupted memory silently
+        // instead of raising.
+        if (t_scaled.size() != normalized_y.size()) {
+            throw std::invalid_argument("t_scaled and normalized_y must have the same length");
+        }
+        if (params_size < 2 + change_points_size) {
+            throw std::invalid_argument("params is too short for the given number of change points");
+        }
+        if (tau <= 0.0) {
+            throw std::invalid_argument("tau must be positive");
+        }
+        if (sigma_obs <= 0.0) {
+            throw std::invalid_argument("sigma_obs must be positive");
+        }
 
         lbfgs_parameter_t param;
         lbfgs_parameter_init(&param);
@@ -217,33 +267,112 @@ extern "C" {
         lbfgsfloatval_t fx;
 
         OptimizationData data = {
-            Eigen::Map<Eigen::VectorXd>(t_scaled, t_scaled_size),
-            Eigen::Map<Eigen::VectorXd>(change_points, change_points_size),
+            t_scaled,
+            change_points,
             scale_period,
-            Eigen::Map<Eigen::VectorXd>(normalized_y, normalized_y_size),
+            normalized_y,
             sigma_obs, sigma_k, sigma_m, sigma, tau,
-            loss_out, loss_out_size, 0, verbose
+            {}, 0, verbose
         };
 
-        int ret = lbfgs(params_size, params, &fx, evaluate, progress, &data, &param);
-
-        if (n_iterations_out != nullptr) {
-            *n_iterations_out = data.n_iterations;
-        }
-        if (status_out != nullptr) {
-            *status_out = ret;
-        }
+        int ret = lbfgs(params_size, params.data(), &fx, evaluate, progress, &data, &param);
 
         if (verbose) {
-            if (ret == LBFGS_SUCCESS) {
-                std::cout << "L-BFGS optimization terminated successfully.\n";
-                std::cout << "  fx = " << fx << "\n";
-            } else {
-                std::cout << "L-BFGS optimization terminated with status code = " << ret << "\n";
-            }
+            std::cout << "L-BFGS optimization terminated: " << lbfgs_status_message(ret) << "\n";
+            std::cout << "  fx = " << fx << "\n";
         }
-    }
+
+        return OptimizeResult{
+            std::move(params),
+            std::move(data.loss_over_iterations),
+            data.n_iterations,
+            ret,
+            lbfgs_status_message(ret),
+        };
+}
+
+// Objective and analytic gradient on their own, for cross-checking against the
+// Python reference implementation. This is the very function the optimizer
+// drives (see evaluate() above), not a copy of it.
+std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
+        const Eigen::Ref<const Eigen::VectorXd>& params,
+        const Eigen::Ref<const Eigen::VectorXd>& t_scaled,
+        const Eigen::Ref<const Eigen::VectorXd>& change_points,
+        double scale_period,
+        const Eigen::Ref<const Eigen::VectorXd>& normalized_y,
+        double sigma_obs,
+        double sigma_k,
+        double sigma_m,
+        double sigma,
+        double tau,
+        bool include_l1_prior) {
+    double mlp = 0.0;
+    Eigen::VectorXd gradient(params.size());
+    minus_log_posterior_and_gradient(params, t_scaled, change_points, scale_period,
+                                     normalized_y, sigma_obs, sigma_k, sigma_m, sigma,
+                                     tau, mlp, gradient, include_l1_prior);
+    return {mlp, gradient};
+}
+
+PYBIND11_MODULE(analytic_prophet_cpp, m) {
+    m.doc() = "Analytic Prophet's C++ core: an L-BFGS/OWL-QN MAP optimizer for the "
+              "Prophet posterior, plus the objective and analytic gradient it drives.";
+
+    py::class_<OptimizeResult>(m, "OptimizeResult",
+            "Outcome of one optimize() run.")
+        .def_readonly("params", &OptimizeResult::params,
+                      "Optimized (k, m, delta, beta) vector.")
+        .def_readonly("loss_over_iterations", &OptimizeResult::loss_over_iterations,
+                      "Minus-log-posterior after each iteration, including the L1 term.")
+        .def_readonly("n_iterations", &OptimizeResult::n_iterations)
+        .def_readonly("status", &OptimizeResult::status,
+                      "Raw liblbfgs status code; 0 is LBFGS_SUCCESS.")
+        .def_readonly("status_message", &OptimizeResult::status_message,
+                      "Human-readable form of `status`.")
+        .def("__repr__", [](const OptimizeResult& r) {
+            return "<OptimizeResult status=" + std::to_string(r.status) +
+                   " (" + r.status_message + ") n_iterations=" +
+                   std::to_string(r.n_iterations) + ">";
+        });
+
+    m.def("optimize", &optimize,
+          py::arg("params"),
+          py::arg("t_scaled"),
+          py::arg("change_points"),
+          py::arg("scale_period"),
+          py::arg("normalized_y"),
+          py::arg("sigma_obs"),
+          py::arg("sigma_k"),
+          py::arg("sigma_m"),
+          py::arg("sigma"),
+          py::arg("tau"),
+          py::arg("verbose") = false,
+          // The optimizer touches no Python objects, so let other threads run.
+          py::call_guard<py::gil_scoped_release>(),
+          "Run L-BFGS (OWL-QN) on the Prophet minus-log-posterior and return an "
+          "OptimizeResult. `params` is not modified in place; the optimized vector "
+          "comes back on the result.");
+
+    m.def("minus_log_posterior_and_gradient", &minus_log_posterior_and_gradient_py,
+          py::arg("params"),
+          py::arg("t_scaled"),
+          py::arg("change_points"),
+          py::arg("scale_period"),
+          py::arg("normalized_y"),
+          py::arg("sigma_obs"),
+          py::arg("sigma_k"),
+          py::arg("sigma_m"),
+          py::arg("sigma"),
+          py::arg("tau"),
+          py::arg("include_l1_prior") = true,
+          py::call_guard<py::gil_scoped_release>(),
+          "Return (minus_log_posterior, gradient) at `params`. With "
+          "include_l1_prior=False the Laplace prior on delta is omitted from both, "
+          "which is what OWL-QN requires of the callback it drives.");
 }
 
 // To compile, run the following command:
-// g++ -std=c++17 -shared -fPIC -O3 -o liboptimization.so optimize.cpp -llbfgs -I/opt/homebrew/opt/eigen/include/eigen3
+// c++ -std=c++17 -shared -fPIC -O3 -undefined dynamic_lookup \
+//     $(python -m pybind11 --includes) -I/opt/homebrew/opt/eigen/include/eigen3 \
+//     optimize.cpp -llbfgs -o analytic_prophet_cpp$(python3-config --extension-suffix)
+// (drop -undefined dynamic_lookup off macOS; tests/conftest.py builds it this way.)

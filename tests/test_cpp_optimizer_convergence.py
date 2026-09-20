@@ -137,23 +137,23 @@ def test_cpp_gradient_matches_python_analytic(prepared_model, cpp_mlp_and_gradie
     np.testing.assert_allclose(cpp_grad, canonical_to_cpp(py_grad), rtol=1e-9, atol=1e-8)
 
 
-def test_cpp_optimizer_no_longer_bails_out_early(small_df, compiled_optimizer_lib):
+def test_cpp_optimizer_no_longer_bails_out_early(small_df, compiled_optimizer_module):
     """The regression test for the bug as reported: it used to stop after 2
     iterations with LBFGSERR_ROUNDING_ERROR."""
     model = CustomProphet()
     model.sigma_obs = SIGMA_OBS
-    model.fit_cpp(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_lib)
+    model.fit_cpp(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_module)
 
     assert model.opt_status != LBFGSERR_ROUNDING_ERROR
     assert len(model.loss_over_iterations) > 50
 
 
-def test_cpp_optimizer_reaches_first_order_optimum(small_df, compiled_optimizer_lib):
+def test_cpp_optimizer_reaches_first_order_optimum(small_df, compiled_optimizer_module):
     """The fitted point satisfies the subgradient optimality conditions, so it
     is the optimum of a convex objective -- not merely 'where the optimizer
     happened to stop'."""
     reference, model = fit_both(small_df)
-    model.fit_cpp(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_lib)
+    model.fit_cpp(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_module)
 
     smooth_residual, delta_violation = first_order_residuals(reference, model.opt_params)
 
@@ -190,7 +190,7 @@ def test_first_order_residuals_reject_a_near_miss(small_df):
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
-def test_cpp_optimizer_converges_from_any_start(small_df, compiled_optimizer_lib, seed):
+def test_cpp_optimizer_converges_from_any_start(small_df, compiled_optimizer_module, seed):
     """The objective is convex in (k, m, delta, beta) for fixed sigma_obs, so
     the optimal value does not depend on where the search starts. Before the
     fix the loss varied wildly with the starting point, because the line search
@@ -208,16 +208,16 @@ def test_cpp_optimizer_converges_from_any_start(small_df, compiled_optimizer_lib
 
     model = CustomProphet()
     model.sigma_obs = SIGMA_OBS
-    model.fit_cpp(small_df, initial_params=init, lib_path=compiled_optimizer_lib)
+    model.fit_cpp(small_df, initial_params=init, lib_path=compiled_optimizer_module)
 
     assert reference._minus_log_posterior(model.opt_params) == pytest.approx(target, rel=1e-6)
 
 
-def test_both_fit_paths_record_a_monotone_decreasing_trajectory(small_df, compiled_optimizer_lib):
+def test_both_fit_paths_record_a_monotone_decreasing_trajectory(small_df, compiled_optimizer_module):
     """Both optimizers now expose a per-iteration loss, and neither should ever
     move uphill on a convex objective."""
     python_model, cpp_model = fit_both(small_df)
-    cpp_model.fit_cpp(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_lib)
+    cpp_model.fit_cpp(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_module)
 
     for name, trajectory in (("fit", python_model.loss_over_iterations),
                              ("fit_cpp", cpp_model.loss_over_iterations)):
