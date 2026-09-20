@@ -23,15 +23,20 @@ minimizer need not be unique even though the objective is convex, so two
 correct optimizers can land on different delta vectors that are equally
 good. Loss is the quantity convexity actually promises will agree.
 
-xfail, not a hard failure: building legacy/optimize.cpp and running it from
-matched init surfaced a real bug this way, as the issue anticipated --
-fit_cpp()'s compiled optimizer terminates after only a couple of iterations
-with LBFGSERR_ROUNDING_ERROR, nowhere near converged (loss ~18.5 vs fit()'s
-~2.57 on a 300-row slice from zero init). Tracked in issue #8. This test
-stays xfail(strict=True) until that's fixed, so it flips to an error (not a
-silent pass) the moment someone tightens the tolerance below without
-actually fixing optimize.cpp, and to a clear "XPASS" the moment the real fix
-lands.
+Both sides were broken when this test was written, by the same root cause:
+the Laplace prior on delta makes the objective non-smooth, and neither
+optimizer handled that. fit_cpp() failed loudly (LBFGSERR_ROUNDING_ERROR
+after ~2 iterations); fit() failed silently, stalling 17.8% above the
+optimum while reporting success=True. Issue #8 fixed both, and this test
+went from xfail to asserting real equality.
+
+Per-iteration trajectories are not compared elementwise: the two sides run
+genuinely different algorithms (scipy's Fortran L-BFGS-B over the smooth
+split reformulation vs liblbfgs's OWL-QN), so their iterates differ even
+though the objective, data and starting point are identical. What convexity
+actually promises -- and what is asserted here -- is that both descend
+monotonically to the same optimal value, and that they agree exactly on the
+objective itself at any shared point (see test_cpp_optimizer_convergence.py).
 """
 import ctypes
 
@@ -41,12 +46,7 @@ import pytest
 from customProphet import CustomProphet, N_CHANGE_POINTS, n_yearly
 
 
-@pytest.mark.xfail(
-    reason="fit_cpp()'s compiled optimizer terminates early with LBFGSERR_ROUNDING_ERROR, "
-           "far from converged -- see issue #8",
-    strict=True,
-)
-def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_df, compiled_optimizer_lib):
+def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_df, compiled_optimizer_lib, cpp_loss_offset):
     small_df = peyton_manning_df.iloc[:300].reset_index(drop=True)
     matched_init = {
         "k": 0.0,
@@ -70,7 +70,18 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
     python_loss = python_model._minus_log_posterior(python_model.opt_params)
     cpp_loss = python_model._minus_log_posterior(cpp_model.opt_params)
 
-    assert cpp_loss == pytest.approx(python_loss, rel=0.05)
+    assert cpp_loss == pytest.approx(python_loss, rel=1e-6)
+
+    # Same start, same objective: both trajectories descend to that same value.
+    # The C++ trajectory is in its own objective's units, hence the offset.
+    offset = cpp_loss_offset(python_model, fixed_sigma_obs)
+    trajectories = (
+        np.asarray(python_model.loss_over_iterations),
+        np.asarray(cpp_model.loss_over_iterations) + offset,
+    )
+    for trajectory in trajectories:
+        assert np.all(np.diff(trajectory) <= 1e-9)
+        assert trajectory[-1] == pytest.approx(cpp_loss, rel=1e-6)
 
 
 def test_compiled_lib_exposes_optimize_symbol(compiled_optimizer_lib):
