@@ -162,3 +162,33 @@ def test_trend_is_continuous_at_changepoints():
         t_scaled=np.array([0.5 - eps, 0.5, 0.5 + eps]), y_absmax=1.0)
     assert around[1] == pytest.approx(around[0], abs=1e-6)
     assert around[1] == pytest.approx(around[2], abs=1e-6)
+
+
+def test_stan_convergence_constants_match_cmdstan_defaults():
+    """Issue #21. Prophet's CmdStanPyBackend.fit calls
+    optimize(algorithm='LBFGS', iter=int(1e4)) and sets no tolerances or
+    history_size, so CmdStan's defaults are what the original runs under.
+    [stan] src/stan/optimization/bfgs.hpp, ConvergenceOptions.
+    """
+    assert customProphet.STAN_EPS == np.finfo(float).eps   # Stan's machine epsilon
+    assert customProphet.STAN_TOL_REL_OBJ == 1e+4          # tol_rel_obj
+    assert customProphet.STAN_TOL_GRAD == 1e-8             # tol_grad
+    assert customProphet.STAN_MAX_ITERATIONS == 10000      # Prophet's iter=int(1e4)
+
+
+def test_cpp_stops_on_a_named_stan_criterion(peyton_manning_df, compiled_optimizer_module):
+    """The C++ core evaluates Stan's tests itself and reports which one fired.
+
+    Before #21 it had no reachable stopping test at all -- `past = 0` disabled
+    the objective-change test and the gradient threshold was unattainable, so
+    every run ended on `line search hit max_linesearch` tens of thousands of
+    iterations past convergence.
+    """
+    model = CustomProphet()
+    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+                  lib_path=compiled_optimizer_module)
+
+    assert model.opt_status_message.startswith("converged:")
+    assert "line search" not in model.opt_status_message
+    # Prophet's iter=1e4 is the cap; a converged run lands well inside it
+    assert len(model.loss_over_iterations) < customProphet.STAN_MAX_ITERATIONS

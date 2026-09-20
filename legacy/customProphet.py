@@ -54,6 +54,21 @@ sigma_k = 5
 # SCALE on m: m ~ normal(0, 5). [stan] model block. Hardcoded, not configurable.
 sigma_m = 5
 
+# Stan's L-BFGS convergence criteria, with the CmdStan defaults Prophet runs
+# under: CmdStanPyBackend.fit calls optimize(algorithm='LBFGS', iter=int(1e4))
+# and sets no tolerances or history_size.
+# [stan] src/stan/optimization/bfgs.hpp, ConvergenceOptions + step()
+#
+# Stan stops as soon as ANY of five tests holds: absolute and relative
+# objective change, absolute and relative gradient norm, and parameter change.
+# L-BFGS-B exposes the first and third of those; the C++ core evaluates four
+# of the five directly (see optimize.cpp). Matching them is what stops both
+# paths running tens of thousands of iterations past convergence.
+STAN_EPS = 2.220446049250313e-16   # machine epsilon, as Stan uses it
+STAN_TOL_REL_OBJ = 1e+4            # tol_rel_obj, scaled by STAN_EPS
+STAN_TOL_GRAD = 1e-8               # tol_grad
+STAN_MAX_ITERATIONS = 10000        # Prophet passes iter=int(1e4)
+
 # INIT -- Prophet overrides Stan's random init with explicit values, so Stan's
 # `init_r * N(0, 1)` default is never reached. [fc] calculate_initial_params
 # returns sigma_obs=1.0, delta=zeros(S), beta=zeros(K), and k/m from
@@ -465,13 +480,33 @@ class CustomProphet:
         else:
             objective, jac = self._split_minus_log_posterior, None
 
-        options = {'maxiter': 10000}
+        options = {'maxiter': STAN_MAX_ITERATIONS}
         if optimizer == 'L-BFGS-B':
-            # Defaults (ftol = 2.2e-9 relative, gtol = 1e-5) stop well short of
-            # the optimum once sigma_obs is free -- 93 iterations instead of
-            # 1740 on a 1000-point series, at a loss 3.05 nats worse. These are
-            # L-BFGS-B-specific option names, hence the guard.
-            options.update({'ftol': 1e-16, 'gtol': 1e-12, 'maxfun': 100000})
+            # Stan's iteration cap applies directly. Its tolerances do not
+            # transfer as cleanly here as they do in the C++ core, for two
+            # measured reasons -- both consequences of this path optimizing the
+            # split reformulation rather than Stan's parameterization:
+            #
+            # gtol is disabled rather than set to Stan's tol_grad. scipy tests
+            # the inf-norm of the *projected* gradient, Stan the 2-norm of the
+            # full gradient. On the split problem most delta_pos/delta_neg sit
+            # at their zero bound, so the projected norm is far smaller than
+            # the real one and tol_grad=1e-8 fires at iteration 147 on the
+            # 2905-point series, 1.1e-3 short in loss.
+            #
+            # ftol stays tighter than Stan's tol_rel_obj * eps = 2.22e-12. The
+            # split space has long shallow ridges where per-iteration progress
+            # falls below that while the fit is still 1.1e-3 from the optimum
+            # (measured at T=1000 and T=2905); Stan's own parameterization does
+            # not stall there, and the C++ core, which uses it, converges
+            # normally under the real tolerance. Loosening this to match Stan
+            # numerically would mean a worse fit than Prophet produces, not a
+            # closer one.
+            options.update({
+                'ftol': 1e-16,
+                'gtol': 0.0,
+                'maxfun': STAN_MAX_ITERATIONS * 10,
+            })
 
         opt_params = minimize(objective,
                         z0,
