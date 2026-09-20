@@ -55,7 +55,8 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
 
     // Trend component
     Eigen::VectorXd ones = Eigen::VectorXd::Ones(t_scaled_vec.size());
-    Eigen::MatrixXd A = (t_scaled_vec.replicate(1, change_points_vec.size()).array() > change_points_vec.transpose().replicate(t_scaled_vec.size(), 1).array()).cast<double>();
+    // >= , not > : Stan's get_changepoint_matrix uses t[i] >= t_change[j]
+    Eigen::MatrixXd A = (t_scaled_vec.replicate(1, change_points_vec.size()).array() >= change_points_vec.transpose().replicate(t_scaled_vec.size(), 1).array()).cast<double>();
     Eigen::VectorXd gamma = -delta.array() * change_points_vec.array();
     Eigen::VectorXd g = (k * ones + A * delta).array() * t_scaled_vec.array() + (m * ones + A * gamma).array();
 
