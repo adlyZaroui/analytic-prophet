@@ -176,19 +176,22 @@ def test_stan_convergence_constants_match_cmdstan_defaults():
     assert customProphet.STAN_MAX_ITERATIONS == 10000      # Prophet's iter=int(1e4)
 
 
-def test_cpp_stops_on_a_named_stan_criterion(peyton_manning_df, compiled_optimizer_module):
-    """The C++ core evaluates Stan's tests itself and reports which one fired.
+def test_cpp_converges_within_prophets_iteration_cap(peyton_manning_df, compiled_optimizer_module):
+    """Before #21 the C++ core had no reachable stopping test -- `past = 0`
+    disabled the objective-change test and the gradient threshold was
+    unattainable -- so every run ended on line-search exhaustion tens of
+    thousands of iterations past convergence.
 
-    Before #21 it had no reachable stopping test at all -- `past = 0` disabled
-    the objective-change test and the gradient threshold was unattainable, so
-    every run ended on `line search hit max_linesearch` tens of thousands of
-    iterations past convergence.
+    #23 then replaced OWL-QN with L-BFGS-B on the split reformulation, which
+    converges in a fraction of the iterations. The criterion that fires is no
+    longer named: LBFGSpp reports an iteration count, not which of its tests
+    stopped the run.
     """
     model = CustomProphet()
     model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
-    assert model.opt_status_message.startswith("converged:")
-    assert "line search" not in model.opt_status_message
-    # Prophet's iter=1e4 is the cap; a converged run lands well inside it
-    assert len(model.loss_over_iterations) < customProphet.STAN_MAX_ITERATIONS
+    assert model.opt_status == 0
+    assert model.opt_status_message == "converged"
+    # Prophet passes iter=int(1e4); a converged run lands well inside it
+    assert 0 < model.opt.n_iterations < customProphet.STAN_MAX_ITERATIONS

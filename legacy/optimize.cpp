@@ -6,7 +6,7 @@
 #include <cmath>
 #include <tuple>
 #include <iostream>
-#include <lbfgs.h>
+#include <LBFGSB.h>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -180,137 +180,95 @@ namespace stan_convergence {
     constexpr int HISTORY_SIZE = 5;                 // history_size
 }
 
-struct OptimizationData {
-    Eigen::VectorXd t_scaled;
-    Eigen::VectorXd change_points;
+
+// The Laplace prior puts |delta|/tau in the objective, which is not
+// differentiable at delta = 0 -- and that is where the optimum sits, since the
+// prior is what drives changepoint rates to zero. Splitting delta into
+// non-negative parts,
+//
+//     delta = delta_pos - delta_neg,   delta_pos, delta_neg >= 0
+//
+// turns |delta| into (delta_pos + delta_neg): smooth, with the non-smoothness
+// moved into box constraints. This is the same reformulation fit() uses on the
+// Python side, and it replaced OWL-QN here (issue #23) -- OWL-QN needed 5614
+// iterations and 7.6s on the 2905-point series where this needs 2021 and 1.4s,
+// and reaches a slightly better optimum besides.
+//
+// Box constraints are why the solver changed too: liblbfgs solves the
+// unconstrained problem only and cannot express delta_pos >= 0. LBFGSpp
+// provides L-BFGS-B, is header-only, and works in Eigen types directly.
+//
+// The split is an implementation detail of the optimizer: callers pass and
+// receive the natural layout, [k, m, delta(S), beta(K), zeta].
+struct SplitObjective {
+    const Eigen::VectorXd& t_scaled;
+    const Eigen::VectorXd& change_points;
     double scale_period;
-    Eigen::VectorXd normalized_y;
+    const Eigen::VectorXd& normalized_y;
     double sigma_obs_prior_scale;
     double sigma_k;
     double sigma_m;
     double sigma;
     double tau;
-    // Per-iteration loss, so callers can compare the optimizer's trajectory
-    // against the Python reference instead of scraping it from stdout. A
-    // std::vector grows as needed -- the ctypes binding this replaced needed a
-    // caller-preallocated buffer plus its length, since it could only pass
-    // pointers.
-    std::vector<double> loss_over_iterations;
-    int n_iterations;
-    bool verbose;
-    // Previous iterate, for Stan's TERM_ABSF and TERM_ABSX tests
-    double previous_f;
-    Eigen::VectorXd previous_x;
-    bool has_previous;
-    // Which of Stan's tests stopped the run, empty if none did
-    std::string termination;
+    int S;
+    int K;
+
+    // Best objective seen so far, recorded at each evaluation. LBFGSpp has no
+    // per-iteration hook, so this is a monotone lower envelope over objective
+    // evaluations rather than the per-iteration trace liblbfgs's progress
+    // callback used to give. It still converges to the same final value and
+    // still only ever decreases.
+    std::vector<double> loss_envelope;
+
+    Eigen::VectorXd to_natural(const Eigen::VectorXd& z) const {
+        Eigen::VectorXd natural(2 + S + K + 1);
+        natural(0) = z(0);
+        natural(1) = z(1);
+        natural.segment(2, S) = z.segment(2, S) - z.segment(2 + S, S);
+        natural.segment(2 + S, K) = z.segment(2 + 2 * S, K);
+        natural(natural.size() - 1) = z(z.size() - 1);
+        return natural;
+    }
+
+    double operator()(const Eigen::VectorXd& z, Eigen::VectorXd& grad) {
+        const Eigen::VectorXd natural = to_natural(z);
+
+        double value = 0.0;
+        Eigen::VectorXd natural_grad(natural.size());
+        minus_log_posterior_and_gradient(natural, t_scaled, change_points, scale_period,
+                                         normalized_y, sigma_obs_prior_scale, sigma_k,
+                                         sigma_m, sigma, tau, value, natural_grad,
+                                         // the split form supplies the L1 term itself
+                                         /*include_l1_prior=*/false);
+
+        // |delta| == delta_pos + delta_neg on the feasible set, so the Laplace
+        // prior becomes linear here.
+        value += (z.segment(2, S).sum() + z.segment(2 + S, S).sum()) / tau;
+
+        // d/d(delta_pos) = d/d(delta) + 1/tau,  d/d(delta_neg) = -d/d(delta) + 1/tau
+        const Eigen::VectorXd ddelta = natural_grad.segment(2, S);
+        grad.resize(z.size());
+        grad(0) = natural_grad(0);
+        grad(1) = natural_grad(1);
+        grad.segment(2, S) = ddelta.array() + 1.0 / tau;
+        grad.segment(2 + S, S) = -ddelta.array() + 1.0 / tau;
+        grad.segment(2 + 2 * S, K) = natural_grad.segment(2 + S, K);
+        grad(grad.size() - 1) = natural_grad(natural_grad.size() - 1);
+
+        if (loss_envelope.empty() || value < loss_envelope.back()) {
+            loss_envelope.push_back(value);
+        }
+        return value;
+    }
 };
 
-lbfgsfloatval_t evaluate(void* instance, const lbfgsfloatval_t* x, lbfgsfloatval_t* g, const int n, const lbfgsfloatval_t step) {
-    const Eigen::Map<const Eigen::VectorXd> params_vec(x, n);
-    Eigen::Map<Eigen::VectorXd> grad_out(g, n);
-
-    // Extract additional arguments from the instance
-    auto* data = static_cast<OptimizationData*>(instance);
-
-    double mlp;
-    minus_log_posterior_and_gradient(params_vec,
-                                     data->t_scaled,
-                                     data->change_points,
-                                     data->scale_period,
-                                     data->normalized_y,
-                                     data->sigma_obs_prior_scale,
-                                     data->sigma_k,
-                                     data->sigma_m,
-                                     data->sigma,
-                                     data->tau, mlp, grad_out,
-                                     // OWL-QN contributes the Laplace prior on delta itself
-                                     false);
-
-    return mlp;
-}
-
-int progress(void* instance, const lbfgsfloatval_t* x, const lbfgsfloatval_t* g, const lbfgsfloatval_t fx, const lbfgsfloatval_t xnorm, const lbfgsfloatval_t gnorm, const lbfgsfloatval_t step, int n, int k, int ls) {
-    auto* data = static_cast<OptimizationData*>(instance);
-
-    // fx already includes the L1 term: OWL-QN adds orthantwise_c * |x|_1 to
-    // whatever evaluate() returned, so this is the full minus-log-posterior.
-    data->loss_over_iterations.push_back(fx);
-    data->n_iterations = k;
-
-    if (data->verbose) {
-        std::cout << "Iteration " << k << ": fx = " << fx << ", xnorm = " << xnorm << ", gnorm = " << gnorm << ", step = " << step << std::endl;
-    }
-
-    // Stan's convergence tests, in the order bfgs.hpp checks them. Returning
-    // non-zero stops the run.
-    using namespace stan_convergence;
-    const Eigen::Map<const Eigen::VectorXd> current_x(x, n);
-
-    if (gnorm < TOL_ABS_GRAD) {
-        data->termination = "converged: gradient norm below tol_grad";
-        return 1;
-    }
-
-    if (data->has_previous) {
-        const double objective_change = std::fabs(data->previous_f - fx);
-
-        if (objective_change < TOL_ABS_F) {
-            data->termination = "converged: objective change below tol_obj";
-            return 1;
-        }
-
-        // rel_obj_decrease(), [stan] bfgs.hpp
-        const double relative_change = objective_change
-            / std::max(std::fabs(data->previous_f), std::max(std::fabs(fx), F_SCALE));
-        if (relative_change < TOL_REL_F * EPS) {
-            data->termination = "converged: relative objective change below tol_rel_obj";
-            return 1;
-        }
-
-        if ((current_x - data->previous_x).norm() < TOL_ABS_X) {
-            data->termination = "converged: parameter change below tol_param";
-            return 1;
-        }
-    }
-
-    data->previous_f = fx;
-    data->previous_x = current_x;
-    data->has_previous = true;
-    return 0;
-}
-
-// Result of one optimization run. Bound as a Python object with named
-// attributes, so the caller reads result.status instead of unpacking
-// out-parameters the way the ctypes binding forced.
 struct OptimizeResult {
     Eigen::VectorXd params;
-    std::vector<double> loss_over_iterations;
+    std::vector<double> loss_trace;
     int n_iterations;
     int status;
     std::string status_message;
 };
-
-// liblbfgs only returns a bare integer code. Spelling them out here means a
-// caller sees "the line search stepped across a non-differentiable point"
-// rather than -1001, which previously had to be looked up in lbfgs.h by hand.
-std::string lbfgs_status_message(int code) {
-    switch (code) {
-        case LBFGS_SUCCESS:                 return "converged";
-        case LBFGS_STOP:                    return "stopped by the convergence test in progress()";
-        case LBFGS_ALREADY_MINIMIZED:       return "the initial point is already a minimizer";
-        case LBFGSERR_MAXIMUMITERATION:     return "reached max_iterations before converging";
-        case LBFGSERR_MAXIMUMLINESEARCH:    return "line search hit max_linesearch evaluations";
-        case LBFGSERR_ROUNDING_ERROR:       return "rounding error in the line search; no step satisfied the "
-                                                   "sufficient-decrease and curvature conditions";
-        case LBFGSERR_MINIMUMSTEP:          return "line search step became smaller than min_step";
-        case LBFGSERR_MAXIMUMSTEP:          return "line search step grew larger than max_step";
-        case LBFGSERR_INCREASEGRADIENT:     return "the current search direction increases the objective";
-        case LBFGSERR_INVALID_LINESEARCH:   return "invalid line search for the configured method";
-        case LBFGSERR_OUTOFMEMORY:          return "out of memory";
-        default:                            return "liblbfgs error code " + std::to_string(code);
-    }
-}
 
 OptimizeResult optimize(Eigen::VectorXd params,
                         const Eigen::Ref<const Eigen::VectorXd>& t_scaled,
@@ -325,7 +283,8 @@ OptimizeResult optimize(Eigen::VectorXd params,
                         bool verbose) {
 
         const int params_size = static_cast<int>(params.size());
-        const int change_points_size = static_cast<int>(change_points.size());
+        const int S = static_cast<int>(change_points.size());
+        const int K = params_size - 3 - S;
 
         // Checks the ctypes binding could not make: it received bare pointers
         // with caller-supplied lengths, so a mismatch corrupted memory silently
@@ -333,8 +292,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
         if (t_scaled.size() != normalized_y.size()) {
             throw std::invalid_argument("t_scaled and normalized_y must have the same length");
         }
-        // 2 + S + K + 1, with at least one beta column
-        if (params_size < 2 + change_points_size + 2) {
+        if (params_size < 2 + S + 2) {
             throw std::invalid_argument("params is too short for the given number of change points");
         }
         if (tau <= 0.0) {
@@ -344,90 +302,73 @@ OptimizeResult optimize(Eigen::VectorXd params,
             throw std::invalid_argument("sigma_obs_prior_scale must be positive");
         }
 
-        lbfgs_parameter_t param;
-        lbfgs_parameter_init(&param);
+        // Natural -> split. delta splits into its positive and negative parts,
+        // so a starting delta of zero starts both at zero.
+        const int n = 2 + 2 * S + K + 1;
+        Eigen::VectorXd z = Eigen::VectorXd::Zero(n);
+        z(0) = params(0);
+        z(1) = params(1);
+        for (int j = 0; j < S; ++j) {
+            const double delta_j = params(2 + j);
+            z(2 + j) = std::max(delta_j, 0.0);
+            z(2 + S + j) = std::max(-delta_j, 0.0);
+        }
+        z.segment(2 + 2 * S, K) = params.segment(2 + S, K);
+        z(n - 1) = params(params_size - 1);
 
-        // The Laplace (double-exponential) prior on delta puts a |delta|/tau
-        // term in the objective, so the posterior is NOT differentiable at
-        // delta = 0 -- and the optimum sits right on those kinks, since the
-        // prior is what drives most changepoint rates to exactly zero.
-        //
-        // More-Thuente (LBFGS_LINESEARCH_DEFAULT) assumes a smooth objective:
-        // it narrows an interval of uncertainty until the strong Wolfe
-        // conditions hold, and across a kink that interval collapses instead,
-        // so the search bails out with LBFGSERR_ROUNDING_ERROR after a couple
-        // of iterations, thousands short of convergence.
-        //
-        // OWL-QN is liblbfgs's answer to exactly this: it takes the L1
-        // coefficient itself and handles the non-differentiable point by
-        // projecting each step onto the current orthant. It requires the
-        // backtracking line search, and requires that evaluate() report the
-        // objective and gradient WITHOUT the L1 term (see the
-        // include_l1_prior=false call above); the library adds it back, so the
-        // fx it reports is still the full minus-log-posterior.
-        param.orthantwise_c = 1.0 / tau;
-        param.orthantwise_start = 2;                        // protect k, m
-        param.orthantwise_end = 2 + change_points_size;     // delta only, not beta
-        param.linesearch = LBFGS_LINESEARCH_BACKTRACKING;   // required by OWL-QN
+        Eigen::VectorXd lower = Eigen::VectorXd::Constant(n, -std::numeric_limits<double>::infinity());
+        Eigen::VectorXd upper = Eigen::VectorXd::Constant(n, std::numeric_limits<double>::infinity());
+        lower.segment(2, 2 * S).setZero();   // delta_pos, delta_neg >= 0
 
-        // Prophet's iter=int(1e4). This was raised to 100000 as a workaround
-        // while the convergence tests were missing; with them in place the run
-        // stops on a criterion long before the cap, as Stan's does.
+        // Stan's convergence criteria, as far as LBFGSpp expresses them.
+        // Its past/delta test is Stan's TERM_RELF exactly -- same inequality,
+        // same max(|f_k|, |f_past|, 1) denominator at fScale = 1. Its epsilon
+        // is an inf-norm on the projected gradient, which is the right
+        // stationarity measure for a bound-constrained problem and, unlike
+        // scipy's equivalent, does not fire early here (verified: identical
+        // results at 0, 1e-8 and 1e-5).
+        //
+        // Stan's remaining tests -- absolute objective change and parameter
+        // change -- need a per-iteration hook, which LBFGSpp does not provide.
+        // TERM_RELF is the one that binds in practice.
+        LBFGSpp::LBFGSBParam<double> param;
+        param.m = stan_convergence::HISTORY_SIZE;
         param.max_iterations = stan_convergence::MAX_ITERATIONS;
-        param.m = stan_convergence::HISTORY_SIZE;   // Stan's history_size
+        param.epsilon = stan_convergence::TOL_ABS_GRAD;
+        param.epsilon_rel = 0.0;
+        param.past = 1;
+        param.delta = stan_convergence::TOL_REL_F * stan_convergence::EPS;
+        param.max_linesearch = 60;
 
-        // liblbfgs's own relative-gradient test, used as the stand-in for
-        // Stan's TERM_RELGRAD. Stan's form is -p_k.g_k / max(|f_k|, fScale),
-        // which needs the search direction; liblbfgs exposes only
-        // ||g|| / max(1, ||x||) and no way to reach p_k from the callback, so
-        // this is the closest available and is the one Stan test not
-        // reproduced exactly. The other four are in progress() above.
-        param.epsilon = stan_convergence::TOL_REL_GRAD * stan_convergence::EPS;
+        SplitObjective objective{t_scaled, change_points, scale_period, normalized_y,
+                                 sigma_obs_prior_scale, sigma_k, sigma_m, sigma, tau, S, K, {}};
+        LBFGSpp::LBFGSBSolver<double> solver(param);
 
-        // Stan's relative-objective test is implemented exactly in progress(),
-        // so liblbfgs's cruder version of it stays off.
-        param.past = 0;
-        param.max_linesearch = 30;          // Maximum number of line search trials
-        param.min_step = 1e-20;             // Minimum step size for line search
-        param.max_step = 1e+20;             // Maximum step size for line search
-        param.ftol = 1e-4;                  // Accuracy parameter for line search (decrease function value)
-        param.wolfe = 0.9;                  // Wolfe condition parameter for line search
-
-        lbfgsfloatval_t fx;
-
-        OptimizationData data = {
-            t_scaled,
-            change_points,
-            scale_period,
-            normalized_y,
-            sigma_obs_prior_scale, sigma_k, sigma_m, sigma, tau,
-            {}, 0, verbose,
-            0.0, Eigen::VectorXd(), false, ""
-        };
-
-        int ret = lbfgs(params_size, params.data(), &fx, evaluate, progress, &data, &param);
-
-        const std::string message = data.termination.empty()
-            ? lbfgs_status_message(ret)
-            : data.termination;
+        double fx = 0.0;
+        int iterations = 0;
+        int status = 0;
+        std::string message = "converged";
+        try {
+            iterations = solver.minimize(objective, z, fx, lower, upper);
+        } catch (const std::exception& error) {
+            status = 1;
+            message = std::string("optimizer failed: ") + error.what();
+        }
 
         if (verbose) {
-            std::cout << "L-BFGS optimization terminated: " << message << "\n";
-            std::cout << "  fx = " << fx << "\n";
+            std::cout << "L-BFGS-B terminated after " << iterations
+                      << " iterations: " << message << "\n  fx = " << fx << "\n";
         }
 
         return OptimizeResult{
-            std::move(params),
-            std::move(data.loss_over_iterations),
-            data.n_iterations,
-            ret,
+            objective.to_natural(z),
+            std::move(objective.loss_envelope),
+            iterations,
+            status,
             message,
         };
 }
 
-// Objective and analytic gradient on their own, for cross-checking against the
-// Python reference implementation. This is the very function the optimizer
-// drives (see evaluate() above), not a copy of it.
 std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         const Eigen::Ref<const Eigen::VectorXd>& params,
         const Eigen::Ref<const Eigen::VectorXd>& t_scaled,
@@ -456,8 +397,12 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
             "Outcome of one optimize() run.")
         .def_readonly("params", &OptimizeResult::params,
                       "Optimized (k, m, delta, beta) vector.")
-        .def_readonly("loss_over_iterations", &OptimizeResult::loss_over_iterations,
-                      "Minus-log-posterior after each iteration, including the L1 term.")
+        .def_readonly("loss_trace", &OptimizeResult::loss_trace,
+                      "Monotone trace of the minus-log-posterior: the best value seen so "
+                      "far, recorded whenever an objective evaluation improves on it. "
+                      "LBFGSpp has no per-iteration hook, so this samples evaluations "
+                      "rather than iterations and is generally a little longer than "
+                      "n_iterations.")
         .def_readonly("n_iterations", &OptimizeResult::n_iterations)
         .def_readonly("status", &OptimizeResult::status,
                       "Raw liblbfgs status code; 0 is LBFGS_SUCCESS.")
@@ -508,5 +453,11 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
 // To compile, run the following command:
 // c++ -std=c++17 -shared -fPIC -O3 -undefined dynamic_lookup \
 //     $(python -m pybind11 --includes) -I/opt/homebrew/opt/eigen/include/eigen3 \
-//     optimize.cpp -llbfgs -o analytic_prophet_cpp$(python3-config --extension-suffix)
+//     -I$(brew --prefix lbfgspp)/include \
+//     optimize.cpp -o analytic_prophet_cpp$(python3-config --extension-suffix)
 // (drop -undefined dynamic_lookup off macOS; tests/conftest.py builds it this way.)
+//
+// Header-only now: LBFGSpp replaced liblbfgs in #23, so there is nothing left
+// to link against. That also removes a macOS trap -- LBFGSpp ships LBFGS.h,
+// which shadows liblbfgs's lbfgs.h on a case-insensitive filesystem when both
+// include directories are on the search path.
