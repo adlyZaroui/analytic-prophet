@@ -158,6 +158,28 @@ def load_cpp_module(lib_path=None):
         _cpp_module_cache[lib_path] = module
     return _cpp_module_cache[lib_path]
 
+def canonical_to_cpp(params):
+    """(k, m, delta, sigma_obs, beta) -> (k, m, delta, beta, zeta).
+
+    The C++ core carries zeta = log(sigma_obs) as the LAST element, whereas the
+    canonical layout keeps sigma_obs between delta and beta, mirroring the order
+    of Stan's `parameters` block. Both describe the same model; only the
+    packing differs. The log is what keeps sigma_obs positive in the C++, since
+    liblbfgs has no box constraints.
+    """
+    k, m, delta, sigma_obs, beta = extract_params(params)
+    return np.concatenate(([k], [m], delta, beta, [np.log(sigma_obs)]))
+
+def cpp_to_canonical(params):
+    """Inverse of canonical_to_cpp: sigma_obs = exp(zeta), moved into place."""
+    params = np.asarray(params, dtype=float)
+    n_delta = N_CHANGE_POINTS
+    k, m = params[0], params[1]
+    delta = params[2:2 + n_delta]
+    beta = params[2 + n_delta:-1]
+    sigma_obs = np.exp(params[-1])
+    return np.concatenate(([k], [m], delta, [sigma_obs], beta))
+
 def canonical_to_split(params):
     """(k, m, delta, sigma_obs, beta) -> (k, m, delta_pos, delta_neg, sigma_obs, beta).
 
@@ -443,11 +465,19 @@ class CustomProphet:
         else:
             objective, jac = self._split_minus_log_posterior, None
 
+        options = {'maxiter': 10000}
+        if optimizer == 'L-BFGS-B':
+            # Defaults (ftol = 2.2e-9 relative, gtol = 1e-5) stop well short of
+            # the optimum once sigma_obs is free -- 93 iterations instead of
+            # 1740 on a 1000-point series, at a loss 3.05 nats worse. These are
+            # L-BFGS-B-specific option names, hence the guard.
+            options.update({'ftol': 1e-16, 'gtol': 1e-12, 'maxfun': 100000})
+
         opt_params = minimize(objective,
                         z0,
                         method=optimizer,
                         bounds=bounds,
-                        options={'maxiter': 10000},
+                        options=options,
                         callback=callback,
                         jac=jac)
 
@@ -489,10 +519,13 @@ class CustomProphet:
         if initial_params is not None:
             defaults.update(initial_params)
 
-        # The compiled optimizer's own extract_params expects (k, m, delta, beta)
-        # with no sigma_obs slot -- it does not estimate sigma_obs, which stays
-        # fixed at self.sigma_obs and is passed to it separately below.
-        params = np.concatenate(([defaults['k']], [defaults['m']], defaults['delta'], defaults['beta']))
+        # The compiled optimizer's layout is [k, m, delta(S), beta(K), zeta],
+        # with zeta = log(sigma_obs) last -- see cpp_to_canonical. Estimating
+        # the log keeps sigma_obs positive without box constraints, which
+        # liblbfgs does not have.
+        zeta_init = np.log(defaults.get('sigma_obs', SIGMA_OBS_INIT))
+        params = np.concatenate(([defaults['k']], [defaults['m']],
+                                 defaults['delta'], defaults['beta'], [zeta_init]))
 
         cpp = load_cpp_module(lib_path)
         result = cpp.optimize(
@@ -501,7 +534,7 @@ class CustomProphet:
             change_points=self.change_points,
             scale_period=self.scale_period,
             normalized_y=self.normalized_y,
-            sigma_obs=self.sigma_obs,
+            sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE,
             sigma_k=self.sigma_k,
             sigma_m=self.sigma_m,
             sigma=self.sigma,
@@ -516,11 +549,16 @@ class CustomProphet:
         self.opt_status = result.status
         self.opt_status_message = result.status_message
 
-        # Splice the fixed sigma_obs into the canonical (k, m, delta, sigma_obs,
-        # beta) layout so predict()/trend_forecast_uncertainty() work the same
-        # regardless of which fit method produced opt_params.
-        params = result.params
-        self.opt_params = np.concatenate((params[:SIGMA_OBS_IDX], [self.sigma_obs], params[SIGMA_OBS_IDX:]))
+        if not np.all(np.isfinite(result.params)):
+            raise RuntimeError(
+                f"the C++ optimizer returned non-finite parameters "
+                f"(status {result.status}: {result.status_message})")
+
+        # Back to the canonical (k, m, delta, sigma_obs, beta) layout, so
+        # predict()/trend_forecast_uncertainty() work the same regardless of
+        # which fit method produced opt_params.
+        self.opt_params = cpp_to_canonical(result.params)
+        self.sigma_obs = self.opt_params[SIGMA_OBS_IDX]
 
         # Return whatever values are necessary
         return -1

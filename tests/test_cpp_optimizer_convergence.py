@@ -39,7 +39,7 @@ import numpy as np
 import pytest
 
 from customProphet import (CustomProphet, N_CHANGE_POINTS, n_yearly, K_IDX, M_IDX,
-                           DELTA_SLICE, SIGMA_OBS_IDX, BETA_SLICE)
+                           DELTA_SLICE, SIGMA_OBS_IDX, BETA_SLICE, canonical_to_cpp)
 
 LBFGSERR_ROUNDING_ERROR = -1001
 
@@ -50,11 +50,6 @@ MATCHED_INIT = {
     "delta": np.zeros(N_CHANGE_POINTS),
     "beta": np.zeros(2 * n_yearly),
 }
-
-
-def canonical_to_cpp(params):
-    """Drop the sigma_obs slot: the C++ core never estimates it."""
-    return np.delete(np.asarray(params, dtype=np.float64), SIGMA_OBS_IDX)
 
 
 def fit_both(df):
@@ -107,41 +102,50 @@ def small_df(peyton_manning_df):
     "case",
     ["zeros", "k_only", "random_small", "random_wide"],
 )
-def test_cpp_gradient_matches_python_analytic(prepared_model, cpp_mlp_and_gradient, cpp_loss_offset, case):
+def test_cpp_gradient_matches_python_analytic(prepared_model, cpp_mlp_and_gradient, param_size, case):
     """Direction 2 from the issue: is the C++ gradient subtly wrong?
 
     It is not. The C++ objective and gradient agree with the Python analytic
-    reference to ~1e-9 at every point tried -- including "zeros", which sits
-    exactly on the delta=0 kink where the two could most plausibly disagree.
-    This is what rules out a gradient bug and points at the line search.
+    reference at every point tried -- including "zeros", which sits exactly on
+    the delta=0 kink where the two could most plausibly disagree.
+
+    The objectives now agree *exactly*, with no constant offset: both carry the
+    T*log(sigma_obs) normalization and the half-normal prior, since both
+    estimate sigma_obs (#18).
     """
     rng = np.random.default_rng(seed=0)
-    cpp_params = {
-        "zeros": np.zeros(47),
-        "k_only": np.concatenate(([0.4, 0.0], np.zeros(N_CHANGE_POINTS), np.zeros(2 * n_yearly))),
-        "random_small": rng.normal(scale=0.5, size=47),
-        "random_wide": rng.normal(scale=2.0, size=47),  # fit_cpp's own STAN-style init
+    canonical, sigma_obs = {
+        "zeros": (np.zeros(param_size), 1.0),
+        "k_only": (np.zeros(param_size), 1.0),
+        "random_small": (rng.normal(scale=0.5, size=param_size), 0.4),
+        "random_wide": (rng.normal(scale=2.0, size=param_size), 2.5),
     }[case]
+    canonical = canonical.copy()
+    if case == "k_only":
+        canonical[K_IDX] = 0.4
+    canonical[SIGMA_OBS_IDX] = sigma_obs  # must be positive: zeta = log(sigma_obs)
 
-    cpp_mlp, cpp_grad = cpp_mlp_and_gradient(prepared_model, cpp_params, SIGMA_OBS)
-
-    canonical = np.insert(cpp_params, SIGMA_OBS_IDX, SIGMA_OBS)
+    cpp_mlp, cpp_grad = cpp_mlp_and_gradient(prepared_model, canonical_to_cpp(canonical))
     py_mlp, py_grad = prepared_model._minus_log_posteriorAndGradient(canonical)
 
-    # The Python objective additionally carries the two sigma_obs terms the C++
-    # side omits (it never estimates sigma_obs); with sigma_obs fixed they are
-    # an additive constant, so subtract it to compare like for like.
-    offset = cpp_loss_offset(prepared_model, SIGMA_OBS)
+    assert cpp_mlp == pytest.approx(py_mlp, rel=1e-9, abs=1e-9)
 
-    assert cpp_mlp == pytest.approx(py_mlp - offset, rel=1e-9, abs=1e-9)
-    np.testing.assert_allclose(cpp_grad, canonical_to_cpp(py_grad), rtol=1e-9, atol=1e-8)
+    # Repack the gradient, which does NOT transform like a parameter vector:
+    # the blocks are reordered, and the sigma_obs slot becomes d/d_zeta via the
+    # chain rule, d(sigma_obs)/d(zeta) = sigma_obs.
+    expected = np.concatenate((
+        py_grad[:2],
+        py_grad[DELTA_SLICE],
+        py_grad[BETA_SLICE],
+        [py_grad[SIGMA_OBS_IDX] * sigma_obs],
+    ))
+    np.testing.assert_allclose(cpp_grad, expected, rtol=1e-9, atol=1e-8)
 
 
 def test_cpp_optimizer_no_longer_bails_out_early(small_df, compiled_optimizer_module):
     """The regression test for the bug as reported: it used to stop after 2
     iterations with LBFGSERR_ROUNDING_ERROR."""
     model = CustomProphet()
-    model.sigma_obs = SIGMA_OBS
     model.fit_cpp(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_module)
 
     assert model.opt_status != LBFGSERR_ROUNDING_ERROR
@@ -189,28 +193,32 @@ def test_first_order_residuals_reject_a_near_miss(small_df):
     assert smooth_residual > 1.0
 
 
-@pytest.mark.parametrize("seed", [0, 1, 2])
-def test_cpp_optimizer_converges_from_any_start(small_df, compiled_optimizer_module, seed):
-    """The objective is convex in (k, m, delta, beta) for fixed sigma_obs, so
-    the optimal value does not depend on where the search starts. Before the
-    fix the loss varied wildly with the starting point, because the line search
-    quit at whatever point it happened to reach."""
-    reference, _ = fit_both(small_df)
-    target = reference._minus_log_posterior(reference.opt_params)
+def test_objective_is_not_convex_once_sigma_obs_is_free(prepared_model):
+    """Freeing sigma_obs costs the convexity that issue #5 leaned on.
 
-    rng = np.random.default_rng(seed)
-    init = {
-        "k": rng.normal(),
-        "m": rng.normal(),
-        "delta": rng.normal(scale=0.5, size=N_CHANGE_POINTS),
-        "beta": rng.normal(scale=0.5, size=2 * n_yearly),
-    }
+    Along the sigma_obs axis the objective carries T*log(sigma_obs), which is
+    concave; between the 1/(2*sigma_obs^2) term below and the sigma_obs^2 prior
+    above there is a window where it dominates. This exhibits a concrete
+    violation of the midpoint inequality, deterministically -- no optimizer
+    involved, so it cannot go flaky.
 
-    model = CustomProphet()
-    model.sigma_obs = SIGMA_OBS
-    model.fit_cpp(small_df, initial_params=init, lib_path=compiled_optimizer_module)
+    It replaces a multi-start test that asserted every starting point reaches
+    the same optimum. That was true while the problem was convex; it is now
+    false, and measurably so -- 2 of 5 perturbed starts land on local optima
+    1206 and 912 nats worse than Prophet's deterministic initialization does.
+    Which is precisely why that initialization matters (#12).
+    """
+    def objective_at(sigma_obs):
+        params = np.zeros(2 + N_CHANGE_POINTS + 1 + 2 * n_yearly)
+        params[SIGMA_OBS_IDX] = sigma_obs
+        return prepared_model._minus_log_posterior(params)
 
-    assert reference._minus_log_posterior(model.opt_params) == pytest.approx(target, rel=1e-6)
+    low, high = 1.0, 3.0
+    chord_midpoint = (objective_at(low) + objective_at(high)) / 2
+    at_midpoint = objective_at((low + high) / 2)
+
+    # convexity would require f(mid) <= (f(low) + f(high)) / 2
+    assert at_midpoint > chord_midpoint
 
 
 def test_both_fit_paths_record_a_monotone_decreasing_trajectory(small_df, compiled_optimizer_module):

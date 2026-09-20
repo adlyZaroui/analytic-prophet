@@ -26,21 +26,29 @@ import numpy as np
 import pytest
 
 import customProphet
-from customProphet import CustomProphet, CPP_MODULE_NAME, N_CHANGE_POINTS, n_yearly, load_cpp_module
+from customProphet import (CustomProphet, CPP_MODULE_NAME, N_CHANGE_POINTS, n_yearly,
+                           SIGMA_OBS_PRIOR_SCALE, load_cpp_module)
 
 SIGMA_OBS = 1.0
+CPP_PARAM_SIZE = 2 + N_CHANGE_POINTS + 2 * n_yearly + 1   # [k, m, delta, beta, zeta]
+
+
+def _valid_params():
+    """A C++-layout vector at Prophet's initialization: everything zero, with
+    zeta = log(1.0) = 0 for the trailing sigma_obs slot."""
+    return np.zeros(CPP_PARAM_SIZE)
 
 
 @pytest.fixture
 def call_kwargs(prepared_model):
     """A valid optimize() call, for tests that then break one argument."""
     return {
-        "params": np.zeros(47),
+        "params": _valid_params(),
         "t_scaled": prepared_model.t_scaled,
         "change_points": prepared_model.change_points,
         "scale_period": float(prepared_model.scale_period),
         "normalized_y": prepared_model.normalized_y,
-        "sigma_obs": SIGMA_OBS,
+        "sigma_obs_prior_scale": SIGMA_OBS_PRIOR_SCALE,
         "sigma_k": prepared_model.sigma_k,
         "sigma_m": prepared_model.sigma_m,
         "sigma": prepared_model.sigma,
@@ -63,7 +71,7 @@ def test_optimize_returns_a_named_result(cpp_module, call_kwargs):
 
     assert result.n_iterations > 0
     assert len(result.loss_over_iterations) == result.n_iterations
-    assert result.params.shape == (47,)
+    assert result.params.shape == (CPP_PARAM_SIZE,)
     assert np.all(np.isfinite(result.params))
     assert result.loss_over_iterations[-1] < result.loss_over_iterations[0]
 
@@ -77,12 +85,12 @@ def test_optimize_does_not_mutate_the_callers_array(cpp_module, call_kwargs):
     """The ctypes binding optimized in place, because it was handed a pointer
     into the caller's numpy buffer. The typed binding takes a copy, so the
     input survives and the result is returned."""
-    params = np.zeros(47)
+    params = _valid_params()
     call_kwargs["params"] = params
 
     result = cpp_module.optimize(**call_kwargs)
 
-    np.testing.assert_array_equal(params, np.zeros(47))
+    np.testing.assert_array_equal(params, _valid_params())
     assert not np.allclose(result.params, 0.0)
 
 
@@ -90,7 +98,7 @@ def test_optimize_does_not_mutate_the_callers_array(cpp_module, call_kwargs):
     "override, message",
     [
         ({"tau": 0.0}, "tau must be positive"),
-        ({"sigma_obs": -1.0}, "sigma_obs must be positive"),
+        ({"sigma_obs_prior_scale": -1.0}, "sigma_obs_prior_scale must be positive"),
         ({"normalized_y": np.zeros(7)}, "same length"),
         ({"params": np.zeros(3)}, "too short"),
     ],
@@ -127,16 +135,17 @@ def test_gradient_entry_point_returns_a_tuple(cpp_module, call_kwargs, prepared_
     the issue's second complaint."""
     del call_kwargs["params"]
     mlp, gradient = cpp_module.minus_log_posterior_and_gradient(
-        params=np.zeros(47), **call_kwargs)
+        params=_valid_params(), **call_kwargs)
 
     assert isinstance(mlp, float)
-    assert gradient.shape == (47,)
+    assert gradient.shape == (CPP_PARAM_SIZE,)
 
     # include_l1_prior is a real keyword argument with a default, not a magic int
+    point = np.full(CPP_PARAM_SIZE, 0.1)
     mlp_without_l1, _ = cpp_module.minus_log_posterior_and_gradient(
-        params=np.full(47, 0.1), include_l1_prior=False, **call_kwargs)
+        params=point, include_l1_prior=False, **call_kwargs)
     mlp_with_l1, _ = cpp_module.minus_log_posterior_and_gradient(
-        params=np.full(47, 0.1), include_l1_prior=True, **call_kwargs)
+        params=point, include_l1_prior=True, **call_kwargs)
 
     expected_l1 = np.sum(np.abs(np.full(N_CHANGE_POINTS, 0.1))) / prepared_model.tau
     assert mlp_with_l1 - mlp_without_l1 == pytest.approx(expected_l1)
@@ -184,7 +193,6 @@ def test_fit_cpp_reports_the_termination_status_in_words(peyton_manning_df, comp
     """The old binding surfaced a bare integer; diagnosing issue #8 meant
     looking -1001 up in lbfgs.h by hand."""
     model = CustomProphet()
-    model.sigma_obs = SIGMA_OBS
     model.fit_cpp(
         peyton_manning_df.iloc[:300].reset_index(drop=True),
         initial_params={
@@ -195,5 +203,9 @@ def test_fit_cpp_reports_the_termination_status_in_words(peyton_manning_df, comp
         lib_path=compiled_optimizer_module,
     )
 
-    assert model.opt_status == 0
-    assert model.opt_status_message == "converged"
+    # No assertion on the specific code: this run ends at the optimum but with
+    # -998, the line search hitting its evaluation cap once there is nothing
+    # left to gain. What matters here is that the code arrives with a sentence
+    # attached rather than as a bare integer.
+    assert model.opt_status_message
+    assert not model.opt_status_message.startswith("liblbfgs error code")

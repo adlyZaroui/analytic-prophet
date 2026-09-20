@@ -10,12 +10,9 @@ turns that claim into a check: a real mismatch points at an actual bug, not
 "found a different local optimum," since convexity says there shouldn't be
 one.
 
-fit_cpp()'s compiled optimizer never estimates sigma_obs (see optimize.cpp's
-extract_params -- it hard-codes a (k, m, delta, beta) layout with no sigma_obs
-slot); fit() now does (issue #4). For a fair comparison this test pins
-sigma_obs to the same fixed value on both sides via fit()'s fixed_sigma_obs
-parameter, so both sides are optimizing the exact same (k, m, delta, beta)
-objective.
+Both sides now estimate sigma_obs (#4 for fit(), #18 for fit_cpp()), so no
+pinning is needed any more: the two objectives are identical term for term,
+and the comparison is over the whole parameter vector.
 
 Comparing final loss (not raw parameter vectors) is deliberate: with 25
 changepoints against a few hundred data points and an L1 prior on delta, the
@@ -45,7 +42,7 @@ import pytest
 from customProphet import CustomProphet, N_CHANGE_POINTS, n_yearly
 
 
-def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_df, compiled_optimizer_module, cpp_loss_offset):
+def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_df, compiled_optimizer_module):
     small_df = peyton_manning_df.iloc[:300].reset_index(drop=True)
     matched_init = {
         "k": 0.0,
@@ -53,14 +50,11 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
         "delta": np.zeros(N_CHANGE_POINTS),
         "beta": np.zeros(2 * n_yearly),
     }
-    fixed_sigma_obs = 1.0
-
     python_model = CustomProphet()
-    python_model.fit(small_df, analytic=True, initial_params=matched_init, fixed_sigma_obs=fixed_sigma_obs)
+    python_model.fit(small_df, analytic=True, initial_params=matched_init)
     assert python_model.opt.success
 
     cpp_model = CustomProphet()
-    cpp_model.sigma_obs = fixed_sigma_obs
     cpp_model.fit_cpp(small_df, initial_params=matched_init, lib_path=compiled_optimizer_module)
 
     # Both sides share the exact same (k, m, delta, beta) objective for a
@@ -71,12 +65,12 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
 
     assert cpp_loss == pytest.approx(python_loss, rel=1e-6)
 
-    # Same start, same objective: both trajectories descend to that same value.
-    # The C++ trajectory is in its own objective's units, hence the offset.
-    offset = cpp_loss_offset(python_model, fixed_sigma_obs)
+    # Same start, same objective -- and since #18 the two objectives agree
+    # exactly, with no constant offset between them, so the trajectories are
+    # directly comparable.
     trajectories = (
         np.asarray(python_model.loss_over_iterations),
-        np.asarray(cpp_model.loss_over_iterations) + offset,
+        np.asarray(cpp_model.loss_over_iterations),
     )
     for trajectory in trajectories:
         assert np.all(np.diff(trajectory) <= 1e-9)
