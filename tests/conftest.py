@@ -134,32 +134,22 @@ def cpp_module(compiled_optimizer_module):
 
 
 @pytest.fixture(scope="session")
-def cpp_loss_offset():
-    """The C++ objective omits the two sigma_obs terms the Python one carries
-    (T*log(sigma_obs) and the prior), because the C++ core never estimates
-    sigma_obs. With sigma_obs pinned they are an additive constant, so adding
-    this to a C++ loss makes it directly comparable with a Python one."""
-    def offset(model, sigma_obs):
-        return model.T * np.log(sigma_obs) + sigma_obs**2 / (2 * SIGMA_OBS_PRIOR_SCALE**2)
-
-    return offset
-
-
-@pytest.fixture(scope="session")
 def cpp_mlp_and_gradient(cpp_module):
     """Calls the C++ objective+gradient the optimizer itself drives.
 
-    Takes a model and the 47-length (k, m, delta, beta) vector the C++ side
-    uses -- it has no sigma_obs slot, since the C++ core never estimates it --
-    and returns (minus_log_posterior, gradient)."""
-    def call(model, cpp_params, sigma_obs, include_l1_prior=True):
+    `cpp_params` is in the C++ layout -- (k, m, delta, beta, zeta) with
+    zeta = log(sigma_obs) last, length 2 + S + K + 1. Returns
+    (minus_log_posterior, gradient). Since sigma_obs is now estimated on both
+    sides, this value is directly comparable with the Python objective: no
+    constant offset separates them any more."""
+    def call(model, cpp_params, include_l1_prior=True):
         return cpp_module.minus_log_posterior_and_gradient(
             params=cpp_params,
             t_scaled=model.t_scaled,
             change_points=model.change_points,
             scale_period=model.scale_period,
             normalized_y=model.normalized_y,
-            sigma_obs=sigma_obs,
+            sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE,
             sigma_k=model.sigma_k,
             sigma_m=model.sigma_m,
             sigma=model.sigma,
