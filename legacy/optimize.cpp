@@ -157,6 +157,29 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
         + std::pow(sigma_obs, 2) / std::pow(sigma_obs_prior_scale, 2);
 }
 
+// Stan's L-BFGS convergence criteria, with CmdStan's default values --
+// Prophet's CmdStanPyBackend.fit calls optimize(algorithm='LBFGS', iter=1e4)
+// and sets no tolerances, so these are what the original actually runs with.
+// [stan] src/stan/optimization/bfgs.hpp, ConvergenceOptions + step()
+//
+// Stan stops as soon as ANY of them holds. liblbfgs natively offers only two
+// (epsilon on a relative gradient norm, and past/delta on relative objective
+// change), which is how this implementation ended up with a single criterion
+// -- and that one unreachable, so runs terminated on line-search exhaustion
+// tens of thousands of iterations past convergence. They are evaluated in the
+// progress callback instead, which liblbfgs lets us stop the run from.
+namespace stan_convergence {
+    constexpr double EPS = 2.220446049250313e-16;   // machine epsilon, as Stan uses it
+    constexpr double F_SCALE = 1.0;                 // ConvergenceOptions::fScale
+    constexpr double TOL_ABS_F = 1e-12;             // tol_obj
+    constexpr double TOL_REL_F = 1e+4;              // tol_rel_obj, scaled by EPS below
+    constexpr double TOL_ABS_GRAD = 1e-8;           // tol_grad
+    constexpr double TOL_REL_GRAD = 1e+7;           // tol_rel_grad, scaled by EPS below
+    constexpr double TOL_ABS_X = 1e-8;              // tol_param
+    constexpr int MAX_ITERATIONS = 10000;           // Prophet passes iter=int(1e4)
+    constexpr int HISTORY_SIZE = 5;                 // history_size
+}
+
 struct OptimizationData {
     Eigen::VectorXd t_scaled;
     Eigen::VectorXd change_points;
@@ -175,6 +198,12 @@ struct OptimizationData {
     std::vector<double> loss_over_iterations;
     int n_iterations;
     bool verbose;
+    // Previous iterate, for Stan's TERM_ABSF and TERM_ABSX tests
+    double previous_f;
+    Eigen::VectorXd previous_x;
+    bool has_previous;
+    // Which of Stan's tests stopped the run, empty if none did
+    std::string termination;
 };
 
 lbfgsfloatval_t evaluate(void* instance, const lbfgsfloatval_t* x, lbfgsfloatval_t* g, const int n, const lbfgsfloatval_t step) {
@@ -212,6 +241,42 @@ int progress(void* instance, const lbfgsfloatval_t* x, const lbfgsfloatval_t* g,
     if (data->verbose) {
         std::cout << "Iteration " << k << ": fx = " << fx << ", xnorm = " << xnorm << ", gnorm = " << gnorm << ", step = " << step << std::endl;
     }
+
+    // Stan's convergence tests, in the order bfgs.hpp checks them. Returning
+    // non-zero stops the run.
+    using namespace stan_convergence;
+    const Eigen::Map<const Eigen::VectorXd> current_x(x, n);
+
+    if (gnorm < TOL_ABS_GRAD) {
+        data->termination = "converged: gradient norm below tol_grad";
+        return 1;
+    }
+
+    if (data->has_previous) {
+        const double objective_change = std::fabs(data->previous_f - fx);
+
+        if (objective_change < TOL_ABS_F) {
+            data->termination = "converged: objective change below tol_obj";
+            return 1;
+        }
+
+        // rel_obj_decrease(), [stan] bfgs.hpp
+        const double relative_change = objective_change
+            / std::max(std::fabs(data->previous_f), std::max(std::fabs(fx), F_SCALE));
+        if (relative_change < TOL_REL_F * EPS) {
+            data->termination = "converged: relative objective change below tol_rel_obj";
+            return 1;
+        }
+
+        if ((current_x - data->previous_x).norm() < TOL_ABS_X) {
+            data->termination = "converged: parameter change below tol_param";
+            return 1;
+        }
+    }
+
+    data->previous_f = fx;
+    data->previous_x = current_x;
+    data->has_previous = true;
     return 0;
 }
 
@@ -232,7 +297,7 @@ struct OptimizeResult {
 std::string lbfgs_status_message(int code) {
     switch (code) {
         case LBFGS_SUCCESS:                 return "converged";
-        case LBFGS_STOP:                    return "stopped by the progress callback";
+        case LBFGS_STOP:                    return "stopped by the convergence test in progress()";
         case LBFGS_ALREADY_MINIMIZED:       return "the initial point is already a minimizer";
         case LBFGSERR_MAXIMUMITERATION:     return "reached max_iterations before converging";
         case LBFGSERR_MAXIMUMLINESEARCH:    return "line search hit max_linesearch evaluations";
@@ -305,16 +370,23 @@ OptimizeResult optimize(Eigen::VectorXd params,
         param.orthantwise_end = 2 + change_points_size;     // delta only, not beta
         param.linesearch = LBFGS_LINESEARCH_BACKTRACKING;   // required by OWL-QN
 
-        // Freeing sigma_obs makes the problem markedly harder: the likelihood
-        // term is scaled by 1/(2*sigma_obs^2), ~350x at a fitted sigma_obs of
-        // ~0.037, against priors whose scales are fixed. Convergence took ~250
-        // iterations with sigma_obs pinned; it now takes 28k-39k on this data,
-        // so the old 10000 cap cut the fit short.
-        param.max_iterations = 100000;
-        param.m = 5;                        // History size (similar to Stan's history_size)
-        param.epsilon = 1e-8;               // Convergence tolerance for gradient
-        param.delta = 1e-12;                // Minimum function-value decrease, when past > 0
-        param.past = 0;                     // No past checking for convergence (focus on gradient norm)
+        // Prophet's iter=int(1e4). This was raised to 100000 as a workaround
+        // while the convergence tests were missing; with them in place the run
+        // stops on a criterion long before the cap, as Stan's does.
+        param.max_iterations = stan_convergence::MAX_ITERATIONS;
+        param.m = stan_convergence::HISTORY_SIZE;   // Stan's history_size
+
+        // liblbfgs's own relative-gradient test, used as the stand-in for
+        // Stan's TERM_RELGRAD. Stan's form is -p_k.g_k / max(|f_k|, fScale),
+        // which needs the search direction; liblbfgs exposes only
+        // ||g|| / max(1, ||x||) and no way to reach p_k from the callback, so
+        // this is the closest available and is the one Stan test not
+        // reproduced exactly. The other four are in progress() above.
+        param.epsilon = stan_convergence::TOL_REL_GRAD * stan_convergence::EPS;
+
+        // Stan's relative-objective test is implemented exactly in progress(),
+        // so liblbfgs's cruder version of it stays off.
+        param.past = 0;
         param.max_linesearch = 30;          // Maximum number of line search trials
         param.min_step = 1e-20;             // Minimum step size for line search
         param.max_step = 1e+20;             // Maximum step size for line search
@@ -329,13 +401,18 @@ OptimizeResult optimize(Eigen::VectorXd params,
             scale_period,
             normalized_y,
             sigma_obs_prior_scale, sigma_k, sigma_m, sigma, tau,
-            {}, 0, verbose
+            {}, 0, verbose,
+            0.0, Eigen::VectorXd(), false, ""
         };
 
         int ret = lbfgs(params_size, params.data(), &fx, evaluate, progress, &data, &param);
 
+        const std::string message = data.termination.empty()
+            ? lbfgs_status_message(ret)
+            : data.termination;
+
         if (verbose) {
-            std::cout << "L-BFGS optimization terminated: " << lbfgs_status_message(ret) << "\n";
+            std::cout << "L-BFGS optimization terminated: " << message << "\n";
             std::cout << "  fx = " << fx << "\n";
         }
 
@@ -344,7 +421,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
             std::move(data.loss_over_iterations),
             data.n_iterations,
             ret,
-            lbfgs_status_message(ret),
+            message,
         };
 }
 

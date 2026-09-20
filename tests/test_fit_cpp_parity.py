@@ -63,7 +63,17 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
     python_loss = python_model._minus_log_posterior(python_model.opt_params)
     cpp_loss = python_model._minus_log_posterior(cpp_model.opt_params)
 
-    assert cpp_loss == pytest.approx(python_loss, rel=1e-6)
+    # 1e-4, loosened from 1e-6 in #21. Under Stan's convergence criteria
+    # neither path is run to the true optimum -- both stop when progress
+    # stalls -- so they settle at slightly different points on the same
+    # plateau. Demanding 1e-6 agreement asks for more precision than the model
+    # is being fit to.
+    #
+    # The threshold reflects the guarantee, not the best case: the gap is
+    # 7.6e-10 at this size, but 3.8e-5 on the full 2905-point series, and it is
+    # data-dependent because the two paths optimize different
+    # parameterizations (split reformulation vs OWL-QN on the natural one).
+    assert cpp_loss == pytest.approx(python_loss, rel=1e-4)
 
     # Same start, same objective -- and since #18 the two objectives agree
     # exactly, with no constant offset between them, so the trajectories are
@@ -74,7 +84,7 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
     )
     for trajectory in trajectories:
         assert np.all(np.diff(trajectory) <= 1e-9)
-        assert trajectory[-1] == pytest.approx(cpp_loss, rel=1e-6)
+        assert trajectory[-1] == pytest.approx(cpp_loss, rel=1e-4)
 
 
 def test_compiled_extension_exposes_its_entry_points(cpp_module):

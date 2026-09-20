@@ -161,10 +161,19 @@ def test_cpp_optimizer_reaches_first_order_optimum(small_df, compiled_optimizer_
 
     smooth_residual, delta_violation = first_order_residuals(reference, model.opt_params)
 
-    # Scale: the L1 subdifferential is [-1/tau, 1/tau] = [-20, 20], and
-    # perturbing k by 0.05 pushes the smooth residual to ~7, so 1e-3 is a
-    # demanding bound with four orders of headroom over a near-miss.
-    assert smooth_residual < 1e-3
+    # The bound is 5e-2, not the 1e-3 this asserted before #21. That is a real
+    # weakening and worth stating plainly: Stan stops on objective *progress*
+    # (tol_rel_obj) rather than on gradient size, so a Prophet-faithful run
+    # halts once improvement stalls, leaving a larger gradient than a run
+    # driven to gradient tolerance would. Measured residual here is ~1.5e-2,
+    # against ~1.7e-4 when the optimizer was allowed to grind 33k further
+    # iterations for 4e-5 of relative loss.
+    #
+    # It still discriminates: the L1 subdifferential is [-1/tau, 1/tau] =
+    # [-20, 20], and perturbing k by 0.05 drives the residual to ~7 (see
+    # test_first_order_residuals_reject_a_near_miss), so this keeps two orders
+    # of headroom over a near-miss.
+    assert smooth_residual < 5e-2
     assert delta_violation < 1e-6
 
 
