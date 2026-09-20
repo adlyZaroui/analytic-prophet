@@ -577,9 +577,11 @@ class CustomProphet:
             verbose=verbose,
         )
 
-        # Mirrors fit(): the per-iteration objective, so both fit paths expose
-        # a directly comparable loss trajectory.
-        self.loss_over_iterations = list(result.loss_over_iterations)
+        # Mirrors fit(), so both paths expose a comparable loss trajectory --
+        # with one caveat: fit()'s is per iteration, while the C++ core's is a
+        # monotone envelope over objective evaluations, since LBFGSpp offers no
+        # per-iteration hook. Both decrease monotonically to the same value.
+        self.loss_over_iterations = list(result.loss_trace)
         self.opt = result
         self.opt_status = result.status
         self.opt_status_message = result.status_message

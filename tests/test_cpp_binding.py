@@ -70,10 +70,12 @@ def test_optimize_returns_a_named_result(cpp_module, call_kwargs):
     result = cpp_module.optimize(**call_kwargs)
 
     assert result.n_iterations > 0
-    assert len(result.loss_over_iterations) == result.n_iterations
+    # loss_trace samples evaluations, not iterations (LBFGSpp has no
+    # per-iteration hook), so it is >= n_iterations rather than equal to it
+    assert len(result.loss_trace) >= result.n_iterations
     assert result.params.shape == (CPP_PARAM_SIZE,)
     assert np.all(np.isfinite(result.params))
-    assert result.loss_over_iterations[-1] < result.loss_over_iterations[0]
+    assert result.loss_trace[-1] < result.loss_trace[0]
 
     # every code maps to a sentence, so a failure is readable without going to
     # lbfgs.h -- and the repr carries it too

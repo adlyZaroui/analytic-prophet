@@ -82,11 +82,15 @@ def build_cpp_extension(out_dir):
         print("Eigen headers not found (set EIGEN_INCLUDE_DIR); skipping fit_cpp", file=sys.stderr)
         return None
 
+    lbfgspp = _find_lbfgspp()
+    if lbfgspp is None:
+        print("LBFGSpp headers not found (`brew install lbfgspp`); skipping fit_cpp", file=sys.stderr)
+        return None
+
     cmd = [compiler, "-std=c++17", "-shared", "-fPIC", "-O3",
            "-o", str(out_path), str(LEGACY / "optimize.cpp"),
            f"-I{eigen}", f"-I{pybind11.get_include()}",
-           f"-I{sysconfig.get_paths()['include']}",
-           "-L/usr/local/lib", "-L/opt/homebrew/lib", "-llbfgs"]
+           f"-I{sysconfig.get_paths()['include']}", f"-I{lbfgspp}"]
     if sys.platform == "darwin":
         cmd += ["-undefined", "dynamic_lookup"]
 
@@ -95,6 +99,23 @@ def build_cpp_extension(out_dir):
         print(f"could not build the C++ core: {result.stderr[-400:]}", file=sys.stderr)
         return None
     return str(out_path)
+
+
+def _find_lbfgspp():
+    """LBFGSpp headers (L-BFGS-B), header-only -- nothing is linked."""
+    candidates = [os.environ.get("LBFGSPP_INCLUDE_DIR")]
+    try:
+        prefix = subprocess.run(["brew", "--prefix", "lbfgspp"], capture_output=True,
+                                text=True, timeout=5).stdout.strip()
+        if prefix:
+            candidates.append(str(Path(prefix, "include")))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    candidates += ["/opt/homebrew/include", "/usr/local/include", "/usr/include"]
+    for c in candidates:
+        if c and (Path(c) / "LBFGSB.h").exists():
+            return c
+    return None
 
 
 def _find_eigen():

@@ -82,7 +82,7 @@ def _build_cpp_extension(tmp_path_factory):
     """Builds legacy/optimize.cpp into an importable pybind11 extension, using
     the compile command documented in that file's trailing comment. Skips
     (rather than fails) the tests that depend on it when the C++ toolchain,
-    Eigen, pybind11 or liblbfgs aren't available -- that's an environment gap,
+    Eigen, pybind11 or LBFGSpp aren't available -- that's an environment gap,
     not a code defect."""
     compiler = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
     if compiler is None:
@@ -97,6 +97,11 @@ def _build_cpp_extension(tmp_path_factory):
     except ImportError:
         pytest.skip("pybind11 is not installed -- can't build the C++ core")
 
+    lbfgspp_include = _find_lbfgspp_include()
+    if lbfgspp_include is None:
+        pytest.skip("LBFGSpp headers not found (set LBFGSPP_INCLUDE_DIR, or "
+                    "`brew install lbfgspp`) -- can't build the C++ core")
+
     suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
     out_path = tmp_path_factory.mktemp("cpp_core") / f"{CPP_MODULE_NAME}{suffix}"
 
@@ -106,7 +111,7 @@ def _build_cpp_extension(tmp_path_factory):
         f"-I{eigen_include}",
         f"-I{pybind11.get_include()}",
         f"-I{sysconfig.get_paths()['include']}",
-        "-L/usr/local/lib", "-L/opt/homebrew/lib", "-llbfgs",
+        f"-I{lbfgspp_include}",
     ]
     if sys.platform == "darwin":
         # Extension modules resolve CPython's symbols from the host interpreter
@@ -115,9 +120,32 @@ def _build_cpp_extension(tmp_path_factory):
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
-        pytest.skip(f"could not build the C++ core (liblbfgs missing?): {result.stderr[-500:]}")
+        pytest.skip(f"could not build the C++ core: {result.stderr[-500:]}")
 
     return str(out_path)
+
+
+def _find_lbfgspp_include():
+    """LBFGSpp headers (L-BFGS-B). Header-only, so nothing is linked.
+
+    NOTE: LBFGSpp ships LBFGS.h, which shadows liblbfgs's lbfgs.h on a
+    case-insensitive filesystem. That no longer bites since #23 removed the
+    liblbfgs dependency, but it is why the two must not both be on the
+    include path.
+    """
+    candidates = [os.environ.get("LBFGSPP_INCLUDE_DIR")]
+    try:
+        prefix = subprocess.run(["brew", "--prefix", "lbfgspp"], capture_output=True,
+                                text=True, timeout=5).stdout.strip()
+        if prefix:
+            candidates.append(str(Path(prefix, "include")))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    candidates += ["/opt/homebrew/include", "/usr/local/include", "/usr/include"]
+    for candidate in candidates:
+        if candidate and (Path(candidate) / "LBFGSB.h").exists():
+            return candidate
+    return None
 
 
 @pytest.fixture(scope="session")
