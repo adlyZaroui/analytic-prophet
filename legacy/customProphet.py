@@ -8,15 +8,57 @@ from scipy.optimize import minimize
 from scipy.stats import halfcauchy
 from typing import Tuple
 
-N_CHANGE_POINTS = 25 # number of change points - hyperparameter
-TAU = 0.05 # changepoint prior scale - hyperparameter
-SIGMA = 10 # seasonality prior scale - hyperparameter
-SIGMA_OBS_PRIOR_SCALE = 0.5 # prior scale on sigma_obs, matches Prophet's `sigma_obs ~ normal(0, 0.5)`
-SIGMA_OBS_INIT = 1.0 # MAP init value for sigma_obs, matches Prophet's stan_init
+# ---------------------------------------------------------------------------
+# Model constants, checked against facebook/prophet (additive mode, linear
+# growth, MAP). Sources:
+#   [stan] python/stan/prophet.stan
+#   [fc]   python/prophet/forecaster.py
+#
+# Three categories, kept deliberately distinct:
+#
+#   FITTED  free parameters in Stan's `parameters` block, estimated by L-BFGS.
+#           Here: k, m, delta(S), sigma_obs, beta(K) -- see the layout below.
+#   SCALE   the *scale of a prior* on a fitted parameter. A scale is not the
+#           value of anything; it controls how hard a fitted parameter is
+#           pulled toward zero. Prophet estimates none of these -- there are no
+#           hierarchical priors in the model.
+#   FIXED   structural constants (counts, ranges, orders), passed to Stan as
+#           data.
+# ---------------------------------------------------------------------------
 
-n_yearly = 10  # Number of Fourier terms for yearly seasonality
-sigma_k = 5  # Prior scale for rate changes
-sigma_m = 5  # Prior scale for rate offsets
+# FIXED -- number of changepoints S. [fc] Prophet.__init__ n_changepoints=25
+N_CHANGE_POINTS = 25
+# FIXED -- changepoints span the first 80% of history.
+# [fc] Prophet.__init__ changepoint_range=0.8
+CHANGEPOINT_RANGE = 0.8
+# FIXED -- Fourier order N for yearly seasonality, so K = 2N = 20 columns.
+# [fc] set_auto_seasonalities, yearly fourier_order=10
+n_yearly = 10
+
+# SCALE on delta, the changepoint rate adjustments: delta ~ double_exponential(0, tau).
+# [stan] model block; [fc] Prophet.__init__ changepoint_prior_scale=0.05 (user-configurable)
+TAU = 0.05
+# SCALE on beta, the seasonality coefficients: beta ~ normal(0, sigmas).
+# [stan] model block; [fc] Prophet.__init__ seasonality_prior_scale=10.0 (user-configurable)
+# NOTE: `sigmas` is vector[K] in Stan, one scale per regressor column, so
+# seasonality and holiday terms can differ. A scalar is only adequate because
+# this implementation is yearly-seasonality-only; adding holidays or a second
+# seasonality means making this per-column.
+SIGMA = 10
+# SCALE on sigma_obs, the observation noise: sigma_obs ~ normal(0, 0.5),
+# truncated at 0 by `real<lower=0>`. [stan] parameters + model blocks.
+# Hardcoded in prophet.stan -- not user-configurable.
+SIGMA_OBS_PRIOR_SCALE = 0.5
+# SCALE on k: k ~ normal(0, 5). [stan] model block. Hardcoded, not configurable.
+sigma_k = 5
+# SCALE on m: m ~ normal(0, 5). [stan] model block. Hardcoded, not configurable.
+sigma_m = 5
+
+# INIT -- Prophet overrides Stan's random init with explicit values, so Stan's
+# `init_r * N(0, 1)` default is never reached. [fc] calculate_initial_params
+# returns sigma_obs=1.0, delta=zeros(S), beta=zeros(K), and k/m from
+# linear_growth_init (see below).
+SIGMA_OBS_INIT = 1.0
 
 # Parameter vector layout shared by the analytic posterior/gradient and by
 # predict()/trend_forecast_uncertainty(): [k, m, delta (S), sigma_obs, beta (2*n_yearly)]
@@ -25,6 +67,26 @@ M_IDX = 1
 DELTA_SLICE = slice(2, 2 + N_CHANGE_POINTS)
 SIGMA_OBS_IDX = DELTA_SLICE.stop
 BETA_SLICE = slice(SIGMA_OBS_IDX + 1, SIGMA_OBS_IDX + 1 + 2 * n_yearly)
+
+def linear_growth_init(t_scaled, normalized_y):
+    """Prophet's deterministic starting point for (k, m): the line through the
+    first and last points of the scaled series.
+
+    [fc] Prophet.linear_growth_init -- it indexes by argmin/argmax of ds rather
+    than assuming the frame is sorted, so this does the same via t_scaled.
+
+        k = (y_scaled[i1] - y_scaled[i0]) / (t[i1] - t[i0])
+        m = y_scaled[i0] - k * t[i0]
+
+    Prophet always passes this in explicitly, which is why Stan's random
+    `init_r * N(0, 1)` default never applies.
+    """
+    i0 = int(np.argmin(t_scaled))
+    i1 = int(np.argmax(t_scaled))
+    span = t_scaled[i1] - t_scaled[i0]
+    k = (normalized_y[i1] - normalized_y[i0]) / span
+    m = normalized_y[i0] - k * t_scaled[i0]
+    return float(k), float(m)
 
 def det_dot(a, b):
     return (a * b[None, :]).sum(axis=-1)
@@ -127,7 +189,7 @@ def compute_trend(k, m, delta, change_points, t_scaled, y_absmax):
     """Piecewise-linear trend in normalized-y space, de-normalized once at
     the end. Shared by predict() and trend_forecast_uncertainty() so the
     de-normalization can't drift apart between the two again."""
-    A = (t_scaled[:, None] > change_points) * 1
+    A = (t_scaled[:, None] >= change_points) * 1
     gamma = -change_points * delta
     trend_normalized = (k + det_dot(A, delta)) * t_scaled + (m + det_dot(A, gamma))
     return trend_normalized * y_absmax
@@ -146,7 +208,7 @@ class CustomProphet:
         self.T = None
         self.n_changepoints = N_CHANGE_POINTS
         self.change_points = None
-        self.changepoint_range = 0.8
+        self.changepoint_range = CHANGEPOINT_RANGE
         
         self.tau = TAU # sparse prior on rate adjustments delta
         self.sigma = SIGMA # prior on fourier coefficients beta
@@ -174,6 +236,19 @@ class CustomProphet:
         self.normalized_y = np.array(self.y / self.y_absmax)
     
     def _generate_change_points(self) -> None:
+        """Changepoints spaced uniformly in *scaled time* over the first
+        changepoint_range of history.
+
+        KNOWN DIVERGENCE from [fc] set_changepoints, which spaces them over
+        uniformly-spaced row *indices* of the first 80% of history:
+
+            np.linspace(0, hist_size - 1, n_changepoints + 1).round().astype(int)
+
+        and then takes the ds values at those rows. For regularly-spaced daily
+        data the two agree; for irregular or gappy series they diverge, since
+        index-spacing follows observation density and time-spacing does not.
+        Left as-is deliberately -- see the follow-up issue.
+        """
         max_t_scaled = np.max(self.t_scaled)
         self.change_points = np.linspace(0, self.changepoint_range * max_t_scaled, self.n_changepoints + 1)[1:]
 
@@ -182,7 +257,7 @@ class CustomProphet:
         k, m, delta, sigma_obs, beta = extract_params(params)
 
         # trend component
-        A = (self.t_scaled[:, None] > self.change_points) * 1
+        A = (self.t_scaled[:, None] >= self.change_points) * 1
         gamma = -self.change_points * delta
         g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
@@ -212,7 +287,7 @@ class CustomProphet:
         k, m, delta, sigma_obs, beta = extract_params(params)
 
         # trend component
-        A = (self.t_scaled[:, None] > self.change_points) * 1
+        A = (self.t_scaled[:, None] >= self.change_points) * 1
         gamma = -self.change_points * delta
         g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
@@ -240,7 +315,7 @@ class CustomProphet:
         k, m, delta, sigma_obs, beta = extract_params(params)
 
         # trend component
-        A = (self.t_scaled[:, None] > self.change_points) * 1
+        A = (self.t_scaled[:, None] >= self.change_points) * 1
         gamma = -self.change_points * delta
         g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
@@ -326,10 +401,14 @@ class CustomProphet:
         self._normalize_y()
         self._generate_change_points()
 
+        # [fc] calculate_initial_params: k/m from linear_growth_init, delta and
+        # beta at zero, sigma_obs at 1.0. Prophet passes these to Stan
+        # explicitly, so Stan's random init is never used.
+        k_init, m_init = linear_growth_init(self.t_scaled, self.normalized_y)
         initial_params_dict = {
-            'k': 0,
-            'm': 0,
-            'delta': np.zeros((25,)),
+            'k': k_init,
+            'm': m_init,
+            'delta': np.zeros((N_CHANGE_POINTS,)),
             'sigma_obs': SIGMA_OBS_INIT,
             'beta': np.zeros((2 * n_yearly,))
         }
@@ -393,15 +472,19 @@ class CustomProphet:
         self._normalize_y()
         self._generate_change_points()
 
-        # Initialize parameters
-        # 0 + init_r * N(0, 1) - STAN initialization, unless overridden by
-        # initial_params (e.g. to match fit()'s starting point for a parity test)
-        init_r = 2.0
+        # Same deterministic initialization as fit(), so both fit paths start
+        # from the same point. [fc] calculate_initial_params.
+        #
+        # This used to draw init_r * N(0, 1) with init_r=2.0, described as
+        # "STAN initialization" -- but Prophet always passes explicit inits, so
+        # Stan's random default is never reached. The draw also came from an
+        # unseeded RNG, making fit_cpp() non-reproducible run to run.
+        k_init, m_init = linear_growth_init(self.t_scaled, self.normalized_y)
         defaults = {
-            'k': init_r * self.rng.normal(),
-            'm': init_r * self.rng.normal(),
-            'delta': self.rng.normal(loc=0.0, scale=init_r, size=(25,)),
-            'beta': self.rng.normal(loc=0.0, scale=init_r, size=(2 * n_yearly,)),
+            'k': k_init,
+            'm': m_init,
+            'delta': np.zeros((N_CHANGE_POINTS,)),
+            'beta': np.zeros((2 * n_yearly,)),
         }
         if initial_params is not None:
             defaults.update(initial_params)
