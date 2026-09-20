@@ -24,12 +24,41 @@ Eigen::MatrixXd fourier_components(const Eigen::VectorXd& t_days, double period,
     return result;
 }
 
-std::tuple<double, double, Eigen::VectorXd, Eigen::VectorXd> extract_params(const Eigen::Ref<const Eigen::VectorXd>& params) {
-    double k = params(0);
-    double m = params(1);
-    Eigen::VectorXd delta = params.segment(2, 25); // Extract next 25 elements for delta
-    Eigen::VectorXd beta = params.tail(params.size() - 27);
-    return std::make_tuple(k, m, delta, beta);
+// Parameter vector layout: [k, m, delta(S), beta(K), zeta], length 2 + S + K + 1.
+// zeta = log(sigma_obs): liblbfgs has no box constraints, and optimizing the
+// log enforces sigma_obs > 0 for free. Offsets are computed from S (and K,
+// implied by the vector length) rather than hardcoded -- the literals this
+// replaced (segment(2, 25), tail(size - 27)) would have silently absorbed the
+// new trailing element into beta.
+struct ModelParams {
+    double k;
+    double m;
+    Eigen::VectorXd delta;
+    Eigen::VectorXd beta;
+    double zeta;
+    double sigma_obs;   // exp(zeta), recovered once per evaluation
+};
+
+ModelParams extract_params(const Eigen::Ref<const Eigen::VectorXd>& params, int S) {
+    const int K = static_cast<int>(params.size()) - 3 - S;
+    // The Fourier order is still hardcoded at 10 further down (issue #14), so
+    // K is pinned at 20. Checking it here turns a downstream Eigen
+    // "invalid matrix product" abort into a diagnosable error.
+    if (K != 2 * 10) {
+        throw std::invalid_argument(
+            "params has length " + std::to_string(params.size()) + " with S=" +
+            std::to_string(S) + ", implying K=" + std::to_string(K) +
+            " seasonality columns; expected 20. The layout is "
+            "[k, m, delta(S), beta(K), zeta], length 2 + S + K + 1.");
+    }
+    ModelParams p;
+    p.k = params(0);
+    p.m = params(1);
+    p.delta = params.segment(2, S);
+    p.beta = params.segment(2 + S, K);
+    p.zeta = params(params.size() - 1);
+    p.sigma_obs = std::exp(p.zeta);
+    return p;
 }
 
 // include_l1_prior=false omits the Laplace (L1) prior on delta from both the
@@ -41,7 +70,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       const Eigen::VectorXd& change_points_vec,
                                       double scale_period,
                                       const Eigen::VectorXd& normalized_y_vec,
-                                      double sigma_obs,
+                                      double sigma_obs_prior_scale,
                                       double sigma_k,
                                       double sigma_m,
                                       double sigma,
@@ -49,9 +78,13 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       double& mlp_out,
                                       Eigen::Ref<Eigen::VectorXd> grad_out,
                                       bool include_l1_prior = true) {
-    double k, m;
-    Eigen::VectorXd delta, beta;
-    std::tie(k, m, delta, beta) = extract_params(params_vec);
+    const ModelParams p = extract_params(params_vec, static_cast<int>(change_points_vec.size()));
+    const double k = p.k;
+    const double m = p.m;
+    const Eigen::VectorXd& delta = p.delta;
+    const Eigen::VectorXd& beta = p.beta;
+    const double sigma_obs = p.sigma_obs;
+    const double T = static_cast<double>(t_scaled_vec.size());
 
     // Trend component
     Eigen::VectorXd ones = Eigen::VectorXd::Ones(t_scaled_vec.size());
@@ -70,7 +103,14 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
 
     double sum_squared_diff = r.array().square().sum();
 
-    double minus_log_posterior_value = sum_squared_diff / (2 * std::pow(sigma_obs, 2)) +
+    // T * zeta is the Gaussian likelihood's normalization. It was droppable
+    // only while sigma_obs was a constant; with sigma_obs free, omitting it
+    // leaves nothing penalizing growth -- the residual term shrinks
+    // monotonically as sigma_obs rises and the optimizer inflates it badly.
+    // The last term is the half-normal prior, sigma_obs ~ normal(0, 0.5).
+    double minus_log_posterior_value = T * p.zeta +
+                                       sum_squared_diff / (2 * std::pow(sigma_obs, 2)) +
+                                       std::pow(sigma_obs, 2) / (2 * std::pow(sigma_obs_prior_scale, 2)) +
                                        std::pow(k, 2) / (2 * std::pow(sigma_k, 2)) +
                                        std::pow(m, 2) / (2 * std::pow(sigma_m, 2)) +
                                        beta.array().square().sum() / (2 * std::pow(sigma, 2));
@@ -105,6 +145,16 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
     Eigen::VectorXd dbeta = -(x.transpose() * r) / (sigma_obs * sigma_obs) + beta / (sigma * sigma);
 
     grad_out.segment(beta_start_index, beta.size()) = dbeta;
+
+    // Compute dzeta, by chain rule from d/d_sigma_obs using
+    // d(sigma_obs)/d(zeta) = sigma_obs:
+    //   d/d_sigma_obs = T/sigma_obs - sum(r^2)/sigma_obs^3 + sigma_obs/scale^2
+    //   d/d_zeta      = T - sum(r^2)/sigma_obs^2 + sigma_obs^2/scale^2
+    // The four blocks above need no re-derivation: they already divide by
+    // sigma_obs^2, which now simply varies between steps instead of being pinned.
+    grad_out(grad_out.size() - 1) = T
+        - sum_squared_diff / (sigma_obs * sigma_obs)
+        + std::pow(sigma_obs, 2) / std::pow(sigma_obs_prior_scale, 2);
 }
 
 struct OptimizationData {
@@ -112,7 +162,7 @@ struct OptimizationData {
     Eigen::VectorXd change_points;
     double scale_period;
     Eigen::VectorXd normalized_y;
-    double sigma_obs;
+    double sigma_obs_prior_scale;
     double sigma_k;
     double sigma_m;
     double sigma;
@@ -140,7 +190,7 @@ lbfgsfloatval_t evaluate(void* instance, const lbfgsfloatval_t* x, lbfgsfloatval
                                      data->change_points,
                                      data->scale_period,
                                      data->normalized_y,
-                                     data->sigma_obs,
+                                     data->sigma_obs_prior_scale,
                                      data->sigma_k,
                                      data->sigma_m,
                                      data->sigma,
@@ -202,7 +252,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
                         const Eigen::Ref<const Eigen::VectorXd>& change_points,
                         double scale_period,
                         const Eigen::Ref<const Eigen::VectorXd>& normalized_y,
-                        double sigma_obs,
+                        double sigma_obs_prior_scale,
                         double sigma_k,
                         double sigma_m,
                         double sigma,
@@ -218,14 +268,15 @@ OptimizeResult optimize(Eigen::VectorXd params,
         if (t_scaled.size() != normalized_y.size()) {
             throw std::invalid_argument("t_scaled and normalized_y must have the same length");
         }
-        if (params_size < 2 + change_points_size) {
+        // 2 + S + K + 1, with at least one beta column
+        if (params_size < 2 + change_points_size + 2) {
             throw std::invalid_argument("params is too short for the given number of change points");
         }
         if (tau <= 0.0) {
             throw std::invalid_argument("tau must be positive");
         }
-        if (sigma_obs <= 0.0) {
-            throw std::invalid_argument("sigma_obs must be positive");
+        if (sigma_obs_prior_scale <= 0.0) {
+            throw std::invalid_argument("sigma_obs_prior_scale must be positive");
         }
 
         lbfgs_parameter_t param;
@@ -254,7 +305,12 @@ OptimizeResult optimize(Eigen::VectorXd params,
         param.orthantwise_end = 2 + change_points_size;     // delta only, not beta
         param.linesearch = LBFGS_LINESEARCH_BACKTRACKING;   // required by OWL-QN
 
-        param.max_iterations = 10000;
+        // Freeing sigma_obs makes the problem markedly harder: the likelihood
+        // term is scaled by 1/(2*sigma_obs^2), ~350x at a fitted sigma_obs of
+        // ~0.037, against priors whose scales are fixed. Convergence took ~250
+        // iterations with sigma_obs pinned; it now takes 28k-39k on this data,
+        // so the old 10000 cap cut the fit short.
+        param.max_iterations = 100000;
         param.m = 5;                        // History size (similar to Stan's history_size)
         param.epsilon = 1e-8;               // Convergence tolerance for gradient
         param.delta = 1e-12;                // Minimum function-value decrease, when past > 0
@@ -272,7 +328,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
             change_points,
             scale_period,
             normalized_y,
-            sigma_obs, sigma_k, sigma_m, sigma, tau,
+            sigma_obs_prior_scale, sigma_k, sigma_m, sigma, tau,
             {}, 0, verbose
         };
 
@@ -301,7 +357,7 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         const Eigen::Ref<const Eigen::VectorXd>& change_points,
         double scale_period,
         const Eigen::Ref<const Eigen::VectorXd>& normalized_y,
-        double sigma_obs,
+        double sigma_obs_prior_scale,
         double sigma_k,
         double sigma_m,
         double sigma,
@@ -310,7 +366,7 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
     double mlp = 0.0;
     Eigen::VectorXd gradient(params.size());
     minus_log_posterior_and_gradient(params, t_scaled, change_points, scale_period,
-                                     normalized_y, sigma_obs, sigma_k, sigma_m, sigma,
+                                     normalized_y, sigma_obs_prior_scale, sigma_k, sigma_m, sigma,
                                      tau, mlp, gradient, include_l1_prior);
     return {mlp, gradient};
 }
@@ -342,7 +398,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("change_points"),
           py::arg("scale_period"),
           py::arg("normalized_y"),
-          py::arg("sigma_obs"),
+          py::arg("sigma_obs_prior_scale"),
           py::arg("sigma_k"),
           py::arg("sigma_m"),
           py::arg("sigma"),
@@ -360,7 +416,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("change_points"),
           py::arg("scale_period"),
           py::arg("normalized_y"),
-          py::arg("sigma_obs"),
+          py::arg("sigma_obs_prior_scale"),
           py::arg("sigma_k"),
           py::arg("sigma_m"),
           py::arg("sigma"),

@@ -108,10 +108,9 @@ def test_both_fit_paths_start_from_the_same_point(peyton_manning_df, compiled_op
     small_df = peyton_manning_df.iloc[:300].reset_index(drop=True)
 
     python_model = CustomProphet()
-    python_model.fit(small_df, analytic=True, fixed_sigma_obs=1.0)
+    python_model.fit(small_df, analytic=True)
 
     cpp_model = CustomProphet()
-    cpp_model.sigma_obs = 1.0
     cpp_model.fit_cpp(small_df, lib_path=compiled_optimizer_module)
 
     expected = linear_growth_init(python_model.t_scaled, python_model.normalized_y)
