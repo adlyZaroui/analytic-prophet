@@ -2,17 +2,16 @@
 Shared fixtures for the analytic-prophet test suite.
 
 These currently exercise the pure-Python reference implementation in
-CustomProphet (legacy/customProphet.py). compiled_optimizer_lib below
-builds the C++ core (legacy/optimize.cpp, the analytic gradient fit_cpp()
-calls into) on the fly so the fit() vs fit_cpp() parity test can load and
-call it directly, without a compiled liboptimization.so checked into the
-repo.
+CustomProphet (legacy/customProphet.py). compiled_optimizer_module below
+builds the C++ core (legacy/optimize.cpp) as a pybind11 extension on the
+fly, so the parity and convergence tests can import and call it directly
+without a built extension checked into the repo.
 """
-import ctypes
 import os
 import shutil
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 import numpy as np
@@ -21,11 +20,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "legacy"))
 from customProphet import (CustomProphet, N_CHANGE_POINTS, n_yearly,  # noqa: E402
-                           SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE)
+                           SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE, CPP_MODULE_NAME,
+                           load_cpp_module)
 
 DATA_PATH = Path(__file__).parent / "data" / "peyton_manning.csv"
 CPP_SOURCE = Path(__file__).parent.parent / "legacy" / "optimize.cpp"
-CPP_GRADIENT_SOURCE = Path(__file__).parent.parent / "legacy" / "minus_log_posterior_and_gradient.cpp"
 PARAM_SIZE = 2 + N_CHANGE_POINTS + 1 + 2 * n_yearly  # k, m, delta, sigma_obs, beta -> 48
 
 
@@ -79,48 +78,59 @@ def _find_eigen_include():
     return None
 
 
-def _build_cpp(source, out_name, tmp_path_factory, link_lbfgs):
-    """Builds one of the legacy/*.cpp sources into a shared library, using the
-    compile command documented in that source file's own trailing comment.
-    Skips (rather than fails) the tests that depend on it when the C++
-    toolchain, Eigen, or liblbfgs aren't available -- that's an environment
-    gap, not a code defect."""
-    compiler = shutil.which("g++") or shutil.which("clang++")
+def _build_cpp_extension(tmp_path_factory):
+    """Builds legacy/optimize.cpp into an importable pybind11 extension, using
+    the compile command documented in that file's trailing comment. Skips
+    (rather than fails) the tests that depend on it when the C++ toolchain,
+    Eigen, pybind11 or liblbfgs aren't available -- that's an environment gap,
+    not a code defect."""
+    compiler = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
     if compiler is None:
-        pytest.skip(f"no C++ compiler (g++/clang++) found to build {source.name}")
+        pytest.skip("no C++ compiler found to build the C++ core")
 
     eigen_include = _find_eigen_include()
     if eigen_include is None:
-        pytest.skip(f"Eigen headers not found (set EIGEN_INCLUDE_DIR) -- can't build {source.name}")
+        pytest.skip("Eigen headers not found (set EIGEN_INCLUDE_DIR) -- can't build the C++ core")
 
-    lib_path = tmp_path_factory.mktemp("cpp_core") / out_name
+    try:
+        import pybind11
+    except ImportError:
+        pytest.skip("pybind11 is not installed -- can't build the C++ core")
+
+    suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
+    out_path = tmp_path_factory.mktemp("cpp_core") / f"{CPP_MODULE_NAME}{suffix}"
+
     cmd = [
         compiler, "-std=c++17", "-shared", "-fPIC", "-O2",
-        "-o", str(lib_path), str(source),
+        "-o", str(out_path), str(CPP_SOURCE),
         f"-I{eigen_include}",
+        f"-I{pybind11.get_include()}",
+        f"-I{sysconfig.get_paths()['include']}",
+        "-L/usr/local/lib", "-L/opt/homebrew/lib", "-llbfgs",
     ]
-    if link_lbfgs:
-        cmd += ["-L/usr/local/lib", "-L/opt/homebrew/lib", "-llbfgs"]
+    if sys.platform == "darwin":
+        # Extension modules resolve CPython's symbols from the host interpreter
+        # at load time rather than linking libpython.
+        cmd += ["-undefined", "dynamic_lookup"]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
-        pytest.skip(f"could not build {source.name} (liblbfgs missing?): {result.stderr[-500:]}")
+        pytest.skip(f"could not build the C++ core (liblbfgs missing?): {result.stderr[-500:]}")
 
-    return str(lib_path)
-
-
-@pytest.fixture(scope="session")
-def compiled_optimizer_lib(tmp_path_factory):
-    """legacy/optimize.cpp -- the compiled L-BFGS optimizer fit_cpp() drives."""
-    return _build_cpp(CPP_SOURCE, "liboptimization.so", tmp_path_factory, link_lbfgs=True)
+    return str(out_path)
 
 
 @pytest.fixture(scope="session")
-def compiled_gradient_lib(tmp_path_factory):
-    """legacy/minus_log_posterior_and_gradient.cpp -- the C++ objective and
-    analytic gradient, exposed on its own so they can be cross-checked against
-    the Python reference without going through the optimizer."""
-    return _build_cpp(CPP_GRADIENT_SOURCE, "libmlpg.so", tmp_path_factory, link_lbfgs=False)
+def compiled_optimizer_module(tmp_path_factory):
+    """Path to the freshly built pybind11 extension, as fit_cpp(lib_path=...)
+    wants it."""
+    return _build_cpp_extension(tmp_path_factory)
+
+
+@pytest.fixture(scope="session")
+def cpp_module(compiled_optimizer_module):
+    """The built extension, imported."""
+    return load_cpp_module(compiled_optimizer_module)
 
 
 @pytest.fixture(scope="session")
@@ -136,35 +146,26 @@ def cpp_loss_offset():
 
 
 @pytest.fixture(scope="session")
-def cpp_mlp_and_gradient(compiled_gradient_lib):
-    """Callable wrapping the C++ objective+gradient entry point.
+def cpp_mlp_and_gradient(cpp_module):
+    """Calls the C++ objective+gradient the optimizer itself drives.
 
     Takes a model and the 47-length (k, m, delta, beta) vector the C++ side
     uses -- it has no sigma_obs slot, since the C++ core never estimates it --
     and returns (minus_log_posterior, gradient)."""
-    lib = ctypes.CDLL(compiled_gradient_lib)
-    nd = np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags="C_CONTIGUOUS")
-    lib.minus_log_posterior_and_gradient.argtypes = [
-        nd, ctypes.c_int, nd, ctypes.c_int, nd, ctypes.c_int, ctypes.c_double,
-        nd, ctypes.c_int, ctypes.c_double, ctypes.c_double, ctypes.c_double,
-        ctypes.c_double, ctypes.c_double, nd, nd,
-    ]
-    lib.minus_log_posterior_and_gradient.restype = None
-
-    def call(model, cpp_params, sigma_obs):
-        cpp_params = np.ascontiguousarray(cpp_params, dtype=np.float64)
-        mlp_out = np.zeros(1)
-        grad_out = np.zeros(len(cpp_params))
-        lib.minus_log_posterior_and_gradient(
-            cpp_params, len(cpp_params),
-            np.ascontiguousarray(model.t_scaled, dtype=np.float64), len(model.t_scaled),
-            np.ascontiguousarray(model.change_points, dtype=np.float64), len(model.change_points),
-            float(model.scale_period),
-            np.ascontiguousarray(model.normalized_y, dtype=np.float64), len(model.normalized_y),
-            sigma_obs, model.sigma_k, model.sigma_m, model.sigma, model.tau,
-            mlp_out, grad_out,
+    def call(model, cpp_params, sigma_obs, include_l1_prior=True):
+        return cpp_module.minus_log_posterior_and_gradient(
+            params=cpp_params,
+            t_scaled=model.t_scaled,
+            change_points=model.change_points,
+            scale_period=model.scale_period,
+            normalized_y=model.normalized_y,
+            sigma_obs=sigma_obs,
+            sigma_k=model.sigma_k,
+            sigma_m=model.sigma_m,
+            sigma=model.sigma,
+            tau=model.tau,
+            include_l1_prior=include_l1_prior,
         )
-        return mlp_out[0], grad_out
 
     return call
 

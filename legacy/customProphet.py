@@ -1,10 +1,12 @@
+import glob
+import importlib
+import importlib.util
 import os
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 from scipy.stats import halfcauchy
 from typing import Tuple
-import ctypes # for the `fit_cpp` method
 
 N_CHANGE_POINTS = 25 # number of change points - hyperparameter
 TAU = 0.05 # changepoint prior scale - hyperparameter
@@ -48,6 +50,51 @@ def from_dict_to_array(params):
     sigma_obs = np.array([params['sigma_obs']])
     beta = np.zeros((2 * 10,))
     return np.concatenate((k, m, delta, sigma_obs, beta))
+
+CPP_MODULE_NAME = 'analytic_prophet_cpp'
+
+BUILD_HINT = (
+    "Build it from legacy/optimize.cpp -- see the compile command in that file's "
+    "trailing comment, or let tests/conftest.py's compiled_optimizer_module "
+    "fixture build it for you."
+)
+
+_cpp_module_cache = {}
+
+def load_cpp_module(lib_path=None):
+    """Import the compiled pybind11 extension backing fit_cpp().
+
+    With lib_path=None this is an ordinary import, so a built or installed
+    extension is found on sys.path like any other module; failing that, it
+    looks for one built in place next to this file. Passing lib_path loads a
+    specific .so, which is how the tests point at one built into a temp dir.
+
+    The ctypes binding this replaced hardcoded a *relative* path
+    ('./liboptimization.so'), so it only worked when the process happened to be
+    running from the right directory.
+    """
+    if lib_path is None:
+        try:
+            return importlib.import_module(CPP_MODULE_NAME)
+        except ImportError:
+            here = os.path.dirname(os.path.abspath(__file__))
+            candidates = sorted(glob.glob(os.path.join(here, CPP_MODULE_NAME + '*.so')))
+            if not candidates:
+                raise ImportError(
+                    f"{CPP_MODULE_NAME} is not importable and no build of it was found "
+                    f"in {here}. {BUILD_HINT}"
+                )
+            lib_path = candidates[0]
+
+    lib_path = os.path.abspath(lib_path)
+    if lib_path not in _cpp_module_cache:
+        spec = importlib.util.spec_from_file_location(CPP_MODULE_NAME, lib_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"{lib_path} is not loadable as a Python extension module. {BUILD_HINT}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _cpp_module_cache[lib_path] = module
+    return _cpp_module_cache[lib_path]
 
 def canonical_to_split(params):
     """(k, m, delta, sigma_obs, beta) -> (k, m, delta_pos, delta_neg, sigma_obs, beta).
@@ -331,6 +378,7 @@ class CustomProphet:
         self.loss_over_iterations = loss_over_iterations
     
     def fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None, verbose: bool=False) -> Tuple[float, float, np.array, np.array]:
+        """Fit via the compiled C++ core (see load_cpp_module for how it's found)."""
         self.y = df['y'].values
 
         if df['ds'].dtype != 'datetime64[ns]':
@@ -363,68 +411,32 @@ class CustomProphet:
         # fixed at self.sigma_obs and is passed to it separately below.
         params = np.concatenate(([defaults['k']], [defaults['m']], defaults['delta'], defaults['beta']))
 
-        # Load the shared library. Defaults to the compiled library sitting next
-        # to this module; lib_path lets tests point at one built into a temp dir.
-        if lib_path is None:
-            lib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'liboptimization.so')
-        lib = ctypes.CDLL(lib_path)
-
-        # Define argument and return types for the optimize function
-        lib.optimize.argtypes = [np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),
-                         ctypes.c_int,
-                         np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),
-                         ctypes.c_int,
-                         np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),
-                         ctypes.c_int,
-                         ctypes.c_double,
-                         np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),
-                         ctypes.c_int,
-                         ctypes.c_double,
-                         ctypes.c_double,
-                         ctypes.c_double,
-                         ctypes.c_double,
-                         ctypes.c_double,
-                         np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),
-                         ctypes.c_int,
-                         ctypes.POINTER(ctypes.c_int),
-                         ctypes.POINTER(ctypes.c_int),
-                         ctypes.c_int]
-
-        lib.optimize.restype = None
-
-        max_iterations = 10000
-        loss_over_iterations = np.zeros(max_iterations)
-        n_iterations = ctypes.c_int(0)
-        status = ctypes.c_int(0)
-
-        lib.optimize(params,
-             len(params),
-             self.t_scaled,
-             len(self.t_scaled),
-             self.change_points,
-             len(self.change_points),
-             self.scale_period,
-             self.normalized_y,
-             len(self.normalized_y),
-             self.sigma_obs,
-             self.sigma_k,
-             self.sigma_m,
-             self.sigma,
-             self.tau,
-             loss_over_iterations,
-             max_iterations,
-             ctypes.byref(n_iterations),
-             ctypes.byref(status),
-             int(verbose))
+        cpp = load_cpp_module(lib_path)
+        result = cpp.optimize(
+            params=params,
+            t_scaled=self.t_scaled,
+            change_points=self.change_points,
+            scale_period=self.scale_period,
+            normalized_y=self.normalized_y,
+            sigma_obs=self.sigma_obs,
+            sigma_k=self.sigma_k,
+            sigma_m=self.sigma_m,
+            sigma=self.sigma,
+            tau=self.tau,
+            verbose=verbose,
+        )
 
         # Mirrors fit(): the per-iteration objective, so both fit paths expose
         # a directly comparable loss trajectory.
-        self.loss_over_iterations = list(loss_over_iterations[:n_iterations.value])
-        self.opt_status = status.value
+        self.loss_over_iterations = list(result.loss_over_iterations)
+        self.opt = result
+        self.opt_status = result.status
+        self.opt_status_message = result.status_message
 
         # Splice the fixed sigma_obs into the canonical (k, m, delta, sigma_obs,
         # beta) layout so predict()/trend_forecast_uncertainty() work the same
         # regardless of which fit method produced opt_params.
+        params = result.params
         self.opt_params = np.concatenate((params[:SIGMA_OBS_IDX], [self.sigma_obs], params[SIGMA_OBS_IDX:]))
 
         # Return whatever values are necessary

@@ -5,3 +5,8 @@ numpy
 pandas
 scipy
 pytest
+
+# Build-time dependency of the C++ core (legacy/optimize.cpp). Headers only --
+# nothing imports pybind11 at runtime, but the extension can't be compiled
+# without it. Eigen and liblbfgs still come from the system.
+pybind11

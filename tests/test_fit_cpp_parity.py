@@ -38,7 +38,6 @@ actually promises -- and what is asserted here -- is that both descend
 monotonically to the same optimal value, and that they agree exactly on the
 objective itself at any shared point (see test_cpp_optimizer_convergence.py).
 """
-import ctypes
 
 import numpy as np
 import pytest
@@ -46,7 +45,7 @@ import pytest
 from customProphet import CustomProphet, N_CHANGE_POINTS, n_yearly
 
 
-def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_df, compiled_optimizer_lib, cpp_loss_offset):
+def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_df, compiled_optimizer_module, cpp_loss_offset):
     small_df = peyton_manning_df.iloc[:300].reset_index(drop=True)
     matched_init = {
         "k": 0.0,
@@ -62,7 +61,7 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
 
     cpp_model = CustomProphet()
     cpp_model.sigma_obs = fixed_sigma_obs
-    cpp_model.fit_cpp(small_df, initial_params=matched_init, lib_path=compiled_optimizer_lib)
+    cpp_model.fit_cpp(small_df, initial_params=matched_init, lib_path=compiled_optimizer_module)
 
     # Both sides share the exact same (k, m, delta, beta) objective for a
     # fixed sigma_obs, so evaluate both parameter vectors on the Python
@@ -84,9 +83,8 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
         assert trajectory[-1] == pytest.approx(cpp_loss, rel=1e-6)
 
 
-def test_compiled_lib_exposes_optimize_symbol(compiled_optimizer_lib):
-    """Sanity check on the build step itself, independent of convergence:
-    the shared library builds and exposes the `optimize` entry point
-    fit_cpp() calls through ctypes."""
-    lib = ctypes.CDLL(compiled_optimizer_lib)
-    assert hasattr(lib, "optimize")
+def test_compiled_extension_exposes_its_entry_points(cpp_module):
+    """Sanity check on the build step itself, independent of convergence: the
+    extension imports and exposes the entry points fit_cpp() calls."""
+    assert callable(cpp_module.optimize)
+    assert callable(cpp_module.minus_log_posterior_and_gradient)
