@@ -290,17 +290,30 @@ class CustomProphet:
         self.change_points = np.linspace(0, self.changepoint_range * max_t_scaled, self.n_changepoints + 1)[1:]
 
         
-    def _minus_log_posterior(self, params: np.array, include_l1_prior: bool=True) -> float:
+    def _design_matrices(self):
+        """The changepoint indicator A (T x S) and the Fourier design matrix
+        (T x K).
+
+        Both depend only on t_scaled and change_points, so they are constant
+        for a whole fit -- yet rebuilding them was 57% of every objective
+        evaluation (issue #28). fit() computes them once and threads them
+        through; callers that pass nothing still get correct results, which is
+        what keeps the objective usable on its own.
+        """
+        A = (self.t_scaled[:, None] >= self.change_points) * 1
+        x = fourier_components(self.t_scaled, 365.25 / self.scale_period, n_yearly)
+        return A, x
+
+    def _minus_log_posterior(self, params: np.array, include_l1_prior: bool=True, design=None) -> float:
         k, m, delta, sigma_obs, beta = extract_params(params)
 
+        A, x = design if design is not None else self._design_matrices()
+
         # trend component
-        A = (self.t_scaled[:, None] >= self.change_points) * 1
         gamma = -self.change_points * delta
         g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
         # seasonality component
-        period = 365.25 / self.scale_period
-        x = fourier_components(self.t_scaled, period, 10)
         s = np.dot(x, beta)
 
         y_pred = g + s
@@ -320,17 +333,16 @@ class CustomProphet:
 
         return minus_log_posterior
 
-    def _gradient(self, params: np.array, include_l1_prior: bool=True) -> np.array:
+    def _gradient(self, params: np.array, include_l1_prior: bool=True, design=None) -> np.array:
         k, m, delta, sigma_obs, beta = extract_params(params)
 
+        A, x = design if design is not None else self._design_matrices()
+
         # trend component
-        A = (self.t_scaled[:, None] >= self.change_points) * 1
         gamma = -self.change_points * delta
         g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
         # seasonality component
-        period = 365.25 / self.scale_period
-        x = fourier_components(self.t_scaled, period, 10)
         s = np.dot(x, beta)
 
         r = self.normalized_y - g - s
@@ -348,17 +360,16 @@ class CustomProphet:
 
         return gradient
 
-    def _minus_log_posteriorAndGradient(self, params: np.array, include_l1_prior: bool=True) -> Tuple[float, np.array]:
+    def _minus_log_posteriorAndGradient(self, params: np.array, include_l1_prior: bool=True, design=None) -> Tuple[float, np.array]:
         k, m, delta, sigma_obs, beta = extract_params(params)
 
+        A, x = design if design is not None else self._design_matrices()
+
         # trend component
-        A = (self.t_scaled[:, None] >= self.change_points) * 1
         gamma = -self.change_points * delta
         g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
         # seasonality component
-        period = 365.25 / self.scale_period
-        x = fourier_components(self.t_scaled, period, 10)
         s = np.dot(x, beta)
 
         r = self.normalized_y - g - s
@@ -393,17 +404,17 @@ class CustomProphet:
         n_delta = len(self.change_points)
         return np.sum(z[2:2 + 2 * n_delta]) / self.tau
 
-    def _split_minus_log_posterior(self, z: np.array) -> float:
-        smooth = self._minus_log_posterior(split_to_canonical(z), include_l1_prior=False)
+    def _split_minus_log_posterior(self, z: np.array, design=None) -> float:
+        smooth = self._minus_log_posterior(split_to_canonical(z), include_l1_prior=False, design=design)
         return smooth + self._split_l1_penalty(z)
 
-    def _split_gradient(self, z: np.array) -> np.array:
+    def _split_gradient(self, z: np.array, design=None) -> np.array:
         return self._canonical_gradient_to_split(
-            self._gradient(split_to_canonical(z), include_l1_prior=False))
+            self._gradient(split_to_canonical(z), include_l1_prior=False, design=design))
 
-    def _split_minus_log_posteriorAndGradient(self, z: np.array) -> Tuple[float, np.array]:
+    def _split_minus_log_posteriorAndGradient(self, z: np.array, design=None) -> Tuple[float, np.array]:
         smooth, gradient = self._minus_log_posteriorAndGradient(
-            split_to_canonical(z), include_l1_prior=False)
+            split_to_canonical(z), include_l1_prior=False, design=design)
         return smooth + self._split_l1_penalty(z), self._canonical_gradient_to_split(gradient)
 
     def _canonical_gradient_to_split(self, gradient):
@@ -456,8 +467,11 @@ class CustomProphet:
 
         loss_over_iterations = []
 
+        # Built once here, not rebuilt on every evaluation (#28).
+        design = self._design_matrices()
+
         def callback(z):
-            fobj = self._minus_log_posterior(split_to_canonical(z))
+            fobj = self._minus_log_posterior(split_to_canonical(z), design=design)
             loss_over_iterations.append(fobj)
 
         initial_params_array = from_dict_to_array(initial_params_dict)
@@ -474,11 +488,14 @@ class CustomProphet:
         z0 = canonical_to_split(initial_params_array)
 
         if use_combined:
-            objective, jac = self._split_minus_log_posteriorAndGradient, True
+            objective = lambda z: self._split_minus_log_posteriorAndGradient(z, design=design)
+            jac = True
         elif analytic:
-            objective, jac = self._split_minus_log_posterior, self._split_gradient
+            objective = lambda z: self._split_minus_log_posterior(z, design=design)
+            jac = lambda z: self._split_gradient(z, design=design)
         else:
-            objective, jac = self._split_minus_log_posterior, None
+            objective = lambda z: self._split_minus_log_posterior(z, design=design)
+            jac = None
 
         options = {'maxiter': STAN_MAX_ITERATIONS}
         if optimizer == 'L-BFGS-B':
