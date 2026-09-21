@@ -27,7 +27,7 @@ import pytest
 
 import customProphet
 from customProphet import (CustomProphet, CPP_MODULE_NAME, N_CHANGE_POINTS, n_yearly,
-                           SIGMA_OBS_PRIOR_SCALE, load_cpp_module)
+                           SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD, load_cpp_module)
 
 SIGMA_OBS = 1.0
 CPP_PARAM_SIZE = 2 + N_CHANGE_POINTS + 2 * n_yearly + 1   # [k, m, delta, beta, zeta]
@@ -53,6 +53,8 @@ def call_kwargs(prepared_model):
         "sigma_m": prepared_model.sigma_m,
         "sigma": prepared_model.sigma,
         "tau": prepared_model.tau,
+        "fourier_order": n_yearly,
+        "seasonality_period": YEARLY_PERIOD,
     }
 
 

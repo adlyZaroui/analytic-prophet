@@ -195,3 +195,57 @@ def test_cpp_converges_within_prophets_iteration_cap(peyton_manning_df, compiled
     assert model.opt_status_message == "converged"
     # Prophet passes iter=int(1e4); a converged run lands well inside it
     assert 0 < model.opt.n_iterations < customProphet.STAN_MAX_ITERATIONS
+
+
+@pytest.mark.parametrize("n_changepoints,fourier_order", [(25, 10), (5, 10), (25, 3), (40, 6)])
+def test_cpp_core_accepts_any_dimensions(prepared_model, cpp_module, n_changepoints, fourier_order):
+    """#3: S and the Fourier order are arguments now, not compiled-in literals.
+
+    The C++ previously carried `params.segment(2, 25)` and
+    `fourier_components(..., 10)`, so any other shape either mis-sliced
+    silently or aborted the process with an Eigen "invalid matrix product".
+    """
+    from customProphet import SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD
+
+    model = prepared_model
+    model.n_changepoints = n_changepoints
+    model._generate_change_points()
+
+    n_params = 2 + n_changepoints + 2 * fourier_order + 1
+    params = np.zeros(n_params)
+
+    value, gradient = cpp_module.minus_log_posterior_and_gradient(
+        params=params, t_scaled=model.t_scaled, change_points=model.change_points,
+        t_seasonality=model.t_seasonality, normalized_y=model.normalized_y,
+        sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=model.sigma_k,
+        sigma_m=model.sigma_m, sigma=model.sigma, tau=model.tau,
+        fourier_order=fourier_order, seasonality_period=YEARLY_PERIOD)
+
+    assert np.isfinite(value)
+    assert gradient.shape == (n_params,)
+
+
+def test_mismatched_parameter_length_is_rejected(prepared_model, cpp_module):
+    """A length inconsistent with S and K names both rather than aborting."""
+    from customProphet import SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD
+
+    with pytest.raises(ValueError, match="params has length"):
+        cpp_module.minus_log_posterior_and_gradient(
+            params=np.zeros(47), t_scaled=prepared_model.t_scaled,
+            change_points=prepared_model.change_points,
+            t_seasonality=prepared_model.t_seasonality,
+            normalized_y=prepared_model.normalized_y,
+            sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=prepared_model.sigma_k,
+            sigma_m=prepared_model.sigma_m, sigma=prepared_model.sigma,
+            tau=prepared_model.tau, fourier_order=10, seasonality_period=YEARLY_PERIOD)
+
+
+def test_unsupported_changepoint_count_fails_clearly(peyton_manning_df, compiled_optimizer_module):
+    """The Python layout is still fixed (#16 task 2), so this must say so
+    rather than surface a numpy broadcast error from deep inside the fit."""
+    model = CustomProphet()
+    model.n_changepoints = 10
+
+    with pytest.raises(NotImplementedError, match="task 2 of #16"):
+        model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+                      lib_path=compiled_optimizer_module)

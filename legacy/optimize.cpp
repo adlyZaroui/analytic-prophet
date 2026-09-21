@@ -44,16 +44,16 @@ struct ModelParams {
     double sigma_obs;   // exp(zeta), recovered once per evaluation
 };
 
-ModelParams extract_params(const Eigen::Ref<const Eigen::VectorXd>& params, int S) {
-    const int K = static_cast<int>(params.size()) - 3 - S;
-    // The Fourier order is still hardcoded at 10 further down (issue #14), so
-    // K is pinned at 20. Checking it here turns a downstream Eigen
-    // "invalid matrix product" abort into a diagnosable error.
-    if (K != 2 * 10) {
+ModelParams extract_params(const Eigen::Ref<const Eigen::VectorXd>& params, int S, int K) {
+    // S and K are passed rather than assumed: S comes from the changepoint
+    // vector, K from the seasonality design matrix. Checking the length here
+    // turns a downstream Eigen "invalid matrix product" abort into a
+    // diagnosable error.
+    if (params.size() != 2 + S + K + 1) {
         throw std::invalid_argument(
-            "params has length " + std::to_string(params.size()) + " with S=" +
-            std::to_string(S) + ", implying K=" + std::to_string(K) +
-            " seasonality columns; expected 20. The layout is "
+            "params has length " + std::to_string(params.size()) + ", but S=" +
+            std::to_string(S) + " and K=" + std::to_string(K) + " require " +
+            std::to_string(2 + S + K + 1) + ". The layout is "
             "[k, m, delta(S), beta(K), zeta], length 2 + S + K + 1.");
     }
     ModelParams p;
@@ -78,9 +78,13 @@ Eigen::MatrixXd changepoint_matrix(const Eigen::VectorXd& t_scaled_vec,
 }
 
 // Likewise constant for a whole fit. t_seasonality is days since the Unix
-// epoch, so the period is a plain 365.25 days rather than a rescaled one.
-Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec) {
-    return fourier_components(t_seasonality_vec, 365.25, 10);
+// epoch, so the period is in days -- 365.25 for the yearly component.
+// Order and period are arguments, not constants: a second seasonality with a
+// different period is the whole point of #16, and nothing here should need
+// recompiling for it.
+Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
+                                   int fourier_order, double period) {
+    return fourier_components(t_seasonality_vec, period, fourier_order);
 }
 
 // include_l1_prior=false omits the Laplace (L1) prior on delta from both the
@@ -103,7 +107,9 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       double& mlp_out,
                                       Eigen::Ref<Eigen::VectorXd> grad_out,
                                       bool include_l1_prior = true) {
-    const ModelParams p = extract_params(params_vec, static_cast<int>(change_points_vec.size()));
+    const ModelParams p = extract_params(params_vec,
+                                         static_cast<int>(change_points_vec.size()),
+                                         static_cast<int>(x.cols()));
     const double k = p.k;
     const double m = p.m;
     const Eigen::VectorXd& delta = p.delta;
@@ -234,12 +240,15 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       double sigma_m,
                                       double sigma,
                                       double tau,
+                                      int fourier_order,
+                                      double seasonality_period,
                                       double& mlp_out,
                                       Eigen::Ref<Eigen::VectorXd> grad_out,
                                       bool include_l1_prior = true) {
     minus_log_posterior_and_gradient(params_vec, t_scaled_vec, change_points_vec,
                                      changepoint_matrix(t_scaled_vec, change_points_vec),
-                                     seasonality_matrix(t_seasonality_vec),
+                                     seasonality_matrix(t_seasonality_vec, fourier_order,
+                                                        seasonality_period),
                                      normalized_y_vec, sigma_obs_prior_scale, sigma_k,
                                      sigma_m, sigma, tau, mlp_out, grad_out,
                                      include_l1_prior);
@@ -328,6 +337,8 @@ OptimizeResult optimize(Eigen::VectorXd params,
                         double sigma_m,
                         double sigma,
                         double tau,
+                        int fourier_order,
+                        double seasonality_period,
                         bool verbose) {
 
         const int params_size = static_cast<int>(params.size());
@@ -390,7 +401,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
 
         SplitObjective objective{t_scaled, change_points,
                                  changepoint_matrix(t_scaled, change_points),
-                                 seasonality_matrix(t_seasonality),
+                                 seasonality_matrix(t_seasonality, fourier_order, seasonality_period),
                                  normalized_y, sigma_obs_prior_scale,
                                  sigma_k, sigma_m, sigma, tau, S, K, {}};
         LBFGSpp::LBFGSBSolver<double> solver(param);
@@ -440,12 +451,15 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         double sigma_m,
         double sigma,
         double tau,
+        int fourier_order,
+        double seasonality_period,
         bool include_l1_prior) {
     double mlp = 0.0;
     Eigen::VectorXd gradient(params.size());
     minus_log_posterior_and_gradient(params, t_scaled, change_points, t_seasonality,
                                      normalized_y, sigma_obs_prior_scale, sigma_k, sigma_m, sigma,
-                                     tau, mlp, gradient, include_l1_prior);
+                                     tau, fourier_order, seasonality_period, mlp, gradient,
+                                     include_l1_prior);
     return {mlp, gradient};
 }
 
@@ -485,6 +499,8 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("sigma_m"),
           py::arg("sigma"),
           py::arg("tau"),
+          py::arg("fourier_order"),
+          py::arg("seasonality_period"),
           py::arg("verbose") = false,
           // The optimizer touches no Python objects, so let other threads run.
           py::call_guard<py::gil_scoped_release>(),
@@ -503,6 +519,8 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("sigma_m"),
           py::arg("sigma"),
           py::arg("tau"),
+          py::arg("fourier_order"),
+          py::arg("seasonality_period"),
           py::arg("include_l1_prior") = true,
           py::call_guard<py::gil_scoped_release>(),
           "Return (minus_log_posterior, gradient) at `params`. With "
