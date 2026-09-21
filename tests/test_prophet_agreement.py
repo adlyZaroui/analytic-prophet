@@ -32,7 +32,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import CustomProphet, fourier_components, n_yearly, SIGMA_OBS_IDX
+from customProphet import (CustomProphet, fourier_components, n_yearly,
+                           SIGMA_OBS_IDX, YEARLY_PERIOD)
 
 # Prophet's own threshold for yearly seasonality being identifiable.
 MIN_IDENTIFIED_DAYS = 730
@@ -90,7 +91,7 @@ def test_posterior_at_least_as_good_as_prophet(prophet_comparison, compiled_opti
     X_stan = np.asarray(stan_data["X"], dtype=float)
 
     ours = fit_ours(df, compiled_optimizer_module, change_points=t_change)
-    X_ours = fourier_components(ours.t_scaled, 365.25 / ours.scale_period, n_yearly)
+    X_ours = fourier_components(ours.t_seasonality, YEARLY_PERIOD, n_yearly)
     beta_in_stan, residual = bridge.transfer_seasonality(
         ours.opt_params[SIGMA_OBS_IDX + 1:], X_ours, X_stan)
 
@@ -168,3 +169,61 @@ def test_under_identified_series_agree_in_sample_only(prophet_comparison, compil
     # measured at 2.6%; the bound is loose because this regime is unstable by
     # nature, and the point is to document it rather than police it
     assert in_sample < 0.05
+
+
+@pytest.mark.parametrize("n_rows", [1000, 2905])
+def test_seasonality_coefficients_agree(prophet_comparison, compiled_optimizer_module, n_rows):
+    """Criterion 1b, unlocked by #16 task 1.
+
+    Before the Fourier basis was aligned, `beta` could not be compared at all:
+    a different time origin rotated it and a different column order permuted
+    it. Both now match Prophet's construction exactly, so the coefficients are
+    directly comparable and a modelling error in the seasonality would show up
+    here rather than only as a prediction difference.
+
+    Scaled by the largest coefficient, since the absolute size of `beta`
+    depends on the series. Observed 0.45% at T=2905 and 4.77% at T=1000; the
+    bound keeps roughly 2x headroom over the worse of those.
+    """
+    Prophet, common, bridge = prophet_comparison
+    df = common.load_data(n_rows)
+
+    prophet_model = Prophet(**common.PROPHET_KWARGS)
+    _, stan_data, prophet_params = bridge.capture_stan_model(prophet_model, df)
+    t_change = np.asarray(stan_data["t_change"], dtype=float)
+
+    ours = fit_ours(df, compiled_optimizer_module, change_points=t_change)
+
+    from customProphet import BETA_SLICE
+    beta_ours = ours.opt_params[BETA_SLICE]
+    beta_prophet = prophet_params["beta"]
+
+    assert beta_ours.shape == beta_prophet.shape
+    relative = np.max(np.abs(beta_ours - beta_prophet)) / np.max(np.abs(beta_prophet))
+    assert relative < 0.10, (
+        f"seasonality coefficients differ by {relative * 100:.2f}% of the largest "
+        f"coefficient at T={n_rows}")
+
+
+@pytest.mark.parametrize("n_rows", [1000, 2905])
+def test_fitted_noise_level_agrees(prophet_comparison, compiled_optimizer_module, n_rows):
+    """`sigma_obs` is a single identifiable scalar -- unlike `k` and `delta`,
+    which trade off against each other, so neither is comparable on its own.
+
+    (That trade-off is why the trend is compared as a curve, in
+    test_predictions_agree_on_identified_series, rather than parameter by
+    parameter: at T=1000 Prophet reports k=-0.055 against our -0.006 while the
+    fitted trends agree to well under a percent.)
+    """
+    Prophet, common, bridge = prophet_comparison
+    df = common.load_data(n_rows)
+
+    prophet_model = Prophet(**common.PROPHET_KWARGS)
+    _, stan_data, prophet_params = bridge.capture_stan_model(prophet_model, df)
+    t_change = np.asarray(stan_data["t_change"], dtype=float)
+
+    ours = fit_ours(df, compiled_optimizer_module, change_points=t_change)
+
+    relative = abs(ours.sigma_obs - prophet_params["sigma_obs"][0]) / prophet_params["sigma_obs"][0]
+    assert relative < 0.01, (
+        f"fitted noise level differs by {relative * 100:.2f}% at T={n_rows}")

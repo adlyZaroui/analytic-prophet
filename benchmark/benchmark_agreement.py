@@ -34,7 +34,8 @@ logging.getLogger("cmdstanpy").setLevel(logging.ERROR)
 def posterior_comparison(df, lib_path):
     """Score both optima under Stan's log density, same model specification."""
     from prophet import Prophet
-    from customProphet import CustomProphet, fourier_components, n_yearly, SIGMA_OBS_IDX
+    from customProphet import (CustomProphet, fourier_components, n_yearly,
+                           SIGMA_OBS_IDX, YEARLY_PERIOD)
 
     prophet_model = Prophet(**common.PROPHET_KWARGS)
     stan_model, stan_data, prophet_params = bridge.capture_stan_model(prophet_model, df)
@@ -49,7 +50,7 @@ def posterior_comparison(df, lib_path):
     ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
     ours.fit_cpp(df, lib_path=lib_path)
 
-    X_ours = fourier_components(ours.t_scaled, 365.25 / ours.scale_period, n_yearly)
+    X_ours = fourier_components(ours.t_seasonality, YEARLY_PERIOD, n_yearly)
     beta_ours = ours.opt_params[SIGMA_OBS_IDX + 1:]
     beta_in_stan, residual = bridge.transfer_seasonality(beta_ours, X_ours, X_stan)
 

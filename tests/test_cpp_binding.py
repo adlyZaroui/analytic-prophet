@@ -46,7 +46,7 @@ def call_kwargs(prepared_model):
         "params": _valid_params(),
         "t_scaled": prepared_model.t_scaled,
         "change_points": prepared_model.change_points,
-        "scale_period": float(prepared_model.scale_period),
+        "t_seasonality": prepared_model.t_seasonality,
         "normalized_y": prepared_model.normalized_y,
         "sigma_obs_prior_scale": SIGMA_OBS_PRIOR_SCALE,
         "sigma_k": prepared_model.sigma_k,
