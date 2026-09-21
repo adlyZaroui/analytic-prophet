@@ -61,14 +61,33 @@ ModelParams extract_params(const Eigen::Ref<const Eigen::VectorXd>& params, int 
     return p;
 }
 
+// The changepoint indicator. Depends only on t_scaled and the changepoint
+// locations, so it is constant for a whole fit -- optimize() builds it once
+// before the solver loop rather than on every evaluation (issue #28).
+// >= , not > : Stan's get_changepoint_matrix uses t[i] >= t_change[j].
+Eigen::MatrixXd changepoint_matrix(const Eigen::VectorXd& t_scaled_vec,
+                                   const Eigen::VectorXd& change_points_vec) {
+    return (t_scaled_vec.replicate(1, change_points_vec.size()).array()
+            >= change_points_vec.transpose().replicate(t_scaled_vec.size(), 1).array())
+           .cast<double>();
+}
+
+// Likewise constant for a whole fit.
+Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_scaled_vec, double scale_period) {
+    return fourier_components(t_scaled_vec, 365.25 / scale_period, 10);
+}
+
 // include_l1_prior=false omits the Laplace (L1) prior on delta from both the
-// objective and the gradient. OWL-QN adds that term itself and handles its
-// kink at delta=0 via orthant projection, so the callback it drives must not
-// include it -- see the orthantwise_c setup in optimize() below.
+// objective and the gradient. The split reformulation in optimize() supplies
+// that term itself, as a linear function of delta_pos and delta_neg.
+//
+// A and x are taken as arguments rather than rebuilt: see #28. The overload
+// below keeps the standalone entry point self-contained.
 void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       const Eigen::VectorXd& t_scaled_vec,
                                       const Eigen::VectorXd& change_points_vec,
-                                      double scale_period,
+                                      const Eigen::MatrixXd& A,
+                                      const Eigen::MatrixXd& x,
                                       const Eigen::VectorXd& normalized_y_vec,
                                       double sigma_obs_prior_scale,
                                       double sigma_k,
@@ -88,14 +107,10 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
 
     // Trend component
     Eigen::VectorXd ones = Eigen::VectorXd::Ones(t_scaled_vec.size());
-    // >= , not > : Stan's get_changepoint_matrix uses t[i] >= t_change[j]
-    Eigen::MatrixXd A = (t_scaled_vec.replicate(1, change_points_vec.size()).array() >= change_points_vec.transpose().replicate(t_scaled_vec.size(), 1).array()).cast<double>();
     Eigen::VectorXd gamma = -delta.array() * change_points_vec.array();
     Eigen::VectorXd g = (k * ones + A * delta).array() * t_scaled_vec.array() + (m * ones + A * gamma).array();
 
     // Seasonality component
-    double period = 365.25 / scale_period;
-    Eigen::MatrixXd x = fourier_components(t_scaled_vec, period, 10);
     Eigen::VectorXd s = x * beta;
 
     Eigen::VectorXd y_pred = g + s;
@@ -200,10 +215,37 @@ namespace stan_convergence {
 //
 // The split is an implementation detail of the optimizer: callers pass and
 // receive the natural layout, [k, m, delta(S), beta(K), zeta].
+// Self-contained overload: builds A and x, then delegates. Used by the
+// exposed minus_log_posterior_and_gradient entry point, where there is no fit
+// to amortize the construction over.
+void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
+                                      const Eigen::VectorXd& t_scaled_vec,
+                                      const Eigen::VectorXd& change_points_vec,
+                                      double scale_period,
+                                      const Eigen::VectorXd& normalized_y_vec,
+                                      double sigma_obs_prior_scale,
+                                      double sigma_k,
+                                      double sigma_m,
+                                      double sigma,
+                                      double tau,
+                                      double& mlp_out,
+                                      Eigen::Ref<Eigen::VectorXd> grad_out,
+                                      bool include_l1_prior = true) {
+    minus_log_posterior_and_gradient(params_vec, t_scaled_vec, change_points_vec,
+                                     changepoint_matrix(t_scaled_vec, change_points_vec),
+                                     seasonality_matrix(t_scaled_vec, scale_period),
+                                     normalized_y_vec, sigma_obs_prior_scale, sigma_k,
+                                     sigma_m, sigma, tau, mlp_out, grad_out,
+                                     include_l1_prior);
+}
+
 struct SplitObjective {
     const Eigen::VectorXd& t_scaled;
     const Eigen::VectorXd& change_points;
-    double scale_period;
+    // Built once by optimize() before the solver loop: constant for the whole
+    // fit, and rebuilding them was the bulk of every evaluation (#28).
+    Eigen::MatrixXd A;
+    Eigen::MatrixXd x;
     const Eigen::VectorXd& normalized_y;
     double sigma_obs_prior_scale;
     double sigma_k;
@@ -235,7 +277,7 @@ struct SplitObjective {
 
         double value = 0.0;
         Eigen::VectorXd natural_grad(natural.size());
-        minus_log_posterior_and_gradient(natural, t_scaled, change_points, scale_period,
+        minus_log_posterior_and_gradient(natural, t_scaled, change_points, A, x,
                                          normalized_y, sigma_obs_prior_scale, sigma_k,
                                          sigma_m, sigma, tau, value, natural_grad,
                                          // the split form supplies the L1 term itself
@@ -340,8 +382,11 @@ OptimizeResult optimize(Eigen::VectorXd params,
         param.delta = stan_convergence::TOL_REL_F * stan_convergence::EPS;
         param.max_linesearch = 60;
 
-        SplitObjective objective{t_scaled, change_points, scale_period, normalized_y,
-                                 sigma_obs_prior_scale, sigma_k, sigma_m, sigma, tau, S, K, {}};
+        SplitObjective objective{t_scaled, change_points,
+                                 changepoint_matrix(t_scaled, change_points),
+                                 seasonality_matrix(t_scaled, scale_period),
+                                 normalized_y, sigma_obs_prior_scale,
+                                 sigma_k, sigma_m, sigma, tau, S, K, {}};
         LBFGSpp::LBFGSBSolver<double> solver(param);
 
         double fx = 0.0;
