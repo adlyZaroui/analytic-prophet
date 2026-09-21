@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "legacy"))
 from customProphet import (CustomProphet, N_CHANGE_POINTS, n_yearly,  # noqa: E402
                            SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE, CPP_MODULE_NAME,
-                           load_cpp_module, seasonal_time)
+                           load_cpp_module, seasonal_time, YEARLY_PERIOD)
 
 # The Prophet-comparison plumbing lives with the benchmarks, which is also
 # where it is exercised interactively. The agreement tests reuse it rather
@@ -188,6 +188,8 @@ def cpp_mlp_and_gradient(cpp_module):
             sigma_m=model.sigma_m,
             sigma=model.sigma,
             tau=model.tau,
+            fourier_order=n_yearly,
+            seasonality_period=YEARLY_PERIOD,
             include_l1_prior=include_l1_prior,
         )
 

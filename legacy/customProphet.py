@@ -295,6 +295,21 @@ class CustomProphet:
         self.y_absmax = np.max(np.abs(self.y))
         self.normalized_y = np.array(self.y / self.y_absmax)
     
+    def _check_dimensions_supported(self) -> None:
+        """The C++ core takes S and the Fourier order as arguments (#3), but the
+        Python layer still derives its parameter-vector layout from the module
+        constants -- DELTA_SLICE and BETA_SLICE are fixed at import time.
+
+        So a non-default changepoint count reaches the optimizer fine and then
+        fails when the result is unpacked. Saying so here beats the numpy
+        broadcast error that surfaces otherwise. Lifting this is #16 task 2.
+        """
+        if self.n_changepoints != N_CHANGE_POINTS:
+            raise NotImplementedError(
+                f"n_changepoints={self.n_changepoints} is not supported yet: the C++ core "
+                f"accepts any value (#3), but this layer's parameter layout is fixed at "
+                f"{N_CHANGE_POINTS}. Tracked as task 2 of #16.")
+
     def _generate_change_points(self) -> None:
         """Changepoints spaced uniformly in *scaled time* over the first
         changepoint_range of history.
@@ -470,6 +485,7 @@ class CustomProphet:
         self.t_seasonality = seasonal_time(self.ds)
 
         self._normalize_y()
+        self._check_dimensions_supported()
         self._generate_change_points()
 
         # [fc] calculate_initial_params: k/m from linear_growth_init, delta and
@@ -575,6 +591,7 @@ class CustomProphet:
 
         self.t_seasonality = seasonal_time(self.ds)
         self._normalize_y()
+        self._check_dimensions_supported()
         self._generate_change_points()
 
         # Same deterministic initialization as fit(), so both fit paths start
@@ -614,6 +631,8 @@ class CustomProphet:
             sigma_m=self.sigma_m,
             sigma=self.sigma,
             tau=self.tau,
+            fourier_order=n_yearly,
+            seasonality_period=YEARLY_PERIOD,
             verbose=verbose,
         )
 
