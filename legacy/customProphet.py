@@ -106,11 +106,34 @@ def linear_growth_init(t_scaled, normalized_y):
 def det_dot(a, b):
     return (a * b[None, :]).sum(axis=-1)
 
+# Prophet measures seasonal time in days since the Unix epoch, not since the
+# start of the series. [fc] Prophet.fourier_series
+FOURIER_EPOCH = pd.Timestamp("1970-01-01")
+YEARLY_PERIOD = 365.25
+
+def seasonal_time(ds):
+    """Days since the 1970 epoch, the clock Prophet builds Fourier features on.
+
+    Using the series start instead -- as this did before -- shifts the phase of
+    every frequency. The fitted seasonality is unchanged (an orthogonal
+    rotation per frequency, and `beta`'s prior is rotation-invariant), but the
+    coefficients are not comparable with Prophet's, which is what this fixes.
+    """
+    return (pd.to_datetime(ds) - FOURIER_EPOCH).dt.total_seconds().to_numpy() / (24 * 60 * 60)
+
 def fourier_components(t_days, period, n):
-    x = 2 * np.pi * np.arange(1, n + 1) / period
-    x = x * t_days[:, None]
-    x = np.concatenate((np.cos(x), np.sin(x)), axis=1)
-    return x
+    """Fourier features, column-for-column identical to Prophet's.
+
+    Ordering matters as much as the clock: Prophet interleaves, putting
+    sin(order i) at column 2i and cos(order i) at 2i+1. This emitted all
+    cosines then all sines, which permutes `beta` even when the phase agrees.
+    """
+    t_days = np.asarray(t_days, dtype=float)
+    angles = (2 * np.pi / period) * np.outer(t_days, np.arange(1, n + 1))
+    result = np.empty((t_days.shape[0], 2 * n))
+    result[:, 0::2] = np.sin(angles)
+    result[:, 1::2] = np.cos(angles)
+    return result
 
 def extract_params(params):
     k = params[K_IDX]
@@ -263,7 +286,7 @@ class CustomProphet:
         self.sigma_k = sigma_k
         self.sigma_m = sigma_m
 
-        self.scale_period = None
+        self.t_seasonality = None
 
     def get_parameters(self) -> np.array:
         return self.opt_params
@@ -301,7 +324,7 @@ class CustomProphet:
         what keeps the objective usable on its own.
         """
         A = (self.t_scaled[:, None] >= self.change_points) * 1
-        x = fourier_components(self.t_scaled, 365.25 / self.scale_period, n_yearly)
+        x = fourier_components(self.t_seasonality, YEARLY_PERIOD, n_yearly)
         return A, x
 
     def _minus_log_posterior(self, params: np.array, include_l1_prior: bool=True, design=None) -> float:
@@ -444,7 +467,7 @@ class CustomProphet:
         self.T = df.shape[0]
 
         # Calculate the scale period coefficient
-        self.scale_period = (self.ds.max() - self.ds.min()).days
+        self.t_seasonality = seasonal_time(self.ds)
 
         self._normalize_y()
         self._generate_change_points()
@@ -550,7 +573,7 @@ class CustomProphet:
         self.t_scaled = np.array((self.ds - self.ds.min()) / (self.ds.max() - self.ds.min()))
         self.T = df.shape[0]
 
-        self.scale_period = (self.ds.max() - self.ds.min()).days
+        self.t_seasonality = seasonal_time(self.ds)
         self._normalize_y()
         self._generate_change_points()
 
@@ -584,7 +607,7 @@ class CustomProphet:
             params=params,
             t_scaled=self.t_scaled,
             change_points=self.change_points,
-            scale_period=self.scale_period,
+            t_seasonality=self.t_seasonality,
             normalized_y=self.normalized_y,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE,
             sigma_k=self.sigma_k,
@@ -637,8 +660,6 @@ class CustomProphet:
     
     def trend_forecast_uncertainty(self, horizon=30, n_samples=500):
         k, m, delta, _sigma_obs, beta = extract_params(self.opt_params)
-        x = fourier_components(self.t_scaled, 365.25, n_yearly)
-        s = det_dot(x, beta)
         probability_changepoint = self.n_changepoints / self.T
         future_df = self.make_future_dataframe(horizon)
         
@@ -675,8 +696,7 @@ class CustomProphet:
         trend = compute_trend(k, m, delta, self.change_points, future_df['t_scaled'].values, self.y_absmax)
 
         # Seasonality component calculation
-        period = 365.25 / self.scale_period
-        x = fourier_components(future_df['t_scaled'].values, period, n_yearly)
+        x = fourier_components(seasonal_time(future_df['ds']), YEARLY_PERIOD, n_yearly)
         seasonality = x.dot(beta)
 
         # Combine trend and seasonality for the forecast

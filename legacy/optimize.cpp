@@ -13,14 +13,19 @@
 
 namespace py = pybind11;
 
+// Column-for-column identical to Prophet's fourier_series: sin(order i) at
+// column 2i, cos(order i) at 2i+1, with t_days measured from the Unix epoch.
+// Must stay in lockstep with fourier_components() in customProphet.py --
+// tests/test_prophet_agreement.py compares both against Prophet's own matrix.
 Eigen::MatrixXd fourier_components(const Eigen::VectorXd& t_days, double period, int n) {
-    Eigen::VectorXd x = Eigen::VectorXd::LinSpaced(n, 1, n) * (2 * M_PI / period);
-    Eigen::MatrixXd angles = t_days * x.transpose();
-    
+    Eigen::VectorXd orders = Eigen::VectorXd::LinSpaced(n, 1, n) * (2 * M_PI / period);
+    Eigen::MatrixXd angles = t_days * orders.transpose();
+
     Eigen::MatrixXd result(t_days.size(), 2 * n);
-    result.leftCols(n) = angles.array().cos();
-    result.rightCols(n) = angles.array().sin();
-    
+    for (int i = 0; i < n; ++i) {
+        result.col(2 * i) = angles.col(i).array().sin();
+        result.col(2 * i + 1) = angles.col(i).array().cos();
+    }
     return result;
 }
 
@@ -72,9 +77,10 @@ Eigen::MatrixXd changepoint_matrix(const Eigen::VectorXd& t_scaled_vec,
            .cast<double>();
 }
 
-// Likewise constant for a whole fit.
-Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_scaled_vec, double scale_period) {
-    return fourier_components(t_scaled_vec, 365.25 / scale_period, 10);
+// Likewise constant for a whole fit. t_seasonality is days since the Unix
+// epoch, so the period is a plain 365.25 days rather than a rescaled one.
+Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec) {
+    return fourier_components(t_seasonality_vec, 365.25, 10);
 }
 
 // include_l1_prior=false omits the Laplace (L1) prior on delta from both the
@@ -221,7 +227,7 @@ namespace stan_convergence {
 void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       const Eigen::VectorXd& t_scaled_vec,
                                       const Eigen::VectorXd& change_points_vec,
-                                      double scale_period,
+                                      const Eigen::VectorXd& t_seasonality_vec,
                                       const Eigen::VectorXd& normalized_y_vec,
                                       double sigma_obs_prior_scale,
                                       double sigma_k,
@@ -233,7 +239,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       bool include_l1_prior = true) {
     minus_log_posterior_and_gradient(params_vec, t_scaled_vec, change_points_vec,
                                      changepoint_matrix(t_scaled_vec, change_points_vec),
-                                     seasonality_matrix(t_scaled_vec, scale_period),
+                                     seasonality_matrix(t_seasonality_vec),
                                      normalized_y_vec, sigma_obs_prior_scale, sigma_k,
                                      sigma_m, sigma, tau, mlp_out, grad_out,
                                      include_l1_prior);
@@ -315,7 +321,7 @@ struct OptimizeResult {
 OptimizeResult optimize(Eigen::VectorXd params,
                         const Eigen::Ref<const Eigen::VectorXd>& t_scaled,
                         const Eigen::Ref<const Eigen::VectorXd>& change_points,
-                        double scale_period,
+                        const Eigen::Ref<const Eigen::VectorXd>& t_seasonality,
                         const Eigen::Ref<const Eigen::VectorXd>& normalized_y,
                         double sigma_obs_prior_scale,
                         double sigma_k,
@@ -384,7 +390,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
 
         SplitObjective objective{t_scaled, change_points,
                                  changepoint_matrix(t_scaled, change_points),
-                                 seasonality_matrix(t_scaled, scale_period),
+                                 seasonality_matrix(t_seasonality),
                                  normalized_y, sigma_obs_prior_scale,
                                  sigma_k, sigma_m, sigma, tau, S, K, {}};
         LBFGSpp::LBFGSBSolver<double> solver(param);
@@ -395,6 +401,15 @@ OptimizeResult optimize(Eigen::VectorXd params,
         std::string message = "converged";
         try {
             iterations = solver.minimize(objective, z, fx, lower, upper);
+            // LBFGSpp returns the iteration count silently when it runs out of
+            // iterations rather than raising, so reaching the cap is
+            // indistinguishable from converging unless it is checked for. Left
+            // unchecked this reports "converged" on a fit that simply ran out
+            // of budget -- the same false success as #13.
+            if (iterations >= stan_convergence::MAX_ITERATIONS) {
+                status = 2;
+                message = "reached max_iterations without meeting a convergence test";
+            }
         } catch (const std::exception& error) {
             status = 1;
             message = std::string("optimizer failed: ") + error.what();
@@ -418,7 +433,7 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         const Eigen::Ref<const Eigen::VectorXd>& params,
         const Eigen::Ref<const Eigen::VectorXd>& t_scaled,
         const Eigen::Ref<const Eigen::VectorXd>& change_points,
-        double scale_period,
+        const Eigen::Ref<const Eigen::VectorXd>& t_seasonality,
         const Eigen::Ref<const Eigen::VectorXd>& normalized_y,
         double sigma_obs_prior_scale,
         double sigma_k,
@@ -428,7 +443,7 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         bool include_l1_prior) {
     double mlp = 0.0;
     Eigen::VectorXd gradient(params.size());
-    minus_log_posterior_and_gradient(params, t_scaled, change_points, scale_period,
+    minus_log_posterior_and_gradient(params, t_scaled, change_points, t_seasonality,
                                      normalized_y, sigma_obs_prior_scale, sigma_k, sigma_m, sigma,
                                      tau, mlp, gradient, include_l1_prior);
     return {mlp, gradient};
@@ -463,7 +478,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("params"),
           py::arg("t_scaled"),
           py::arg("change_points"),
-          py::arg("scale_period"),
+          py::arg("t_seasonality"),
           py::arg("normalized_y"),
           py::arg("sigma_obs_prior_scale"),
           py::arg("sigma_k"),
@@ -481,7 +496,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("params"),
           py::arg("t_scaled"),
           py::arg("change_points"),
-          py::arg("scale_period"),
+          py::arg("t_seasonality"),
           py::arg("normalized_y"),
           py::arg("sigma_obs_prior_scale"),
           py::arg("sigma_k"),

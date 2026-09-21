@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "legacy"))
 from customProphet import (CustomProphet, N_CHANGE_POINTS, n_yearly,  # noqa: E402
                            SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE, CPP_MODULE_NAME,
-                           load_cpp_module)
+                           load_cpp_module, seasonal_time)
 
 # The Prophet-comparison plumbing lives with the benchmarks, which is also
 # where it is exercised interactively. The agreement tests reuse it rather
@@ -51,7 +51,7 @@ def prepared_model(peyton_manning_df):
         (model.ds - model.ds.min()) / (model.ds.max() - model.ds.min())
     )
     model.T = peyton_manning_df.shape[0]
-    model.scale_period = (model.ds.max() - model.ds.min()).days
+    model.t_seasonality = seasonal_time(model.ds)
     model._normalize_y()
     model._generate_change_points()
     return model
@@ -181,7 +181,7 @@ def cpp_mlp_and_gradient(cpp_module):
             params=cpp_params,
             t_scaled=model.t_scaled,
             change_points=model.change_points,
-            scale_period=model.scale_period,
+            t_seasonality=model.t_seasonality,
             normalized_y=model.normalized_y,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE,
             sigma_k=model.sigma_k,

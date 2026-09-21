@@ -18,7 +18,7 @@ import pytest
 
 from customProphet import (CustomProphet, BETA_SLICE, DELTA_SLICE, N_CHANGE_POINTS,
                            SIGMA_OBS_IDX, canonical_to_cpp, cpp_to_canonical,
-                           fourier_components, n_yearly)
+                           fourier_components, n_yearly, YEARLY_PERIOD)
 
 CPP_PARAM_SIZE = 2 + N_CHANGE_POINTS + 2 * n_yearly + 1
 
@@ -57,13 +57,19 @@ def test_fitted_sigma_obs_approaches_the_gaussian_mle(peyton_manning_df, compile
     instead of settling on the MLE.
 
     The sigma_obs prior stays at its real 0.5. It does not need widening: at a
-    fitted sigma_obs of ~0.035 its contribution to the stationarity condition
-    is sigma_obs^2/0.25 ~ 5e-3 against T = 150, five orders down.
+    fitted sigma_obs of ~0.03 its contribution to the stationarity condition is
+    sigma_obs^2/0.25 ~ 4e-3 against T = 600, five orders down.
+
+    Widening the other priors leaves the problem nearly unregularized, with 25
+    changepoints and no L1 term to pin them, so it exhausts Prophet's 10000
+    iteration budget rather than converging. It still approaches the MLE, and
+    more data gets closer: the ratio is 0.9958 at T=150, 0.9997 at T=300 and
+    1.00008 at T=600.
     """
     model = CustomProphet()
     model.tau = model.sigma = model.sigma_k = model.sigma_m = 1e4
 
-    model.fit_cpp(peyton_manning_df.iloc[:150].reset_index(drop=True),
+    model.fit_cpp(peyton_manning_df.iloc[:600].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     k, m = model.opt_params[0], model.opt_params[1]
@@ -74,7 +80,7 @@ def test_fitted_sigma_obs_approaches_the_gaussian_mle(peyton_manning_df, compile
     gamma = -model.change_points * delta
     trend = (k + A.dot(delta)) * model.t_scaled + (m + A.dot(gamma))
     seasonality = fourier_components(
-        model.t_scaled, 365.25 / model.scale_period, n_yearly).dot(beta)
+        model.t_seasonality, YEARLY_PERIOD, n_yearly).dot(beta)
     residuals = model.normalized_y - trend - seasonality
 
     mle = np.sqrt(np.sum(residuals**2) / model.T)
