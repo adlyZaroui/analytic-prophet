@@ -76,20 +76,41 @@ skipped, so the reported "fit added" column is the cost of fitting rather than
 of importing pandas. `ru_maxrss` is bytes on macOS and kilobytes on Linux;
 `peak_rss_bytes()` normalizes that.
 
-## Planned: agreement benchmark
+## Agreement benchmark
 
-A third benchmark belongs here and is not written yet: how *close* the fits are,
-which is the question the other two cannot answer. Two levels, and they can
-disagree:
+`benchmark_agreement.py` answers the question the other two cannot: how *close*
+the fits are. It is also the project's acceptance criterion (issue #30), enforced
+by `tests/test_prophet_agreement.py`.
 
-1. **Learned parameters** — `k`, `m`, `delta`, `beta`, `sigma_obs` against
-   Prophet's, from the same data and the same seeds. The strict test.
-2. **Predictions** — `yhat` and the trend/seasonality components over a forecast
-   horizon. The one that matters in practice: parameters can differ in a flat
-   direction of the posterior while predictions agree closely.
+Comparing **learned parameters** was the obvious design and does not work.
+`beta` lives in a rotated Fourier basis — Prophet measures days from the 1970
+epoch, this implementation from the series start — so the coefficients differ,
+including in sign, while describing the same function. `delta` is indexed
+against different changepoints. A test comparing them would measure the
+parameterization, not the model.
 
-The tolerance for both is an open question, deliberately. It should be set from
-measurement rather than picked in advance.
+Two criteria replace it:
+
+1. **Posterior** — our optimum scored under **Stan's own log density**, via
+   `CmdStanModel.log_prob`. One scalar, invariant to both reparameterizations,
+   and the quantity the model is defined by. Both implementations are fitted on
+   the same changepoints here, so this isolates optimizer quality.
+2. **Predictions** — `yhat` over history plus a horizon, as a fraction of the
+   series scale, each implementation in its *default* configuration.
+
+The tolerance was set from measurement, not chosen: across every identified
+slice of the Peyton Manning series (T = 730 … 2905) the observed `yhat`
+disagreement is 0.320%–0.419%, so the bound is **1%**.
+
+### The identifiability caveat
+
+Prediction agreement is only asserted on series with at least **730 days** of
+history, which is Prophet's own threshold for yearly seasonality being
+identifiable. Below it, trend and seasonality trade off almost freely: on a
+328-day slice the two implementations agree to 2.6% in-sample and then diverge
+to **111%** over a 30-day forecast, with fitted `k` differing eightfold — while
+*our* posterior is the better one. That is the model being under-determined,
+not either implementation being wrong.
 
 ## An observation already worth recording
 

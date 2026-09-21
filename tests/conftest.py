@@ -7,6 +7,7 @@ builds the C++ core (legacy/optimize.cpp) as a pybind11 extension on the
 fly, so the parity and convergence tests can import and call it directly
 without a built extension checked into the repo.
 """
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -22,6 +23,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "legacy"))
 from customProphet import (CustomProphet, N_CHANGE_POINTS, n_yearly,  # noqa: E402
                            SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE, CPP_MODULE_NAME,
                            load_cpp_module)
+
+# The Prophet-comparison plumbing lives with the benchmarks, which is also
+# where it is exercised interactively. The agreement tests reuse it rather
+# than keeping a second copy in step.
+sys.path.insert(0, str(Path(__file__).parent.parent / "benchmark"))
 
 DATA_PATH = Path(__file__).parent / "data" / "peyton_manning.csv"
 CPP_SOURCE = Path(__file__).parent.parent / "legacy" / "optimize.cpp"
@@ -203,3 +209,22 @@ def random_params(param_size):
     params = rng.normal(scale=0.5, size=param_size)
     params[SIGMA_OBS_IDX] = abs(params[SIGMA_OBS_IDX]) + 0.1
     return params
+
+
+@pytest.fixture(scope="session")
+def prophet_comparison():
+    """Handles for comparing against the original Prophet.
+
+    Skips when prophet is not installed: it is a heavy optional dependency
+    (it pulls cmdstanpy and a compiled Stan model), so the rest of the suite
+    must not require it.
+    """
+    if not importlib.util.find_spec("prophet"):
+        pytest.skip("prophet is not installed -- `pip install prophet` to run the "
+                    "agreement checks against the original")
+
+    import _common as benchmark_common
+    import _prophet_bridge as bridge
+    from prophet import Prophet
+
+    return Prophet, benchmark_common, bridge
