@@ -24,19 +24,23 @@ sys.path.insert(0, str(LEGACY))
 # mismatch there is a finding rather than noise.
 DEFAULT_SIZES = (50, 100, 300, 1000, 2905)
 
-# Prophet's own defaults do not describe the same model this project
-# implements: it adds weekly seasonality (Fourier order 3) and, on sub-daily
-# data, daily. Benchmarking against those defaults would compare a 26-column
-# design matrix with our 20-column one and call the difference performance.
-# These arguments pin Prophet to the model implemented here: additive, linear
-# growth, yearly seasonality only at order 10, MAP rather than MCMC.
+# These used to pin Prophet's seasonality to yearly-only, because that was the
+# only component this project could fit: comparing its 26-column design matrix
+# against our 20-column one would have called a modelling gap "performance".
+# #16 task 3 closed that -- both sides now choose their components from the
+# history by the same rule -- so the seasonality arguments are back on 'auto'
+# and the comparison is against Prophet as a user actually gets it.
+#
+# Everything left here is Prophet's own default, restated rather than relied
+# on, so that a change in their defaults shows up as a benchmark change rather
+# than silently moving the baseline.
 PROPHET_KWARGS = dict(
     growth="linear",
     n_changepoints=25,
     changepoint_range=0.8,
-    yearly_seasonality=10,
-    weekly_seasonality=False,
-    daily_seasonality=False,
+    yearly_seasonality="auto",
+    weekly_seasonality="auto",
+    daily_seasonality="auto",
     seasonality_mode="additive",
     seasonality_prior_scale=10.0,
     changepoint_prior_scale=0.05,

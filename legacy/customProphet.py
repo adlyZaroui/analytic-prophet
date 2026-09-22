@@ -1,12 +1,15 @@
 import glob
 import importlib
 import importlib.util
+import logging
 import os
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 from scipy.stats import halfcauchy
 from typing import Tuple
+
+logger = logging.getLogger("customProphet")
 
 # ---------------------------------------------------------------------------
 # Model constants, checked against facebook/prophet (additive mode, linear
@@ -141,10 +144,69 @@ BUILT_IN_SEASONALITIES = {
 }
 
 
-def default_seasonalities():
-    """What a model registers when nothing else is said: yearly only, which is
-    what this implementation has always fitted."""
-    return {"yearly": dict(BUILT_IN_SEASONALITIES["yearly"])}
+def history_spacing(ds):
+    """(first, last, min_dt) -- what the auto-selection rule decides from.
+
+    [fc] set_auto_seasonalities computes these on `self.history`, which is
+    sorted by ds, so the spacing is sorted here too rather than relying on the
+    caller's row order. Zero spacings (duplicate timestamps) are excluded, and
+    the leading NaT of `diff()` drops out of `min()`, both as Prophet does.
+    """
+    ds = pd.to_datetime(pd.Series(np.asarray(ds)).sort_values())
+    dt = ds.diff()
+    return ds.min(), ds.max(), dt.iloc[dt.values.nonzero()[0]].min()
+
+
+def parse_seasonality_args(name, arg, auto_disable, default_order, seasonalities):
+    """Fourier order for a built-in seasonality, or 0 to leave it out.
+
+    [fc] Prophet.parse_seasonality_args, branch for branch. `arg is True` and
+    `arg is False` are identity checks in the original, so `weekly=1` asks for
+    order 1 rather than the default 3 -- matched here deliberately.
+    """
+    if arg == 'auto':
+        fourier_order = 0
+        if name in seasonalities:
+            logger.info("Found custom seasonality named %r, disabling built-in "
+                        "%r seasonality.", name, name)
+        elif auto_disable:
+            logger.info("Disabling %s seasonality. Run with %s_seasonality=True "
+                        "to override this.", name, name)
+        else:
+            fourier_order = default_order
+    elif arg is True:
+        fourier_order = default_order
+    elif arg is False:
+        fourier_order = 0
+    else:
+        fourier_order = int(arg)
+    return fourier_order
+
+
+# The auto-selection rule, one row per built-in. [fc] set_auto_seasonalities:
+# yearly needs two years of history; weekly and daily additionally need the
+# data to be spaced more finely than the period they describe, since a weekly
+# component cannot be identified from weekly-or-coarser observations.
+#
+# `disable` is read as "leave this one out", so it is the negation of what the
+# docstring there states in the positive.
+AUTO_SEASONALITY_RULES = (
+    ("yearly", "yearly_seasonality", 365.25, 10, pd.Timedelta(days=730), None),
+    ("weekly", "weekly_seasonality", 7.0, 3, pd.Timedelta(weeks=2), pd.Timedelta(weeks=1)),
+    ("daily", "daily_seasonality", 1.0, 4, pd.Timedelta(days=2), pd.Timedelta(days=1)),
+)
+
+# [fc] set_auto_seasonalities, verbatim. This regime is not hypothetical: with
+# yearly forced on a 328-day slice, this implementation and Prophet diverged
+# 111% over a 30-day forecast while our posterior was the better one. Following
+# the rule above is what closed that gap -- the warning is for a user who
+# overrides it anyway.
+UNDER_IDENTIFIED_WARNING = (
+    "Yearly seasonality is enabled with less than 730 days (approximately 2 "
+    "years) of history. The model may be under-identified, and the "
+    "trend/seasonality decomposition can be unstable and dependent on the "
+    "Prophet/Stan version. Consider disabling yearly seasonality or providing "
+    "more history.")
 
 
 def check_seasonality_supported(seasonalities):
@@ -372,10 +434,19 @@ class CustomProphet:
         
         self.T = None
         self.n_changepoints = N_CHANGE_POINTS
-        # Registered seasonal components. Yearly only by default, which is what
-        # this implementation has always fitted; deciding the set from the data
-        # is task 3 of #16.
-        self.seasonalities = default_seasonalities()
+
+        # [fc] Prophet.__init__. 'auto' lets the history decide; True forces the
+        # built-in default order, False leaves the component out, an int sets
+        # the order directly.
+        self.yearly_seasonality = 'auto'
+        self.weekly_seasonality = 'auto'
+        self.daily_seasonality = 'auto'
+        # Registered seasonal components, name -> entry. Empty until a fit
+        # calls _set_auto_seasonalities, which is what Prophet does: the
+        # built-ins are added to whatever was registered by hand, and a custom
+        # component of the same name suppresses its built-in.
+        self.seasonalities = {}
+        self._auto_registered = set()
         self.layout = DEFAULT_LAYOUT
         self.change_points = None
         self.changepoint_range = CHANGEPOINT_RANGE
@@ -405,6 +476,35 @@ class CustomProphet:
         self.y_absmax = np.max(np.abs(self.y))
         self.normalized_y = np.array(self.y / self.y_absmax)
     
+    def _set_auto_seasonalities(self) -> None:
+        """Register the built-in seasonalities the history supports.
+
+        [fc] Prophet.set_auto_seasonalities. Runs at the start of a fit, on
+        whatever is already registered: a hand-registered component of the same
+        name suppresses its built-in, which is how add_seasonality('weekly',
+        ...) is meant to win over the automatic one.
+        """
+        # Prophet rejects a second fit outright, so it never faces this; this
+        # model allows one, and a component the previous history supported must
+        # not survive into a history that does not. Only what the rule added is
+        # cleared -- a hand-registered component is the user's, not ours.
+        for name in self._auto_registered:
+            self.seasonalities.pop(name, None)
+        self._auto_registered = set()
+
+        first, last, min_dt = history_spacing(self.ds)
+        span = last - first
+
+        for name, attribute, period, default_order, min_span, max_spacing in AUTO_SEASONALITY_RULES:
+            disable = span < min_span or (max_spacing is not None and min_dt >= max_spacing)
+            order = parse_seasonality_args(name, getattr(self, attribute), disable,
+                                           default_order, self.seasonalities)
+            if name == "yearly" and order > 0 and disable:
+                logger.warning(UNDER_IDENTIFIED_WARNING)
+            if order > 0:
+                self.seasonalities[name] = seasonality(period, order)
+                self._auto_registered.add(name)
+
     def _build_layout(self) -> None:
         """Fix the parameter-vector layout for this fit, from the changepoint
         count and the registered seasonalities.
@@ -594,6 +694,7 @@ class CustomProphet:
         self.t_seasonality = seasonal_time(self.ds)
 
         self._normalize_y()
+        self._set_auto_seasonalities()
         self._build_layout()
         self._generate_change_points()
 
@@ -700,6 +801,7 @@ class CustomProphet:
 
         self.t_seasonality = seasonal_time(self.ds)
         self._normalize_y()
+        self._set_auto_seasonalities()
         self._build_layout()
         self._generate_change_points()
 

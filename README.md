@@ -4,9 +4,9 @@ A reimplementation of [Facebook Prophet](https://github.com/facebook/prophet)'s 
 engine that replaces Stan's automatic differentiation with a hand-derived, closed-form
 gradient.
 
-**Status: early development.** The model is additive with linear growth and yearly
-seasonality only. It is not a drop-in replacement for Prophet yet — see
-[Not implemented](#not-implemented).
+**Status: early development.** The model is additive with linear growth, and selects
+yearly, weekly and daily seasonality from the history by Prophet's own rule. It is not a
+drop-in replacement for Prophet yet — see [Not implemented](#not-implemented).
 
 ---
 
@@ -79,11 +79,24 @@ Prophet estimates none of them; there are no hierarchical priors in the model.
 | `sigmas` | 10.0 | `beta` | yes (`seasonality_prior_scale`) |
 
 `sigmas` is a `vector[K]` in Stan, one scale per regressor column. A scalar is adequate
-here only because the model is yearly-seasonality-only; adding holidays or a second
-seasonality means making it per-column.
+here only while every column shares a scale, which stops being true as soon as a
+seasonality carries its own `prior_scale` — currently rejected rather than ignored.
 
 **FIXED** — structural constants: `n_changepoints = 25`, `changepoint_range = 0.8`,
-yearly Fourier order `10` (so `K = 20`), `y` scaled by `max|y|`, `t` scaled to `[0, 1]`.
+`y` scaled by `max|y|`, `t` scaled to `[0, 1]`.
+
+**SELECTED** — `K` is not a constant. Which seasonal components a model fits is decided
+from the history, exactly as Prophet does it:
+
+| component | period | Fourier order | fitted when |
+|---|---|---|---|
+| yearly | 365.25 | 10 | history spans ≥ 730 days |
+| weekly | 7 | 3 | spans ≥ 2 weeks **and** observations closer than 7 days apart |
+| daily | 1 | 4 | spans ≥ 2 days **and** observations closer than 1 day apart |
+
+`yearly_seasonality`, `weekly_seasonality` and `daily_seasonality` override the rule:
+`True` forces the default order, `False` leaves the component out, an integer sets the
+order directly. Forcing yearly on under 730 days of history warns, as Prophet's does.
 
 **Initialization** — Prophet overrides Stan's random initialization with deterministic
 values, so Stan's `init_r · N(0,1)` default is never reached: `k`, `m` from
@@ -210,25 +223,28 @@ that gets settled.
 
 ## Benchmarks
 
-Against `prophet` 1.4.0 configured to the same model (additive, linear growth,
-yearly-only at order 10, MAP), Peyton Manning series, Apple Silicon. `T` is series
+Against `prophet` 1.4.0, both sides on their **own defaults** — additive, linear growth,
+MAP, seasonality chosen by the rule above. (Prophet's seasonality used to be pinned to
+yearly-only, because that was the only component this implementation could fit;
+comparing its 26-column design matrix against a 20-column one would have called a
+modelling gap "performance".) Peyton Manning series, Apple Silicon. `T` is series
 length; `fit_cpp` is the compiled path, `fit` the Python reference.
 
 **Fitting time** (best of 3, seconds):
 
 | T | prophet | `fit` | `fit_cpp` |
 |---|---|---|---|
-| 300 | 0.040 | 0.022 (0.55×) | **0.008 (0.19×)** |
-| 1000 | 0.158 | 0.601 (3.79×) | **0.115 (0.72×)** |
-| 2905 | 0.356 | 1.946 (5.47×) | **0.366 (1.03×)** |
+| 300 | 0.043 | 0.222 (5.13×) | **0.030 (0.69×)** |
+| 1000 | 0.157 | 0.414 (2.63×) | **0.130 (0.83×)** |
+| 2905 | 0.576 | 1.504 (2.61×) | **0.348 (0.60×)** |
 
 **Peak memory added by fitting** (T = 2905):
 
 | | added |
 |---|---|
 | prophet | 9.5 MiB |
-| `fit` | **2.4 MiB** |
-| `fit_cpp` | **5.0 MiB** |
+| `fit` | **2.6 MiB** |
+| `fit_cpp` | **3.5 MiB** |
 
 Prophet runs the optimization in a `cmdstan` subprocess, so its memory is measured via
 `RUSAGE_CHILDREN`; see `benchmark/README.md` for the methodology, including why each
@@ -282,22 +298,25 @@ Tracked, deliberate, and not yet closed:
 - **The Python path's convergence tolerances**
   ([#24](https://github.com/adlyZaroui/analytic-prophet/issues/24)) deviate from Stan's,
   because Stan's values make scipy stall on the split reformulation.
-- **Overall fit**: predictions differ from Prophet's by ~0.35% of the series scale, for
-  the reasons above and in [#30](https://github.com/adlyZaroui/analytic-prophet/issues/30).
+- **Overall fit**: on series past two years, predictions differ from Prophet's by
+  0.21–0.54% of the series scale (history plus a 30-day horizon, measured at T = 730,
+  800, 1000, 1500, 2000, 2500, 2905). On shorter series the trend decomposition is
+  looser and the gap reaches 1.22% at T = 500 — not changepoint placement (refitting on
+  Prophet's own changepoints moves that figure to 1.21%), but Prophet stopping in a
+  flatter region than we do. Our posterior is the better one at every size measured,
+  T = 100 through 2905. See
+  [#30](https://github.com/adlyZaroui/analytic-prophet/issues/30).
 
 ## Not implemented
 
-- Automatic seasonality selection — weekly and daily can be registered by hand, but `set_auto_seasonalities` is not implemented, so a model fits yearly only unless told otherwise
 - Per-column seasonality prior scales — one scalar covers every column
+- `add_seasonality` and conditional seasonalities
 - Holidays and extra regressors
 - Multiplicative seasonality (`trend · (1 + X·β)`)
 - Logistic and flat growth — linear only
 - MCMC sampling — MAP only
 
-Tracked in [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16). Adding any
-of them requires
-[#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) first, since the C++ still
-hardcodes the changepoint count and Fourier order.
+Tracked in [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16).
 
 ---
 

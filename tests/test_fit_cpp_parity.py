@@ -40,6 +40,7 @@ import numpy as np
 import pytest
 
 from customProphet import CustomProphet, N_CHANGE_POINTS, n_yearly
+from conftest import pin_yearly_only
 
 
 def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_df, compiled_optimizer_module):
@@ -50,11 +51,11 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
         "delta": np.zeros(N_CHANGE_POINTS),
         "beta": np.zeros(2 * n_yearly),
     }
-    python_model = CustomProphet()
+    python_model = pin_yearly_only(CustomProphet())
     python_model.fit(small_df, analytic=True, initial_params=matched_init)
     assert python_model.opt.success
 
-    cpp_model = CustomProphet()
+    cpp_model = pin_yearly_only(CustomProphet())
     cpp_model.fit_cpp(small_df, initial_params=matched_init, lib_path=compiled_optimizer_module)
 
     # Both sides share the exact same (k, m, delta, beta) objective for a

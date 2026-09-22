@@ -84,8 +84,12 @@ def test_fit_starts_from_prophets_deterministic_initialization(prepared_model, p
     assert seen["k"] == pytest.approx(expected_k)
     assert seen["m"] == pytest.approx(expected_m)
     np.testing.assert_array_equal(seen["delta"], np.zeros(N_CHANGE_POINTS))
-    np.testing.assert_array_equal(seen["beta"], np.zeros(2 * n_yearly))
     assert seen["sigma_obs"] == SIGMA_OBS_INIT
+    # beta is zeros at whatever width the selected components need -- 200 rows
+    # of daily data gives weekly only, so 2 * 3 rather than 2 * n_yearly
+    np.testing.assert_array_equal(seen["beta"],
+                                  np.zeros(model.layout.n_seasonality_columns))
+    assert list(model.seasonalities) == ["weekly"]
 
 
 def test_fit_cpp_is_deterministic(peyton_manning_df, compiled_optimizer_module):
@@ -255,6 +259,6 @@ def test_non_default_changepoint_count_fits(peyton_manning_df, compiled_optimize
                   lib_path=compiled_optimizer_module)
 
     assert model.layout.n_changepoints == n_changepoints
-    assert model.opt_params.shape == (3 + n_changepoints + 2 * n_yearly,)
+    assert model.opt_params.shape == (model.layout.size,)
     assert np.all(np.isfinite(model.opt_params))
     assert model.sigma_obs > 0
