@@ -53,8 +53,8 @@ def call_kwargs(prepared_model):
         "sigma_m": prepared_model.sigma_m,
         "sigma": prepared_model.sigma,
         "tau": prepared_model.tau,
-        "fourier_order": n_yearly,
-        "seasonality_period": YEARLY_PERIOD,
+        "fourier_orders": [n_yearly],
+        "seasonality_periods": [YEARLY_PERIOD],
     }
 
 

@@ -32,8 +32,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import (CustomProphet, fourier_components, n_yearly,
-                           SIGMA_OBS_IDX, YEARLY_PERIOD)
+from customProphet import CustomProphet, seasonality_design_matrix
 
 # Prophet's own threshold for yearly seasonality being identifiable.
 MIN_IDENTIFIED_DAYS = 730
@@ -91,9 +90,9 @@ def test_posterior_at_least_as_good_as_prophet(prophet_comparison, compiled_opti
     X_stan = np.asarray(stan_data["X"], dtype=float)
 
     ours = fit_ours(df, compiled_optimizer_module, change_points=t_change)
-    X_ours = fourier_components(ours.t_seasonality, YEARLY_PERIOD, n_yearly)
+    X_ours = seasonality_design_matrix(ours.t_seasonality, ours.seasonalities)
     beta_in_stan, residual = bridge.transfer_seasonality(
-        ours.opt_params[SIGMA_OBS_IDX + 1:], X_ours, X_stan)
+        ours.opt_params[ours.layout.beta], X_ours, X_stan)
 
     # the two Fourier bases span the same space, so this transfer is exact;
     # if it were not, the comparison below would be meaningless
@@ -194,8 +193,7 @@ def test_seasonality_coefficients_agree(prophet_comparison, compiled_optimizer_m
 
     ours = fit_ours(df, compiled_optimizer_module, change_points=t_change)
 
-    from customProphet import BETA_SLICE
-    beta_ours = ours.opt_params[BETA_SLICE]
+    beta_ours = ours.opt_params[ours.layout.beta]
     beta_prophet = prophet_params["beta"]
 
     assert beta_ours.shape == beta_prophet.shape
