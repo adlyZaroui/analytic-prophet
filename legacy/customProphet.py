@@ -31,8 +31,10 @@ N_CHANGE_POINTS = 25
 # FIXED -- changepoints span the first 80% of history.
 # [fc] Prophet.__init__ changepoint_range=0.8
 CHANGEPOINT_RANGE = 0.8
-# FIXED -- Fourier order N for yearly seasonality, so K = 2N = 20 columns.
+# FIXED -- Fourier order N for yearly seasonality, giving 2N = 20 columns.
 # [fc] set_auto_seasonalities, yearly fourier_order=10
+# K is no longer this: a model's seasonality registry decides it (#16 task 2),
+# and this only sets what the default registry puts in the yearly slot.
 n_yearly = 10
 
 # SCALE on delta, the changepoint rate adjustments: delta ~ double_exponential(0, tau).
@@ -41,9 +43,10 @@ TAU = 0.05
 # SCALE on beta, the seasonality coefficients: beta ~ normal(0, sigmas).
 # [stan] model block; [fc] Prophet.__init__ seasonality_prior_scale=10.0 (user-configurable)
 # NOTE: `sigmas` is vector[K] in Stan, one scale per regressor column, so
-# seasonality and holiday terms can differ. A scalar is only adequate because
-# this implementation is yearly-seasonality-only; adding holidays or a second
-# seasonality means making this per-column.
+# seasonality and holiday terms can differ. A scalar is adequate only while
+# every column shares a scale, which is true of the default registry but stops
+# being true as soon as a seasonality is registered with its own prior scale --
+# that is task 4 of #16, and it must land before add_seasonality() is honest.
 SIGMA = 10
 # SCALE on sigma_obs, the observation noise: sigma_obs ~ normal(0, 0.5),
 # truncated at 0 by `real<lower=0>`. [stan] parameters + model blocks.
@@ -75,13 +78,108 @@ STAN_MAX_ITERATIONS = 10000        # Prophet passes iter=int(1e4)
 # linear_growth_init (see below).
 SIGMA_OBS_INIT = 1.0
 
-# Parameter vector layout shared by the analytic posterior/gradient and by
-# predict()/trend_forecast_uncertainty(): [k, m, delta (S), sigma_obs, beta (2*n_yearly)]
-K_IDX = 0
-M_IDX = 1
-DELTA_SLICE = slice(2, 2 + N_CHANGE_POINTS)
-SIGMA_OBS_IDX = DELTA_SLICE.stop
-BETA_SLICE = slice(SIGMA_OBS_IDX + 1, SIGMA_OBS_IDX + 1 + 2 * n_yearly)
+class ParameterLayout:
+    """Where each block sits in the parameter vector, given S changepoints and
+    K seasonality columns: [k, m, delta(S), sigma_obs, beta(K)].
+
+    This used to be five module constants fixed at import, which pinned the
+    model to 25 changepoints and one order-10 seasonality. The C++ core stopped
+    assuming either in #3; carrying the layout as a value makes the Python side
+    follow, which is what lets a seasonality registry exist at all.
+    """
+
+    __slots__ = ("n_changepoints", "n_seasonality_columns", "k_idx", "m_idx",
+                 "delta", "sigma_obs_idx", "beta", "size")
+
+    def __init__(self, n_changepoints, n_seasonality_columns):
+        self.n_changepoints = n_changepoints
+        self.n_seasonality_columns = n_seasonality_columns
+        self.k_idx = 0
+        self.m_idx = 1
+        self.delta = slice(2, 2 + n_changepoints)
+        self.sigma_obs_idx = 2 + n_changepoints
+        self.beta = slice(3 + n_changepoints, 3 + n_changepoints + n_seasonality_columns)
+        self.size = 3 + n_changepoints + n_seasonality_columns
+
+    def __repr__(self):
+        return (f"ParameterLayout(S={self.n_changepoints}, "
+                f"K={self.n_seasonality_columns}, size={self.size})")
+
+
+# The layout a default model uses: 25 changepoints, yearly seasonality at
+# order 10. The module constants below are its fields, kept so that callers
+# reading a default-shaped vector need no layout in hand.
+DEFAULT_LAYOUT = ParameterLayout(N_CHANGE_POINTS, 2 * n_yearly)
+K_IDX = DEFAULT_LAYOUT.k_idx
+M_IDX = DEFAULT_LAYOUT.m_idx
+DELTA_SLICE = DEFAULT_LAYOUT.delta
+SIGMA_OBS_IDX = DEFAULT_LAYOUT.sigma_obs_idx
+BETA_SLICE = DEFAULT_LAYOUT.beta
+
+# An entry mirrors Prophet's own, field for field -- [fc] add_seasonality:
+#     {period, fourier_order, prior_scale, mode, condition_name}
+# Only the first two are honored so far. The rest are carried at their Prophet
+# defaults and *checked* rather than silently ignored, because a registry that
+# accepted `mode="multiplicative"` and fitted it additively would be worse than
+# one that cannot express it: see check_seasonality_supported below.
+SEASONALITY_DEFAULTS = {"prior_scale": SIGMA, "mode": "additive", "condition_name": None}
+
+
+def seasonality(period, fourier_order, **overrides):
+    """One registry entry, with Prophet's defaults filled in."""
+    return {"period": float(period), "fourier_order": int(fourier_order),
+            **SEASONALITY_DEFAULTS, **overrides}
+
+
+# Prophet's built-in seasonalities, as period and default Fourier order.
+# [fc] set_auto_seasonalities. Only yearly is registered by default here;
+# choosing between them from the data is task 3 of #16.
+BUILT_IN_SEASONALITIES = {
+    "yearly": seasonality(365.25, 10),
+    "weekly": seasonality(7.0, 3),
+    "daily": seasonality(1.0, 4),
+}
+
+
+def default_seasonalities():
+    """What a model registers when nothing else is said: yearly only, which is
+    what this implementation has always fitted."""
+    return {"yearly": dict(BUILT_IN_SEASONALITIES["yearly"])}
+
+
+def check_seasonality_supported(seasonalities):
+    """Reject registry fields the fit does not yet honor.
+
+    `prior_scale` needs the per-column `sigmas` vector of #16 task 4, `mode`
+    needs the s_a/s_m split of task 9, and `condition_name` needs task 6. Until
+    then a non-default value would be accepted and quietly dropped, which is
+    the failure mode this whole issue exists to avoid.
+    """
+    for name, props in seasonalities.items():
+        for field, default in SEASONALITY_DEFAULTS.items():
+            value = props.get(field, default)
+            if value != default:
+                raise NotImplementedError(
+                    f"seasonality {name!r} sets {field}={value!r}, which this "
+                    f"implementation does not honor yet (only {field}={default!r} "
+                    f"is fitted). Tracked in #16.")
+
+
+def seasonality_design_matrix(t_seasonality, seasonalities):
+    """Fourier features for every registered component, concatenated.
+
+    Column order follows the registry's insertion order, and within a component
+    Prophet's own interleaving. With one yearly component this is exactly the
+    matrix built before the registry existed.
+    """
+    blocks = [fourier_components(t_seasonality, props["period"], props["fourier_order"])
+              for props in seasonalities.values()]
+    return np.concatenate(blocks, axis=1) if blocks else np.empty((len(t_seasonality), 0))
+
+
+def seasonality_columns(seasonalities):
+    """K -- the total number of seasonality columns the registry implies."""
+    return sum(2 * props["fourier_order"] for props in seasonalities.values())
 
 def linear_growth_init(t_scaled, normalized_y):
     """Prophet's deterministic starting point for (k, m): the line through the
@@ -135,21 +233,28 @@ def fourier_components(t_days, period, n):
     result[:, 1::2] = np.cos(angles)
     return result
 
-def extract_params(params):
-    k = params[K_IDX]
-    m = params[M_IDX]
-    delta = params[DELTA_SLICE]
-    sigma_obs = params[SIGMA_OBS_IDX]
-    beta = params[BETA_SLICE]
+def extract_params(params, layout=DEFAULT_LAYOUT):
+    k = params[layout.k_idx]
+    m = params[layout.m_idx]
+    delta = params[layout.delta]
+    sigma_obs = params[layout.sigma_obs_idx]
+    beta = params[layout.beta]
     return k, m, delta, sigma_obs, beta
 
-def from_dict_to_array(params):
-    k = np.array([params['k']])
-    m = np.array([params['m']])
-    delta = params['delta']
-    sigma_obs = np.array([params['sigma_obs']])
-    beta = np.zeros((2 * 10,))
-    return np.concatenate((k, m, delta, sigma_obs, beta))
+def from_dict_to_array(params, layout=DEFAULT_LAYOUT):
+    """Pack a parameter dict into a vector in `layout`'s order.
+
+    `beta` used to be overwritten with zeros here regardless of what was
+    passed (#34), which was invisible only because every caller happened to
+    pass zeros.
+    """
+    beta = np.asarray(params['beta'], dtype=float)
+    if beta.shape != (layout.n_seasonality_columns,):
+        raise ValueError(
+            f"beta has {beta.shape} entries but the layout expects "
+            f"{layout.n_seasonality_columns}")
+    return np.concatenate(([params['k']], [params['m']], np.asarray(params['delta'], dtype=float),
+                           [params['sigma_obs']], beta))
 
 CPP_MODULE_NAME = 'analytic_prophet_cpp'
 
@@ -196,7 +301,7 @@ def load_cpp_module(lib_path=None):
         _cpp_module_cache[lib_path] = module
     return _cpp_module_cache[lib_path]
 
-def canonical_to_cpp(params):
+def canonical_to_cpp(params, layout=DEFAULT_LAYOUT):
     """(k, m, delta, sigma_obs, beta) -> (k, m, delta, beta, zeta).
 
     The C++ core carries zeta = log(sigma_obs) as the LAST element, whereas the
@@ -205,20 +310,20 @@ def canonical_to_cpp(params):
     packing differs. The log is what keeps sigma_obs positive in the C++, since
     liblbfgs has no box constraints.
     """
-    k, m, delta, sigma_obs, beta = extract_params(params)
+    k, m, delta, sigma_obs, beta = extract_params(params, layout)
     return np.concatenate(([k], [m], delta, beta, [np.log(sigma_obs)]))
 
-def cpp_to_canonical(params):
+def cpp_to_canonical(params, layout=DEFAULT_LAYOUT):
     """Inverse of canonical_to_cpp: sigma_obs = exp(zeta), moved into place."""
     params = np.asarray(params, dtype=float)
-    n_delta = N_CHANGE_POINTS
+    n_delta = layout.n_changepoints
     k, m = params[0], params[1]
     delta = params[2:2 + n_delta]
     beta = params[2 + n_delta:-1]
     sigma_obs = np.exp(params[-1])
     return np.concatenate(([k], [m], delta, [sigma_obs], beta))
 
-def canonical_to_split(params):
+def canonical_to_split(params, layout=DEFAULT_LAYOUT):
     """(k, m, delta, sigma_obs, beta) -> (k, m, delta_pos, delta_neg, sigma_obs, beta).
 
     The Laplace prior on delta puts |delta|/tau in the objective, which is not
@@ -233,7 +338,7 @@ def canonical_to_split(params):
     optimum at most one of each pair is non-zero, so the two problems have the
     same solution. This is the same fix the C++ core gets from OWL-QN.
     """
-    k, m, delta, sigma_obs, beta = extract_params(params)
+    k, m, delta, sigma_obs, beta = extract_params(params, layout)
     return np.concatenate(([k], [m], np.maximum(delta, 0), np.maximum(-delta, 0), [sigma_obs], beta))
 
 def split_to_canonical(z, n_delta=N_CHANGE_POINTS):
@@ -267,6 +372,11 @@ class CustomProphet:
         
         self.T = None
         self.n_changepoints = N_CHANGE_POINTS
+        # Registered seasonal components. Yearly only by default, which is what
+        # this implementation has always fitted; deciding the set from the data
+        # is task 3 of #16.
+        self.seasonalities = default_seasonalities()
+        self.layout = DEFAULT_LAYOUT
         self.change_points = None
         self.changepoint_range = CHANGEPOINT_RANGE
         
@@ -295,20 +405,17 @@ class CustomProphet:
         self.y_absmax = np.max(np.abs(self.y))
         self.normalized_y = np.array(self.y / self.y_absmax)
     
-    def _check_dimensions_supported(self) -> None:
-        """The C++ core takes S and the Fourier order as arguments (#3), but the
-        Python layer still derives its parameter-vector layout from the module
-        constants -- DELTA_SLICE and BETA_SLICE are fixed at import time.
+    def _build_layout(self) -> None:
+        """Fix the parameter-vector layout for this fit, from the changepoint
+        count and the registered seasonalities.
 
-        So a non-default changepoint count reaches the optimizer fine and then
-        fails when the result is unpacked. Saying so here beats the numpy
-        broadcast error that surfaces otherwise. Lifting this is #16 task 2.
+        Replaces the guard that used to reject any non-default changepoint
+        count: the layout is no longer a module constant, so both S and K
+        follow the model rather than the other way round.
         """
-        if self.n_changepoints != N_CHANGE_POINTS:
-            raise NotImplementedError(
-                f"n_changepoints={self.n_changepoints} is not supported yet: the C++ core "
-                f"accepts any value (#3), but this layer's parameter layout is fixed at "
-                f"{N_CHANGE_POINTS}. Tracked as task 2 of #16.")
+        check_seasonality_supported(self.seasonalities)
+        self.layout = ParameterLayout(self.n_changepoints,
+                                      seasonality_columns(self.seasonalities))
 
     def _generate_change_points(self) -> None:
         """Changepoints spaced uniformly in *scaled time* over the first
@@ -339,11 +446,11 @@ class CustomProphet:
         what keeps the objective usable on its own.
         """
         A = (self.t_scaled[:, None] >= self.change_points) * 1
-        x = fourier_components(self.t_seasonality, YEARLY_PERIOD, n_yearly)
+        x = seasonality_design_matrix(self.t_seasonality, self.seasonalities)
         return A, x
 
     def _minus_log_posterior(self, params: np.array, include_l1_prior: bool=True, design=None) -> float:
-        k, m, delta, sigma_obs, beta = extract_params(params)
+        k, m, delta, sigma_obs, beta = extract_params(params, self.layout)
 
         A, x = design if design is not None else self._design_matrices()
 
@@ -372,7 +479,7 @@ class CustomProphet:
         return minus_log_posterior
 
     def _gradient(self, params: np.array, include_l1_prior: bool=True, design=None) -> np.array:
-        k, m, delta, sigma_obs, beta = extract_params(params)
+        k, m, delta, sigma_obs, beta = extract_params(params, self.layout)
 
         A, x = design if design is not None else self._design_matrices()
 
@@ -399,7 +506,7 @@ class CustomProphet:
         return gradient
 
     def _minus_log_posteriorAndGradient(self, params: np.array, include_l1_prior: bool=True, design=None) -> Tuple[float, np.array]:
-        k, m, delta, sigma_obs, beta = extract_params(params)
+        k, m, delta, sigma_obs, beta = extract_params(params, self.layout)
 
         A, x = design if design is not None else self._design_matrices()
 
@@ -439,31 +546,33 @@ class CustomProphet:
     # same value but differentiable -- see canonical_to_split for why.
 
     def _split_l1_penalty(self, z):
-        n_delta = len(self.change_points)
+        n_delta = self.layout.n_changepoints
         return np.sum(z[2:2 + 2 * n_delta]) / self.tau
 
     def _split_minus_log_posterior(self, z: np.array, design=None) -> float:
-        smooth = self._minus_log_posterior(split_to_canonical(z), include_l1_prior=False, design=design)
+        smooth = self._minus_log_posterior(split_to_canonical(z, self.layout.n_changepoints),
+                                           include_l1_prior=False, design=design)
         return smooth + self._split_l1_penalty(z)
 
     def _split_gradient(self, z: np.array, design=None) -> np.array:
         return self._canonical_gradient_to_split(
-            self._gradient(split_to_canonical(z), include_l1_prior=False, design=design))
+            self._gradient(split_to_canonical(z, self.layout.n_changepoints),
+                           include_l1_prior=False, design=design))
 
     def _split_minus_log_posteriorAndGradient(self, z: np.array, design=None) -> Tuple[float, np.array]:
         smooth, gradient = self._minus_log_posteriorAndGradient(
-            split_to_canonical(z), include_l1_prior=False, design=design)
+            split_to_canonical(z, self.layout.n_changepoints), include_l1_prior=False, design=design)
         return smooth + self._split_l1_penalty(z), self._canonical_gradient_to_split(gradient)
 
     def _canonical_gradient_to_split(self, gradient):
         """d/d(delta_pos) = d/d(delta) + 1/tau, d/d(delta_neg) = -d/d(delta) + 1/tau."""
-        ddelta = gradient[DELTA_SLICE]
+        ddelta = gradient[self.layout.delta]
         return np.concatenate((
             gradient[:2],
             ddelta + 1 / self.tau,
             -ddelta + 1 / self.tau,
-            [gradient[SIGMA_OBS_IDX]],
-            gradient[BETA_SLICE],
+            [gradient[self.layout.sigma_obs_idx]],
+            gradient[self.layout.beta],
         ))
 
     def fit(self, df: pd.DataFrame, analytic: bool=False, use_combined: bool=False, optimizer: str='L-BFGS-B',
@@ -485,7 +594,7 @@ class CustomProphet:
         self.t_seasonality = seasonal_time(self.ds)
 
         self._normalize_y()
-        self._check_dimensions_supported()
+        self._build_layout()
         self._generate_change_points()
 
         # [fc] calculate_initial_params: k/m from linear_growth_init, delta and
@@ -495,9 +604,9 @@ class CustomProphet:
         initial_params_dict = {
             'k': k_init,
             'm': m_init,
-            'delta': np.zeros((N_CHANGE_POINTS,)),
+            'delta': np.zeros(self.layout.n_changepoints),
             'sigma_obs': SIGMA_OBS_INIT,
-            'beta': np.zeros((2 * n_yearly,))
+            'beta': np.zeros(self.layout.n_seasonality_columns),
         }
         if initial_params is not None:
             initial_params_dict.update(initial_params)
@@ -510,21 +619,21 @@ class CustomProphet:
         design = self._design_matrices()
 
         def callback(z):
-            fobj = self._minus_log_posterior(split_to_canonical(z), design=design)
+            fobj = self._minus_log_posterior(split_to_canonical(z, self.layout.n_changepoints), design=design)
             loss_over_iterations.append(fobj)
 
-        initial_params_array = from_dict_to_array(initial_params_dict)
+        initial_params_array = from_dict_to_array(initial_params_dict, self.layout)
 
         # sigma_obs must stay positive, mirroring Stan's `real<lower=0> sigma_obs`.
         # fixed_sigma_obs collapses that bound to a single point, pinning sigma_obs
         # for parity with fit_cpp()'s compiled optimizer, which never estimates it.
         sigma_obs_bounds = (fixed_sigma_obs, fixed_sigma_obs) if fixed_sigma_obs is not None else (1e-6, None)
-        n_delta = len(self.change_points)
+        n_delta = self.layout.n_changepoints
         # Split-space bounds: k, m free; delta_pos/delta_neg >= 0; then sigma_obs, beta
         bounds = [(None, None)] * 2 + [(0, None)] * (2 * n_delta) + [sigma_obs_bounds] + \
-                 [(None, None)] * (2 * n_yearly)
+                 [(None, None)] * self.layout.n_seasonality_columns
 
-        z0 = canonical_to_split(initial_params_array)
+        z0 = canonical_to_split(initial_params_array, self.layout)
 
         if use_combined:
             objective = lambda z: self._split_minus_log_posteriorAndGradient(z, design=design)
@@ -573,8 +682,8 @@ class CustomProphet:
                         jac=jac)
 
         self.opt = opt_params
-        self.opt_params = split_to_canonical(opt_params.x)
-        self.sigma_obs = self.opt_params[SIGMA_OBS_IDX]
+        self.opt_params = split_to_canonical(opt_params.x, self.layout.n_changepoints)
+        self.sigma_obs = self.opt_params[self.layout.sigma_obs_idx]
         self.loss_over_iterations = loss_over_iterations
     
     def fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None, verbose: bool=False) -> Tuple[float, float, np.array, np.array]:
@@ -591,7 +700,7 @@ class CustomProphet:
 
         self.t_seasonality = seasonal_time(self.ds)
         self._normalize_y()
-        self._check_dimensions_supported()
+        self._build_layout()
         self._generate_change_points()
 
         # Same deterministic initialization as fit(), so both fit paths start
@@ -605,8 +714,8 @@ class CustomProphet:
         defaults = {
             'k': k_init,
             'm': m_init,
-            'delta': np.zeros((N_CHANGE_POINTS,)),
-            'beta': np.zeros((2 * n_yearly,)),
+            'delta': np.zeros(self.layout.n_changepoints),
+            'beta': np.zeros(self.layout.n_seasonality_columns),
         }
         if initial_params is not None:
             defaults.update(initial_params)
@@ -631,8 +740,8 @@ class CustomProphet:
             sigma_m=self.sigma_m,
             sigma=self.sigma,
             tau=self.tau,
-            fourier_order=n_yearly,
-            seasonality_period=YEARLY_PERIOD,
+            fourier_orders=[props["fourier_order"] for props in self.seasonalities.values()],
+            seasonality_periods=[props["period"] for props in self.seasonalities.values()],
             verbose=verbose,
         )
 
@@ -653,8 +762,8 @@ class CustomProphet:
         # Back to the canonical (k, m, delta, sigma_obs, beta) layout, so
         # predict()/trend_forecast_uncertainty() work the same regardless of
         # which fit method produced opt_params.
-        self.opt_params = cpp_to_canonical(result.params)
-        self.sigma_obs = self.opt_params[SIGMA_OBS_IDX]
+        self.opt_params = cpp_to_canonical(result.params, self.layout)
+        self.sigma_obs = self.opt_params[self.layout.sigma_obs_idx]
 
         # Return whatever values are necessary
         return -1
@@ -678,7 +787,7 @@ class CustomProphet:
         return future_df
     
     def trend_forecast_uncertainty(self, horizon=30, n_samples=500):
-        k, m, delta, _sigma_obs, beta = extract_params(self.opt_params)
+        k, m, delta, _sigma_obs, beta = extract_params(self.opt_params, self.layout)
         probability_changepoint = self.n_changepoints / self.T
         future_df = self.make_future_dataframe(horizon)
         
@@ -706,7 +815,7 @@ class CustomProphet:
     
     def predict(self, future_df):
         # Extract optimal parameters
-        k, m, delta, _sigma_obs, beta = extract_params(self.opt_params)
+        k, m, delta, _sigma_obs, beta = extract_params(self.opt_params, self.layout)
         
         # Normalize future dates
         future_df['t_scaled'] = (pd.to_datetime(future_df['ds']) - self.ds.min()) / (self.ds.max() - self.ds.min())
@@ -715,7 +824,7 @@ class CustomProphet:
         trend = compute_trend(k, m, delta, self.change_points, future_df['t_scaled'].values, self.y_absmax)
 
         # Seasonality component calculation
-        x = fourier_components(seasonal_time(future_df['ds']), YEARLY_PERIOD, n_yearly)
+        x = seasonality_design_matrix(seasonal_time(future_df['ds']), self.seasonalities)
         seasonality = x.dot(beta)
 
         # Combine trend and seasonality for the forecast

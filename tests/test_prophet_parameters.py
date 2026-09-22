@@ -71,9 +71,9 @@ def test_fit_starts_from_prophets_deterministic_initialization(prepared_model, p
     seen = {}
     original = customProphet.from_dict_to_array
 
-    def capture(params):
+    def capture(params, layout=None):
         seen.update(params)
-        return original(params)
+        return original(params) if layout is None else original(params, layout)
 
     monkeypatch.setattr(customProphet, "from_dict_to_array", capture)
 
@@ -219,7 +219,7 @@ def test_cpp_core_accepts_any_dimensions(prepared_model, cpp_module, n_changepoi
         t_seasonality=model.t_seasonality, normalized_y=model.normalized_y,
         sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=model.sigma_k,
         sigma_m=model.sigma_m, sigma=model.sigma, tau=model.tau,
-        fourier_order=fourier_order, seasonality_period=YEARLY_PERIOD)
+        fourier_orders=[fourier_order], seasonality_periods=[YEARLY_PERIOD])
 
     assert np.isfinite(value)
     assert gradient.shape == (n_params,)
@@ -237,15 +237,24 @@ def test_mismatched_parameter_length_is_rejected(prepared_model, cpp_module):
             normalized_y=prepared_model.normalized_y,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=prepared_model.sigma_k,
             sigma_m=prepared_model.sigma_m, sigma=prepared_model.sigma,
-            tau=prepared_model.tau, fourier_order=10, seasonality_period=YEARLY_PERIOD)
+            tau=prepared_model.tau, fourier_orders=[10], seasonality_periods=[YEARLY_PERIOD])
 
 
-def test_unsupported_changepoint_count_fails_clearly(peyton_manning_df, compiled_optimizer_module):
-    """The Python layout is still fixed (#16 task 2), so this must say so
-    rather than surface a numpy broadcast error from deep inside the fit."""
+@pytest.mark.parametrize("n_changepoints", [5, 10, 40])
+def test_non_default_changepoint_count_fits(peyton_manning_df, compiled_optimizer_module,
+                                            n_changepoints):
+    """#16 task 2: the Python layout follows the model rather than the module
+    constants, so S is no longer pinned at 25.
+
+    This used to raise NotImplementedError by design -- the parameter vector
+    was sliced with compiled-in offsets, and anything else mis-sliced silently.
+    """
     model = CustomProphet()
-    model.n_changepoints = 10
+    model.n_changepoints = n_changepoints
+    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+                  lib_path=compiled_optimizer_module)
 
-    with pytest.raises(NotImplementedError, match="task 2 of #16"):
-        model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
-                      lib_path=compiled_optimizer_module)
+    assert model.layout.n_changepoints == n_changepoints
+    assert model.opt_params.shape == (3 + n_changepoints + 2 * n_yearly,)
+    assert np.all(np.isfinite(model.opt_params))
+    assert model.sigma_obs > 0

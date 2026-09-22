@@ -53,6 +53,7 @@ def prepared_model(peyton_manning_df):
     model.T = peyton_manning_df.shape[0]
     model.t_seasonality = seasonal_time(model.ds)
     model._normalize_y()
+    model._build_layout()
     model._generate_change_points()
     return model
 
@@ -188,8 +189,10 @@ def cpp_mlp_and_gradient(cpp_module):
             sigma_m=model.sigma_m,
             sigma=model.sigma,
             tau=model.tau,
-            fourier_order=n_yearly,
-            seasonality_period=YEARLY_PERIOD,
+            # from the model's registry, so a test that registers a second
+            # seasonality gets the design matrix it asked for
+            fourier_orders=[p["fourier_order"] for p in model.seasonalities.values()],
+            seasonality_periods=[p["period"] for p in model.seasonalities.values()],
             include_l1_prior=include_l1_prior,
         )
 

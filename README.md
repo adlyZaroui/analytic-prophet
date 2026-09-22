@@ -287,7 +287,8 @@ Tracked, deliberate, and not yet closed:
 
 ## Not implemented
 
-- Weekly (order 3) and daily (order 4) seasonality — yearly only
+- Automatic seasonality selection — weekly and daily can be registered by hand, but `set_auto_seasonalities` is not implemented, so a model fits yearly only unless told otherwise
+- Per-column seasonality prior scales — one scalar covers every column
 - Holidays and extra regressors
 - Multiplicative seasonality (`trend · (1 + X·β)`)
 - Logistic and flat growth — linear only
