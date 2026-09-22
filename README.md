@@ -220,6 +220,24 @@ Whether a better MAP point generalizes better is an empirical question requiring
 held-out evaluation, which has not been done. The planned prediction benchmark is where
 that gets settled.
 
+### One claim that was withdrawn
+
+An earlier version of this file recorded a **111%** forecast disagreement on a 328-day
+slice, explained as the model being under-identified below Prophet's own 730-day
+threshold for yearly seasonality. The explanation was right about the mechanism and
+wrong about the cause.
+
+Prophet's rule *disables* yearly under 730 days. The benchmarks were forcing it on for
+both sides, because yearly was the only component this implementation could fit.
+Comparing against a configuration Prophet would never choose is not a measurement of
+disagreement. With the selection rule implemented, both sides fit weekly-only at that
+length and agree to **0.709%**.
+
+What survives is smaller and is about the trend rather than the seasonality — see
+**Overall fit** under [Known differences](#known-differences-from-prophet). The general
+lesson is recorded because it recurred: on this project, a large disagreement has so far
+always been a difference in what was being compared, not a defect in the gradient.
+
 ---
 
 ## Benchmarks
@@ -299,6 +317,20 @@ Tracked, deliberate, and not yet closed:
 - **The Python path's convergence tolerances**
   ([#24](https://github.com/adlyZaroui/analytic-prophet/issues/24)) deviate from Stan's,
   because Stan's values make scipy stall on the split reformulation.
+- **Refitting is allowed** ([#41](https://github.com/adlyZaroui/analytic-prophet/issues/41)).
+  `Prophet.fit` refuses a second call; this implementation accepts one. Neither the
+  divergence nor the contract is currently written down, and it has already produced one
+  bug — a component the previous history supported surviving into a history that cannot
+  identify it. Fixed for seasonality, but every remaining task in
+  [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) adds fit-time state
+  facing the same question.
+- **Dimension mismatches in the C++ core abort the process**
+  ([#43](https://github.com/adlyZaroui/analytic-prophet/issues/43)) rather than raising:
+  Eigen calls `abort()` on a size assertion, so the interpreter dies with no traceback.
+  Three have been found and guarded individually; an audit found three more that abort
+  and three that are accepted silently, including a zero `seasonality_period` returning
+  `nan`. Nothing the model itself drives hits these — it is about calling the core
+  directly, which the test suite does.
 - **Overall fit**: on series past two years, predictions differ from Prophet's by
   0.21–0.54% of the series scale (history plus a 30-day horizon, measured at T = 730,
   800, 1000, 1500, 2000, 2500, 2905). On shorter series the trend decomposition is
@@ -327,7 +359,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 50 tests
+pytest tests/                        # 137 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
@@ -354,6 +386,12 @@ numbers rather than errors.
 | | [#23](https://github.com/adlyZaroui/analytic-prophet/issues/23) | OWL-QN replaced by the split reformulation with L-BFGS-B: 5.4× faster and a better optimum |
 | | [#28](https://github.com/adlyZaroui/analytic-prophet/issues/28) | The changepoint and Fourier matrices, constant for a whole fit, were rebuilt on every objective evaluation — 57% of each. Built once: `fit_cpp` reached parity with Prophet |
 | | [#13](https://github.com/adlyZaroui/analytic-prophet/issues/13) | `fit_cpp` returned NaN while reporting `LBFGS_SUCCESS`. Resolved by the solver change |
+| Modelling | [#36](https://github.com/adlyZaroui/analytic-prophet/issues/36) | Fourier basis measured days from the series start, not the 1970 epoch, and emitted all `cos` then all `sin` rather than interleaving. A pure reparameterization — but until it was fixed, `beta` could not be compared with Prophet's at all |
+| | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 5 | `beta`'s prior used one scalar for every column, where Stan has `vector[K] sigmas`. Verified per-column against Stan's own `sigmas` and `log_prob`, and the shrinkage checked against the ridge algebra rather than merely being nonzero |
+| | [#34](https://github.com/adlyZaroui/analytic-prophet/issues/34) | `from_dict_to_array` overwrote `beta` with zeros regardless of what was passed. Invisible only because every caller happened to pass zeros |
 | Infrastructure | [#1](https://github.com/adlyZaroui/analytic-prophet/issues/1), [#11](https://github.com/adlyZaroui/analytic-prophet/pull/11) | ctypes → pybind11. The old binding hardcoded a relative library path and carried a 19-entry `argtypes` list kept in sync by hand; mismatches were undefined behaviour rather than errors |
 | | [#5](https://github.com/adlyZaroui/analytic-prophet/issues/5) | Parity test between the two fit paths from matched initial conditions |
 | | [#26](https://github.com/adlyZaroui/analytic-prophet/pull/26) | Benchmark harness against the original |
