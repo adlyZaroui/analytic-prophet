@@ -45,12 +45,11 @@ n_yearly = 10
 TAU = 0.05
 # SCALE on beta, the seasonality coefficients: beta ~ normal(0, sigmas).
 # [stan] model block; [fc] Prophet.__init__ seasonality_prior_scale=10.0 (user-configurable)
-# NOTE: `sigmas` is vector[K] in Stan, one scale per regressor column, so
-# seasonality and holiday terms can differ. A scalar is adequate only while
-# every column shares a scale, which is true of the default registry but stops
-# being true as soon as a seasonality is registered with its own prior scale --
-# that is task 4 of #16, and it must land before add_seasonality() is honest.
-SIGMA = 10
+# This is the model-wide default a seasonality inherits when it carries no
+# prior_scale of its own. The vector Stan actually receives is built per column
+# by seasonality_prior_scales() -- `sigmas` is vector[K] there, so seasonality,
+# holiday and regressor terms can each have their own.
+SIGMA = 10.0
 # SCALE on sigma_obs, the observation noise: sigma_obs ~ normal(0, 0.5),
 # truncated at 0 by `real<lower=0>`. [stan] parameters + model blocks.
 # Hardcoded in prophet.stan -- not user-configurable.
@@ -121,11 +120,15 @@ BETA_SLICE = DEFAULT_LAYOUT.beta
 
 # An entry mirrors Prophet's own, field for field -- [fc] add_seasonality:
 #     {period, fourier_order, prior_scale, mode, condition_name}
-# Only the first two are honored so far. The rest are carried at their Prophet
-# defaults and *checked* rather than silently ignored, because a registry that
-# accepted `mode="multiplicative"` and fitted it additively would be worse than
-# one that cannot express it: see check_seasonality_supported below.
+# `mode` and `condition_name` are not honored yet. They are carried at their
+# Prophet defaults and *checked* rather than silently ignored, because a
+# registry that accepted `mode="multiplicative"` and fitted it additively would
+# be worse than one that cannot express it: see check_seasonality_supported.
 SEASONALITY_DEFAULTS = {"prior_scale": SIGMA, "mode": "additive", "condition_name": None}
+
+# Of those, the ones the fit actually reads. The rest are checked rather than
+# ignored -- see check_seasonality_supported.
+HONORED_SEASONALITY_FIELDS = ("period", "fourier_order", "prior_scale")
 
 
 def seasonality(period, fourier_order, **overrides):
@@ -212,19 +215,29 @@ UNDER_IDENTIFIED_WARNING = (
 def check_seasonality_supported(seasonalities):
     """Reject registry fields the fit does not yet honor.
 
-    `prior_scale` needs the per-column `sigmas` vector of #16 task 4, `mode`
-    needs the s_a/s_m split of task 9, and `condition_name` needs task 6. Until
-    then a non-default value would be accepted and quietly dropped, which is
-    the failure mode this whole issue exists to avoid.
+    `mode` needs the s_a/s_m split of #16 task 11 and `condition_name` needs
+    task 7. Until then a non-default value would be accepted and quietly
+    dropped, which is the failure mode this whole issue exists to avoid.
+
+    `prior_scale` used to be on this list and is honored as of task 5, so it is
+    validated for sanity rather than rejected -- Stan declares `sigmas` with no
+    lower bound but `normal(0, sigmas)` is undefined at or below zero.
     """
     for name, props in seasonalities.items():
         for field, default in SEASONALITY_DEFAULTS.items():
             value = props.get(field, default)
+            if field in HONORED_SEASONALITY_FIELDS:
+                continue
             if value != default:
                 raise NotImplementedError(
                     f"seasonality {name!r} sets {field}={value!r}, which this "
                     f"implementation does not honor yet (only {field}={default!r} "
                     f"is fitted). Tracked in #16.")
+        scale = float(props.get("prior_scale", SIGMA))
+        if not scale > 0:
+            raise ValueError(
+                f"seasonality {name!r} has prior_scale={scale!r}; the prior "
+                f"normal(0, prior_scale) needs a positive scale")
 
 
 def seasonality_design_matrix(t_seasonality, seasonalities):
@@ -242,6 +255,20 @@ def seasonality_design_matrix(t_seasonality, seasonalities):
 def seasonality_columns(seasonalities):
     """K -- the total number of seasonality columns the registry implies."""
     return sum(2 * props["fourier_order"] for props in seasonalities.values())
+
+
+def seasonality_prior_scales(seasonalities):
+    """`sigmas` -- one prior scale per column of the design matrix.
+
+    [stan] `vector[K] sigmas` in the data block, `beta ~ normal(0, sigmas)` in
+    the model block; [fc] make_all_seasonality_features extends prior_scales by
+    `[props['prior_scale']] * features.shape[1]`. Every column of a component
+    shares that component's scale, so this repeats each one across its block.
+    """
+    return np.concatenate([
+        np.full(2 * props["fourier_order"], float(props["prior_scale"]))
+        for props in seasonalities.values()
+    ]) if seasonalities else np.empty(0)
 
 def linear_growth_init(t_scaled, normalized_y):
     """Prophet's deterministic starting point for (k, m): the line through the
@@ -452,7 +479,8 @@ class CustomProphet:
         self.changepoint_range = CHANGEPOINT_RANGE
         
         self.tau = TAU # sparse prior on rate adjustments delta
-        self.sigma = SIGMA # prior on fourier coefficients beta
+        self.sigma = SIGMA # default prior scale on beta, per seasonality
+        self.sigmas = seasonality_prior_scales({})  # per column; set by _build_layout
         self.sigma_obs = SIGMA_OBS_INIT # estimated by fit(); fit_cpp() keeps this fixed
 
         self.m = None
@@ -516,6 +544,11 @@ class CustomProphet:
         check_seasonality_supported(self.seasonalities)
         self.layout = ParameterLayout(self.n_changepoints,
                                       seasonality_columns(self.seasonalities))
+        # `sigmas` in Stan's data block: one entry per column of the design
+        # matrix, so it is fixed by the registry at the same moment the layout
+        # is. self.sigma remains the model-wide default a component inherits
+        # when it does not carry its own.
+        self.sigmas = seasonality_prior_scales(self.seasonalities)
 
     def _generate_change_points(self) -> None:
         """Changepoints spaced uniformly in *scaled time* over the first
@@ -571,7 +604,7 @@ class CustomProphet:
                       sigma_obs**2 / (2*SIGMA_OBS_PRIOR_SCALE**2) + \
                       k**2 / (2*self.sigma_k**2) + \
                       m**2 / (2*self.sigma_m**2) + \
-                      np.sum(beta**2) / (2*self.sigma**2)
+                      np.sum(beta**2 / (2 * self.sigmas**2))
 
         if include_l1_prior:
             minus_log_posterior += np.sum(np.abs(delta)) / self.tau
@@ -596,7 +629,7 @@ class CustomProphet:
         dm = np.array([-np.sum(r) / sigma_obs**2 + m / self.sigma_m**2])
         ddelta = -np.sum(r[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
         dsigma_obs = np.array([self.T / sigma_obs - np.sum(r**2) / sigma_obs**3 + sigma_obs / SIGMA_OBS_PRIOR_SCALE**2])
-        dbeta = -np.dot(r, x) / sigma_obs**2 + beta / self.sigma**2
+        dbeta = -np.dot(r, x) / sigma_obs**2 + beta / self.sigmas**2
 
         if include_l1_prior:
             ddelta = ddelta + np.sign(delta) / self.tau
@@ -624,13 +657,13 @@ class CustomProphet:
                       sigma_obs**2 / (2*SIGMA_OBS_PRIOR_SCALE**2) + \
                       k**2 / (2*self.sigma_k**2) + \
                       m**2 / (2*self.sigma_m**2) + \
-                      np.sum(beta**2) / (2*self.sigma**2)
+                      np.sum(beta**2 / (2 * self.sigmas**2))
 
         dk = np.array([-np.sum(r * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
         dm = np.array([-np.sum(r) / sigma_obs**2 + m / self.sigma_m**2])
         ddelta = -np.sum(r[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
         dsigma_obs = np.array([self.T / sigma_obs - np.sum(r**2) / sigma_obs**3 + sigma_obs / SIGMA_OBS_PRIOR_SCALE**2])
-        dbeta = -np.dot(r, x) / sigma_obs**2 + beta / self.sigma**2
+        dbeta = -np.dot(r, x) / sigma_obs**2 + beta / self.sigmas**2
 
         if include_l1_prior:
             minus_log_posterior += np.sum(np.abs(delta)) / self.tau
@@ -840,7 +873,7 @@ class CustomProphet:
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE,
             sigma_k=self.sigma_k,
             sigma_m=self.sigma_m,
-            sigma=self.sigma,
+            sigmas=self.sigmas,
             tau=self.tau,
             fourier_orders=[props["fourier_order"] for props in self.seasonalities.values()],
             seasonality_periods=[props["period"] for props in self.seasonalities.values()],

@@ -78,9 +78,10 @@ Prophet estimates none of them; there are no hierarchical priors in the model.
 | `tau` | 0.05 | `delta` | yes (`changepoint_prior_scale`) |
 | `sigmas` | 10.0 | `beta` | yes (`seasonality_prior_scale`) |
 
-`sigmas` is a `vector[K]` in Stan, one scale per regressor column. A scalar is adequate
-here only while every column shares a scale, which stops being true as soon as a
-seasonality carries its own `prior_scale` — currently rejected rather than ignored.
+`sigmas` is a `vector[K]` in Stan, one scale per regressor column, and is built that way
+here: each registered seasonality carries a `prior_scale`, repeated across its block of
+the design matrix. A component that sets none inherits the model-wide `10.0`, so a
+default model gets a uniform vector and the term reduces to the scalar form.
 
 **FIXED** — structural constants: `n_changepoints = 25`, `changepoint_range = 0.8`,
 `y` scaled by `max|y|`, `t` scaled to `[0, 1]`.
@@ -309,7 +310,6 @@ Tracked, deliberate, and not yet closed:
 
 ## Not implemented
 
-- Per-column seasonality prior scales — one scalar covers every column
 - `add_seasonality` and conditional seasonalities
 - Holidays and extra regressors
 - Multiplicative seasonality (`trend · (1 + X·β)`)

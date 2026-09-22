@@ -52,7 +52,7 @@ def call_kwargs(prepared_model):
         "sigma_obs_prior_scale": SIGMA_OBS_PRIOR_SCALE,
         "sigma_k": prepared_model.sigma_k,
         "sigma_m": prepared_model.sigma_m,
-        "sigma": prepared_model.sigma,
+        "sigmas": prepared_model.sigmas,
         "tau": prepared_model.tau,
         "fourier_orders": [n_yearly],
         "seasonality_periods": [YEARLY_PERIOD],

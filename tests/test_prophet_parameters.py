@@ -217,12 +217,13 @@ def test_cpp_core_accepts_any_dimensions(prepared_model, cpp_module, n_changepoi
 
     n_params = 2 + n_changepoints + 2 * fourier_order + 1
     params = np.zeros(n_params)
+    sigmas = np.full(2 * fourier_order, SIGMA, dtype=float)
 
     value, gradient = cpp_module.minus_log_posterior_and_gradient(
         params=params, t_scaled=model.t_scaled, change_points=model.change_points,
         t_seasonality=model.t_seasonality, normalized_y=model.normalized_y,
         sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=model.sigma_k,
-        sigma_m=model.sigma_m, sigma=model.sigma, tau=model.tau,
+        sigma_m=model.sigma_m, sigmas=sigmas, tau=model.tau,
         fourier_orders=[fourier_order], seasonality_periods=[YEARLY_PERIOD])
 
     assert np.isfinite(value)
@@ -240,7 +241,7 @@ def test_mismatched_parameter_length_is_rejected(prepared_model, cpp_module):
             t_seasonality=prepared_model.t_seasonality,
             normalized_y=prepared_model.normalized_y,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=prepared_model.sigma_k,
-            sigma_m=prepared_model.sigma_m, sigma=prepared_model.sigma,
+            sigma_m=prepared_model.sigma_m, sigmas=prepared_model.sigmas,
             tau=prepared_model.tau, fourier_orders=[10], seasonality_periods=[YEARLY_PERIOD])
 
 

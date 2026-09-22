@@ -125,7 +125,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       double sigma_obs_prior_scale,
                                       double sigma_k,
                                       double sigma_m,
-                                      double sigma,
+                                      const Eigen::Ref<const Eigen::VectorXd>& sigmas,
                                       double tau,
                                       double& mlp_out,
                                       Eigen::Ref<Eigen::VectorXd> grad_out,
@@ -133,6 +133,15 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
     const ModelParams p = extract_params(params_vec,
                                          static_cast<int>(change_points_vec.size()),
                                          static_cast<int>(x.cols()));
+    // Checked here rather than only in optimize(), because a mismatch reaches
+    // Eigen as a size assertion and aborts the process instead of raising --
+    // the same failure the params-length check above exists to prevent.
+    if (sigmas.size() != x.cols()) {
+        throw std::invalid_argument(
+            "sigmas has " + std::to_string(sigmas.size()) + " entries but the "
+            "design matrix has " + std::to_string(x.cols()) + " columns; there "
+            "must be one prior scale per column");
+    }
     const double k = p.k;
     const double m = p.m;
     const Eigen::VectorXd& delta = p.delta;
@@ -163,7 +172,8 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                        std::pow(sigma_obs, 2) / (2 * std::pow(sigma_obs_prior_scale, 2)) +
                                        std::pow(k, 2) / (2 * std::pow(sigma_k, 2)) +
                                        std::pow(m, 2) / (2 * std::pow(sigma_m, 2)) +
-                                       beta.array().square().sum() / (2 * std::pow(sigma, 2));
+                                       (beta.array().square() /
+                                        (2 * sigmas.array().square())).sum();
 
     if (include_l1_prior) {
         minus_log_posterior_value += delta.array().abs().sum() / tau;
@@ -192,7 +202,8 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
 
     // Compute dbeta
     int beta_start_index = 2 + delta.size(); // Dynamically calculate the starting index for beta
-    Eigen::VectorXd dbeta = -(x.transpose() * r) / (sigma_obs * sigma_obs) + beta / (sigma * sigma);
+    Eigen::VectorXd dbeta = -(x.transpose() * r) / (sigma_obs * sigma_obs) +
+                            (beta.array() / sigmas.array().square()).matrix();
 
     grad_out.segment(beta_start_index, beta.size()) = dbeta;
 
@@ -261,7 +272,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       double sigma_obs_prior_scale,
                                       double sigma_k,
                                       double sigma_m,
-                                      double sigma,
+                                      const Eigen::Ref<const Eigen::VectorXd>& sigmas,
                                       double tau,
                                       const std::vector<int>& fourier_orders,
                                       const std::vector<double>& seasonality_periods,
@@ -273,7 +284,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                      seasonality_matrix(t_seasonality_vec, fourier_orders,
                                                         seasonality_periods),
                                      normalized_y_vec, sigma_obs_prior_scale, sigma_k,
-                                     sigma_m, sigma, tau, mlp_out, grad_out,
+                                     sigma_m, sigmas, tau, mlp_out, grad_out,
                                      include_l1_prior);
 }
 
@@ -288,7 +299,7 @@ struct SplitObjective {
     double sigma_obs_prior_scale;
     double sigma_k;
     double sigma_m;
-    double sigma;
+    Eigen::VectorXd sigmas;
     double tau;
     int S;
     int K;
@@ -317,7 +328,7 @@ struct SplitObjective {
         Eigen::VectorXd natural_grad(natural.size());
         minus_log_posterior_and_gradient(natural, t_scaled, change_points, A, x,
                                          normalized_y, sigma_obs_prior_scale, sigma_k,
-                                         sigma_m, sigma, tau, value, natural_grad,
+                                         sigma_m, sigmas, tau, value, natural_grad,
                                          // the split form supplies the L1 term itself
                                          /*include_l1_prior=*/false);
 
@@ -358,7 +369,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
                         double sigma_obs_prior_scale,
                         double sigma_k,
                         double sigma_m,
-                        double sigma,
+                        const Eigen::Ref<const Eigen::VectorXd>& sigmas,
                         double tau,
                         const std::vector<int>& fourier_orders,
                         const std::vector<double>& seasonality_periods,
@@ -386,6 +397,15 @@ OptimizeResult optimize(Eigen::VectorXd params,
                 "params leaves room for " + std::to_string(K) + " seasonality "
                 "coefficients, but the registered seasonalities need " +
                 std::to_string(seasonality_columns));
+        }
+        if (sigmas.size() != K) {
+            throw std::invalid_argument(
+                "sigmas has " + std::to_string(sigmas.size()) + " entries but "
+                "params leaves room for " + std::to_string(K) + " seasonality "
+                "coefficients; there must be one prior scale per column");
+        }
+        if ((sigmas.array() <= 0.0).any()) {
+            throw std::invalid_argument("every entry of sigmas must be positive");
         }
         if (tau <= 0.0) {
             throw std::invalid_argument("tau must be positive");
@@ -436,7 +456,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
                                  changepoint_matrix(t_scaled, change_points),
                                  seasonality_matrix(t_seasonality, fourier_orders, seasonality_periods),
                                  normalized_y, sigma_obs_prior_scale,
-                                 sigma_k, sigma_m, sigma, tau, S, K, {}};
+                                 sigma_k, sigma_m, sigmas, tau, S, K, {}};
         LBFGSpp::LBFGSBSolver<double> solver(param);
 
         double fx = 0.0;
@@ -482,7 +502,7 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         double sigma_obs_prior_scale,
         double sigma_k,
         double sigma_m,
-        double sigma,
+        const Eigen::Ref<const Eigen::VectorXd>& sigmas,
         double tau,
         const std::vector<int>& fourier_orders,
         const std::vector<double>& seasonality_periods,
@@ -490,7 +510,7 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
     double mlp = 0.0;
     Eigen::VectorXd gradient(params.size());
     minus_log_posterior_and_gradient(params, t_scaled, change_points, t_seasonality,
-                                     normalized_y, sigma_obs_prior_scale, sigma_k, sigma_m, sigma,
+                                     normalized_y, sigma_obs_prior_scale, sigma_k, sigma_m, sigmas,
                                      tau, fourier_orders, seasonality_periods, mlp, gradient,
                                      include_l1_prior);
     return {mlp, gradient};
@@ -530,7 +550,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("sigma_obs_prior_scale"),
           py::arg("sigma_k"),
           py::arg("sigma_m"),
-          py::arg("sigma"),
+          py::arg("sigmas"),
           py::arg("tau"),
           py::arg("fourier_orders"),
           py::arg("seasonality_periods"),
@@ -550,7 +570,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("sigma_obs_prior_scale"),
           py::arg("sigma_k"),
           py::arg("sigma_m"),
-          py::arg("sigma"),
+          py::arg("sigmas"),
           py::arg("tau"),
           py::arg("fourier_orders"),
           py::arg("seasonality_periods"),
