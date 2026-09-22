@@ -17,7 +17,7 @@ import pytest
 
 from customProphet import (BUILT_IN_SEASONALITIES, check_seasonality_supported,
                            CustomProphet, DEFAULT_LAYOUT, ParameterLayout,
-                           default_seasonalities, extract_params, fourier_components,
+                           extract_params, fourier_components,
                            from_dict_to_array, n_yearly, N_CHANGE_POINTS, seasonality,
                            seasonality_columns, seasonality_design_matrix, SIGMA,
                            SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD)
@@ -70,15 +70,11 @@ def test_from_dict_to_array_rejects_a_beta_of_the_wrong_width():
 
 # -- the registry -------------------------------------------------------
 
-def test_default_registry_is_yearly_only_at_order_ten():
-    """The model this project has always fit, now stated in one place. Task 3
-    will replace this with Prophet's set_auto_seasonalities."""
-    registry = default_seasonalities()
-
-    assert list(registry) == ["yearly"]
-    assert registry["yearly"]["period"] == 365.25
-    assert registry["yearly"]["fourier_order"] == 10
-    assert seasonality_columns(registry) == 2 * n_yearly
+def test_default_layout_describes_the_yearly_only_shape():
+    """DEFAULT_LAYOUT is no longer "what a fit produces" -- the history decides
+    that (#16 task 3). It remains the 25-changepoint, order-10-yearly shape
+    that the objective tests pin their vectors to."""
+    assert seasonality_columns({"yearly": seasonality(365.25, n_yearly)}) == 2 * n_yearly
     assert DEFAULT_LAYOUT.n_seasonality_columns == 2 * n_yearly
 
 
@@ -145,10 +141,10 @@ def test_empty_registry_gives_a_zero_width_block(prepared_model):
 def test_layout_follows_the_registered_seasonalities(peyton_manning_df,
                                                      compiled_optimizer_module):
     model = CustomProphet()
-    model.seasonalities = yearly_and_weekly()
     model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
+    assert list(model.seasonalities) == ["yearly", "weekly"]
     assert model.layout.n_seasonality_columns == 26
     assert model.opt_params.shape == (2 + N_CHANGE_POINTS + 1 + 26,)
     assert np.all(np.isfinite(model.opt_params))
@@ -230,15 +226,20 @@ def test_registering_yearly_explicitly_reproduces_the_default_fit(
     """
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
-    default = CustomProphet()
-    default.fit_cpp(df, lib_path=compiled_optimizer_module)
+    registered = CustomProphet()
+    registered.seasonalities = {"yearly": seasonality(YEARLY_PERIOD, n_yearly)}
+    registered.weekly_seasonality = False
+    registered.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    explicit = CustomProphet()
-    explicit.seasonalities = {"yearly": seasonality(YEARLY_PERIOD, n_yearly)}
-    explicit.fit_cpp(df, lib_path=compiled_optimizer_module)
+    # the same model reached the other way: let the built-in yearly be selected
+    # automatically, and only suppress the weekly the history also supports
+    automatic = CustomProphet()
+    automatic.weekly_seasonality = False
+    automatic.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    np.testing.assert_array_equal(default.opt_params, explicit.opt_params)
-    assert default.opt.n_iterations == explicit.opt.n_iterations
+    assert list(automatic.seasonalities) == ["yearly"]
+    np.testing.assert_array_equal(registered.opt_params, automatic.opt_params)
+    assert registered.opt.n_iterations == automatic.opt.n_iterations
 
 
 def test_second_seasonality_reaches_predict(peyton_manning_df, compiled_optimizer_module):
@@ -247,7 +248,6 @@ def test_second_seasonality_reaches_predict(peyton_manning_df, compiled_optimize
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
     model = CustomProphet()
-    model.seasonalities = yearly_and_weekly()
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
     forecast = model.predict(model.make_future_dataframe(periods=30))
 
@@ -261,6 +261,7 @@ def test_second_seasonality_reaches_predict(peyton_manning_df, compiled_optimize
         pd.to_datetime(history["ds"]).dt.dayofweek.values).mean()
 
     yearly_only = CustomProphet()
+    yearly_only.weekly_seasonality = False
     yearly_only.fit_cpp(df, lib_path=compiled_optimizer_module)
     yearly_forecast = yearly_only.predict(yearly_only.make_future_dataframe(periods=30))
     yearly_by_weekday = pd.Series(yearly_forecast["seasonality"].values[:len(df)]).groupby(

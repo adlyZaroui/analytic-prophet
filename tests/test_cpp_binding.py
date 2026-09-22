@@ -28,6 +28,7 @@ import pytest
 import customProphet
 from customProphet import (CustomProphet, CPP_MODULE_NAME, N_CHANGE_POINTS, n_yearly,
                            SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD, load_cpp_module)
+from conftest import pin_yearly_only
 
 SIGMA_OBS = 1.0
 CPP_PARAM_SIZE = 2 + N_CHANGE_POINTS + 2 * n_yearly + 1   # [k, m, delta, beta, zeta]
@@ -196,7 +197,7 @@ def test_loaded_module_is_cached(compiled_optimizer_module):
 def test_fit_cpp_reports_the_termination_status_in_words(peyton_manning_df, compiled_optimizer_module):
     """The old binding surfaced a bare integer; diagnosing issue #8 meant
     looking -1001 up in lbfgs.h by hand."""
-    model = CustomProphet()
+    model = pin_yearly_only(CustomProphet())
     model.fit_cpp(
         peyton_manning_df.iloc[:300].reset_index(drop=True),
         initial_params={

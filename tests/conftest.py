@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "legacy"))
 from customProphet import (CustomProphet, N_CHANGE_POINTS, n_yearly,  # noqa: E402
                            SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE, CPP_MODULE_NAME,
-                           load_cpp_module, seasonal_time, YEARLY_PERIOD)
+                           load_cpp_module, seasonal_time, seasonality, YEARLY_PERIOD)
 
 # The Prophet-comparison plumbing lives with the benchmarks, which is also
 # where it is exercised interactively. The agreement tests reuse it rather
@@ -34,6 +34,21 @@ CPP_SOURCE = Path(__file__).parent.parent / "legacy" / "optimize.cpp"
 PARAM_SIZE = 2 + N_CHANGE_POINTS + 1 + 2 * n_yearly  # k, m, delta, sigma_obs, beta -> 48
 
 
+def pin_yearly_only(model):
+    """Force the pre-#16-task-3 component set: yearly at order 10, nothing else.
+
+    Auto-selection would give weekly-only on the short slices these tests use,
+    changing the model they certify and invalidating the residuals and loss
+    values recorded in their comments. They are about the optimizer, not about
+    which components a model picks, so the component set is pinned and the
+    recorded numbers keep meaning what they say.
+    """
+    model.yearly_seasonality = n_yearly
+    model.weekly_seasonality = False
+    model.daily_seasonality = False
+    return model
+
+
 @pytest.fixture
 def peyton_manning_df():
     return pd.read_csv(DATA_PATH)
@@ -43,8 +58,15 @@ def peyton_manning_df():
 def prepared_model(peyton_manning_df):
     """A CustomProphet with data loaded and preprocessed but not yet fit --
     gives direct access to t_scaled / change_points / normalized_y without
-    paying for a full optimize() run in every test."""
+    paying for a full optimize() run in every test.
+
+    Yearly seasonality is registered by hand rather than by the auto rule of
+    #16 task 3, which would add weekly on this series. Everything built on this
+    fixture is about the objective and its gradient at a fixed shape, so pinning
+    the 48-parameter layout (PARAM_SIZE) keeps those tests saying what they say.
+    """
     model = CustomProphet()
+    model.seasonalities = {"yearly": seasonality(YEARLY_PERIOD, n_yearly)}
     model.y = peyton_manning_df["y"].values
     model.ds = pd.to_datetime(peyton_manning_df["ds"])
     model.t_scaled = np.array(

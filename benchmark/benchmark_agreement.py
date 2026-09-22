@@ -83,7 +83,11 @@ def prediction_comparison(df, lib_path, horizon):
     return {
         "yhat": relative(prophet_forecast["yhat"].values, our_forecast["yhat"].values),
         "trend": relative(prophet_forecast["trend"].values, our_forecast["trend"].values),
-        "seasonality": relative(prophet_forecast["yearly"].values, our_forecast["seasonality"].values),
+        # additive_terms is Prophet's total seasonality across every selected
+        # component, which is what our single `seasonality` column holds. Named
+        # components were compared individually while only yearly existed.
+        "seasonality": relative(prophet_forecast["additive_terms"].values,
+                                our_forecast["seasonality"].values),
     }
 
 

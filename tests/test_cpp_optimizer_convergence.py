@@ -40,6 +40,7 @@ import pytest
 
 from customProphet import (CustomProphet, N_CHANGE_POINTS, n_yearly, K_IDX, M_IDX,
                            DELTA_SLICE, SIGMA_OBS_IDX, BETA_SLICE, canonical_to_cpp)
+from conftest import pin_yearly_only
 
 LBFGSERR_ROUNDING_ERROR = -1001
 
@@ -54,10 +55,10 @@ MATCHED_INIT = {
 
 def fit_both(df):
     """Run both fit paths from the same start with sigma_obs pinned the same."""
-    python_model = CustomProphet()
+    python_model = pin_yearly_only(CustomProphet())
     python_model.fit(df, analytic=True, initial_params=MATCHED_INIT, fixed_sigma_obs=SIGMA_OBS)
 
-    cpp_model = CustomProphet()
+    cpp_model = pin_yearly_only(CustomProphet())
     cpp_model.sigma_obs = SIGMA_OBS
     return python_model, cpp_model
 
@@ -145,7 +146,7 @@ def test_cpp_gradient_matches_python_analytic(prepared_model, cpp_mlp_and_gradie
 def test_cpp_optimizer_no_longer_bails_out_early(small_df, compiled_optimizer_module):
     """The regression test for the bug as reported: it used to stop after 2
     iterations with LBFGSERR_ROUNDING_ERROR."""
-    model = CustomProphet()
+    model = pin_yearly_only(CustomProphet())
     model.fit_cpp(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_module)
 
     assert model.opt_status != LBFGSERR_ROUNDING_ERROR
@@ -180,7 +181,7 @@ def test_cpp_optimizer_reaches_first_order_optimum(small_df, compiled_optimizer_
 def test_fit_reaches_first_order_optimum(small_df):
     """Same certificate for the Python path, which the same non-smoothness
     used to leave stranded 17.8% above the optimum while reporting success."""
-    model = CustomProphet()
+    model = pin_yearly_only(CustomProphet())
     model.fit(small_df, analytic=True, initial_params=MATCHED_INIT, fixed_sigma_obs=SIGMA_OBS)
 
     smooth_residual, delta_violation = first_order_residuals(model, model.opt_params)
@@ -192,7 +193,7 @@ def test_fit_reaches_first_order_optimum(small_df):
 def test_first_order_residuals_reject_a_near_miss(small_df):
     """Guards the certificate itself: a point a hair off the optimum has to
     fail it, otherwise the two tests above would pass on anything."""
-    model = CustomProphet()
+    model = pin_yearly_only(CustomProphet())
     model.fit(small_df, analytic=True, initial_params=MATCHED_INIT, fixed_sigma_obs=SIGMA_OBS)
 
     perturbed = model.opt_params.copy()

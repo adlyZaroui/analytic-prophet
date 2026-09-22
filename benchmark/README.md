@@ -98,19 +98,30 @@ Two criteria replace it:
 2. **Predictions** — `yhat` over history plus a horizon, as a fraction of the
    series scale, each implementation in its *default* configuration.
 
-The tolerance was set from measurement, not chosen: across every identified
-slice of the Peyton Manning series (T = 730 … 2905) the observed `yhat`
-disagreement is 0.320%–0.419%, so the bound is **1%**.
+The tolerance was set from measurement, not chosen: across every slice of the
+Peyton Manning series past two years (T = 730 … 2905) the observed `yhat`
+disagreement is 0.207%–0.537%, so the bound is **1%**.
 
-### The identifiability caveat
+### The identifiability caveat, and how it closed
 
-Prediction agreement is only asserted on series with at least **730 days** of
-history, which is Prophet's own threshold for yearly seasonality being
-identifiable. Below it, trend and seasonality trade off almost freely: on a
-328-day slice the two implementations agree to 2.6% in-sample and then diverge
-to **111%** over a 30-day forecast, with fitted `k` differing eightfold — while
-*our* posterior is the better one. That is the model being under-determined,
-not either implementation being wrong.
+This used to read: prediction agreement is asserted only on series with at
+least **730 days** of history, because below it a 328-day slice diverged to
+**111%** over a 30-day forecast with fitted `k` differing eightfold.
+
+That was an artifact of the comparison, not of the model. Prophet's rule
+disables yearly seasonality under 730 days; these benchmarks were forcing it on
+*both* sides, because yearly was the only component this implementation could
+fit. With `set_auto_seasonalities` implemented (#16 task 3) both sides fit
+weekly-only at that length and agree to **0.709%**.
+
+A milder version survives, and it is about the trend rather than the
+seasonality. On short series the changepoint/rate decomposition is loose and
+Prophet stops in a flatter region than we do, costing up to **1.216%** at
+T = 500 against 0.207–0.537% past two years. It is not changepoint placement:
+refitting on Prophet's own changepoints moves T = 500 from 1.216% to 1.207%.
+Our posterior is the better one at every size measured, T = 100 through 2905,
+so this is the same "Prophet stops short" story the posterior criterion exists
+to detect — not either implementation being wrong.
 
 ## An observation already worth recording
 
