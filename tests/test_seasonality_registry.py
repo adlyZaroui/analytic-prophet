@@ -99,9 +99,8 @@ def test_entries_carry_prophets_full_field_set():
 
 
 @pytest.mark.parametrize("field,value", [
-    ("prior_scale", 1.0),          # needs per-column sigmas -- #16 task 4
-    ("mode", "multiplicative"),    # needs the s_a/s_m split -- #16 task 9
-    ("condition_name", "on_season"),  # needs conditional seasonalities -- #16 task 6
+    ("mode", "multiplicative"),       # needs the s_a/s_m split -- #16 task 11
+    ("condition_name", "on_season"),  # needs conditional seasonalities -- #16 task 7
 ])
 def test_unhonored_fields_are_rejected_not_ignored(peyton_manning_df,
                                                    compiled_optimizer_module, field, value):
@@ -198,7 +197,7 @@ def test_cpp_rejects_a_params_vector_the_registry_cannot_fill(prepared_model, cp
             change_points=model.change_points, t_seasonality=model.t_seasonality,
             normalized_y=model.normalized_y,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=model.sigma_k,
-            sigma_m=model.sigma_m, sigma=model.sigma, tau=model.tau,
+            sigma_m=model.sigma_m, sigmas=np.full(26, SIGMA), tau=model.tau,
             fourier_orders=[10, 3], seasonality_periods=[365.25, 7.0])
 
 
@@ -210,7 +209,7 @@ def test_cpp_rejects_mismatched_orders_and_periods(prepared_model, cpp_module):
             t_seasonality=prepared_model.t_seasonality,
             normalized_y=prepared_model.normalized_y,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=prepared_model.sigma_k,
-            sigma_m=prepared_model.sigma_m, sigma=prepared_model.sigma,
+            sigma_m=prepared_model.sigma_m, sigmas=np.full(26, SIGMA),
             tau=prepared_model.tau, fourier_orders=[10, 3], seasonality_periods=[365.25])
 
 
