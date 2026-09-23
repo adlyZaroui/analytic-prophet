@@ -333,13 +333,6 @@ Tracked, deliberate, and not yet closed:
   identify it. Fixed for seasonality, but every remaining task in
   [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) adds fit-time state
   facing the same question.
-- **Dimension mismatches in the C++ core abort the process**
-  ([#43](https://github.com/adlyZaroui/analytic-prophet/issues/43)) rather than raising:
-  Eigen calls `abort()` on a size assertion, so the interpreter dies with no traceback.
-  Three have been found and guarded individually; an audit found three more that abort
-  and three that are accepted silently, including a zero `seasonality_period` returning
-  `nan`. Nothing the model itself drives hits these — it is about calling the core
-  directly, which the test suite does.
 - **Overall fit**: on series past two years, predictions differ from Prophet's by
   0.21–0.54% of the series scale (history plus a 30-day horizon, measured at T = 730,
   800, 1000, 1500, 2000, 2500, 2905). On shorter series the trend decomposition is
@@ -369,7 +362,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 137 tests
+pytest tests/                        # 242 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
@@ -400,6 +393,7 @@ numbers rather than errors.
 | | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
+| | [#43](https://github.com/adlyZaroui/analytic-prophet/issues/43) | Eigen answers a size mismatch with an assertion, which calls `abort()`: the interpreter died with no traceback and, in a test run, no failing test name. Four such mismatches aborted and eleven more returned plausible wrong numbers. Every dimension and scale is now checked in one place, through both entry points |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 6 | The registry built by tasks 2–5 had no public entry point: fitting anything other than what the auto rule selects meant assigning to `model.seasonalities` directly. `add_seasonality` added, with Prophet's validation checked branch for branch |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 5 | `beta`'s prior used one scalar for every column, where Stan has `vector[K] sigmas`. Verified per-column against Stan's own `sigmas` and `log_prob`, and the shrinkage checked against the ridge algebra rather than merely being nonzero |
 | | [#34](https://github.com/adlyZaroui/analytic-prophet/issues/34) | `from_dict_to_array` overwrote `beta` with zeros regardless of what was passed. Invisible only because every caller happened to pass zeros |

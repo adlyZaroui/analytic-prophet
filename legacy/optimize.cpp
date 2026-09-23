@@ -94,6 +94,24 @@ Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
             "; there must be one period per seasonality");
     }
 
+    // A negative order makes `2 * order` a negative block width and Eigen
+    // aborts on the block assignment below; a non-positive or non-finite
+    // period divides into 2*pi and silently fills the matrix with garbage or
+    // NaN. Both are caller errors, and neither is visible in the result.
+    for (std::size_t i = 0; i < fourier_orders.size(); ++i) {
+        if (fourier_orders[i] <= 0) {
+            throw std::invalid_argument(
+                "fourier_orders[" + std::to_string(i) + "] is " +
+                std::to_string(fourier_orders[i]) + "; every Fourier order must be "
+                "positive (a component with no columns should be left out instead)");
+        }
+        if (!(periods[i] > 0.0) || !std::isfinite(periods[i])) {
+            throw std::invalid_argument(
+                "seasonality_periods[" + std::to_string(i) + "] is " +
+                std::to_string(periods[i]) + "; every period must be positive and finite");
+        }
+    }
+
     int columns = 0;
     for (int order : fourier_orders) {
         columns += 2 * order;
@@ -108,6 +126,74 @@ Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
         offset += width;
     }
     return x;
+}
+
+// Every dimension and scale the objective relies on, checked in one place.
+//
+// This exists because Eigen answers a size mismatch with an assertion, and an
+// assertion calls abort(): the interpreter dies with no traceback, no line
+// number and -- in a test run -- no failing test name. Three separate mismatches
+// reached that state during #16 before this was consolidated (#43), each found
+// by tripping over it rather than by a test.
+//
+// The scale checks are here for a different reason: a non-positive tau or
+// prior scale does not abort, it divides into the objective and returns a
+// plausible-looking wrong number, which is worse.
+//
+// Called on every objective evaluation, so it has to stay cheap: the only
+// non-scalar work is one pass over `sigmas`, which is O(K) against the
+// O(T*K) matrix products that follow.
+void validate_inputs(const Eigen::VectorXd& t_scaled_vec,
+                     const Eigen::VectorXd& change_points_vec,
+                     const Eigen::MatrixXd& A,
+                     const Eigen::MatrixXd& x,
+                     const Eigen::VectorXd& normalized_y_vec,
+                     double sigma_obs_prior_scale,
+                     double sigma_k,
+                     double sigma_m,
+                     const Eigen::Ref<const Eigen::VectorXd>& sigmas,
+                     double tau) {
+    const Eigen::Index T = t_scaled_vec.size();
+    if (T == 0) {
+        throw std::invalid_argument("t_scaled is empty; there is nothing to fit");
+    }
+    if (normalized_y_vec.size() != T) {
+        throw std::invalid_argument(
+            "normalized_y has " + std::to_string(normalized_y_vec.size()) +
+            " entries but t_scaled has " + std::to_string(T) + "; they index the "
+            "same observations and must be the same length");
+    }
+    if (A.rows() != T || A.cols() != change_points_vec.size()) {
+        throw std::invalid_argument(
+            "the changepoint matrix is " + std::to_string(A.rows()) + "x" +
+            std::to_string(A.cols()) + " but t_scaled has " + std::to_string(T) +
+            " entries and change_points has " +
+            std::to_string(change_points_vec.size()));
+    }
+    if (x.rows() != T) {
+        throw std::invalid_argument(
+            "the seasonality matrix has " + std::to_string(x.rows()) + " rows but "
+            "t_scaled has " + std::to_string(T) + "; t_seasonality must cover the "
+            "same observations as t_scaled");
+    }
+    if (sigmas.size() != x.cols()) {
+        throw std::invalid_argument(
+            "sigmas has " + std::to_string(sigmas.size()) + " entries but the "
+            "design matrix has " + std::to_string(x.cols()) + " columns; there "
+            "must be one prior scale per column");
+    }
+    if ((sigmas.array() <= 0.0).any()) {
+        throw std::invalid_argument("every entry of sigmas must be positive");
+    }
+    if (!(tau > 0.0)) {
+        throw std::invalid_argument("tau must be positive");
+    }
+    if (!(sigma_obs_prior_scale > 0.0)) {
+        throw std::invalid_argument("sigma_obs_prior_scale must be positive");
+    }
+    if (!(sigma_k > 0.0) || !(sigma_m > 0.0)) {
+        throw std::invalid_argument("sigma_k and sigma_m must be positive");
+    }
 }
 
 // include_l1_prior=false omits the Laplace (L1) prior on delta from both the
@@ -130,18 +216,11 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       double& mlp_out,
                                       Eigen::Ref<Eigen::VectorXd> grad_out,
                                       bool include_l1_prior = true) {
+    validate_inputs(t_scaled_vec, change_points_vec, A, x, normalized_y_vec,
+                    sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, tau);
     const ModelParams p = extract_params(params_vec,
                                          static_cast<int>(change_points_vec.size()),
                                          static_cast<int>(x.cols()));
-    // Checked here rather than only in optimize(), because a mismatch reaches
-    // Eigen as a size assertion and aborts the process instead of raising --
-    // the same failure the params-length check above exists to prevent.
-    if (sigmas.size() != x.cols()) {
-        throw std::invalid_argument(
-            "sigmas has " + std::to_string(sigmas.size()) + " entries but the "
-            "design matrix has " + std::to_string(x.cols()) + " columns; there "
-            "must be one prior scale per column");
-    }
     const double k = p.k;
     const double m = p.m;
     const Eigen::VectorXd& delta = p.delta;
@@ -379,39 +458,27 @@ OptimizeResult optimize(Eigen::VectorXd params,
         const int S = static_cast<int>(change_points.size());
         const int K = params_size - 3 - S;
 
-        // Checks the ctypes binding could not make: it received bare pointers
-        // with caller-supplied lengths, so a mismatch corrupted memory silently
-        // instead of raising.
-        if (t_scaled.size() != normalized_y.size()) {
-            throw std::invalid_argument("t_scaled and normalized_y must have the same length");
-        }
         if (params_size < 2 + S + 2) {
             throw std::invalid_argument("params is too short for the given number of change points");
         }
-        int seasonality_columns = 0;
-        for (int order : fourier_orders) {
-            seasonality_columns += 2 * order;
-        }
-        if (K != seasonality_columns) {
+
+        // Built here rather than in the solver loop (#28), which also means
+        // the shared checks can run against the real matrices before any
+        // setup work -- a caller gets the error from the call, not from the
+        // first objective evaluation inside it.
+        const Eigen::MatrixXd A = changepoint_matrix(t_scaled, change_points);
+        const Eigen::MatrixXd x = seasonality_matrix(t_seasonality, fourier_orders,
+                                                     seasonality_periods);
+        validate_inputs(t_scaled, change_points, A, x, normalized_y,
+                        sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, tau);
+
+        // Specific to this entry point: the split vector is laid out from K,
+        // which is read off `params` rather than from the design matrix.
+        if (K != x.cols()) {
             throw std::invalid_argument(
                 "params leaves room for " + std::to_string(K) + " seasonality "
                 "coefficients, but the registered seasonalities need " +
-                std::to_string(seasonality_columns));
-        }
-        if (sigmas.size() != K) {
-            throw std::invalid_argument(
-                "sigmas has " + std::to_string(sigmas.size()) + " entries but "
-                "params leaves room for " + std::to_string(K) + " seasonality "
-                "coefficients; there must be one prior scale per column");
-        }
-        if ((sigmas.array() <= 0.0).any()) {
-            throw std::invalid_argument("every entry of sigmas must be positive");
-        }
-        if (tau <= 0.0) {
-            throw std::invalid_argument("tau must be positive");
-        }
-        if (sigma_obs_prior_scale <= 0.0) {
-            throw std::invalid_argument("sigma_obs_prior_scale must be positive");
+                std::to_string(x.cols()));
         }
 
         // Natural -> split. delta splits into its positive and negative parts,
@@ -452,9 +519,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
         param.delta = stan_convergence::TOL_REL_F * stan_convergence::EPS;
         param.max_linesearch = 60;
 
-        SplitObjective objective{t_scaled, change_points,
-                                 changepoint_matrix(t_scaled, change_points),
-                                 seasonality_matrix(t_seasonality, fourier_orders, seasonality_periods),
+        SplitObjective objective{t_scaled, change_points, A, x,
                                  normalized_y, sigma_obs_prior_scale,
                                  sigma_k, sigma_m, sigmas, tau, S, K, {}};
         LBFGSpp::LBFGSBSolver<double> solver(param);
