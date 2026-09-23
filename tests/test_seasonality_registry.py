@@ -100,7 +100,6 @@ def test_entries_carry_prophets_full_field_set():
 
 @pytest.mark.parametrize("field,value", [
     ("mode", "multiplicative"),       # needs the s_a/s_m split -- #16 task 11
-    ("condition_name", "on_season"),  # needs conditional seasonalities -- #16 task 7
 ])
 def test_unhonored_fields_are_rejected_not_ignored(peyton_manning_df,
                                                    compiled_optimizer_module, field, value):

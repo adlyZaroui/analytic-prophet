@@ -157,15 +157,11 @@ def test_adding_after_a_fit_is_refused(peyton_manning_df, compiled_optimizer_mod
 
 # -- the deliberate divergences -----------------------------------------
 
-@pytest.mark.parametrize("kwargs,field", [
-    ({"mode": "multiplicative"}, "mode"),
-    ({"condition_name": "in_season"}, "condition_name"),
-])
-def test_arguments_this_implementation_cannot_fit_are_refused(kwargs, field):
+def test_arguments_this_implementation_cannot_fit_are_refused():
     """Refused at the call site, not at fit time, and refused rather than
-    accepted-and-dropped."""
-    with pytest.raises(NotImplementedError, match=field):
-        CustomProphet().add_seasonality("monthly", 30.5, 5, **kwargs)
+    accepted-and-dropped. `condition_name` was on this list until task 7."""
+    with pytest.raises(NotImplementedError, match="mode"):
+        CustomProphet().add_seasonality("monthly", 30.5, 5, mode="multiplicative")
 
 
 def test_nothing_is_registered_when_the_call_is_refused():
@@ -177,9 +173,8 @@ def test_nothing_is_registered_when_the_call_is_refused():
 
 
 def test_validation_runs_before_the_refusal():
-    """A nonsense `mode` has to give Prophet's ValueError, and a reserved
-    condition_name likewise -- otherwise the refusal would mask real mistakes
-    behind "not implemented"."""
+    """A nonsense `mode` has to give Prophet's ValueError -- otherwise the
+    refusal would mask real mistakes behind "not implemented"."""
     with pytest.raises(ValueError, match="additive"):
         CustomProphet().add_seasonality("monthly", 30.5, 5, mode="sideways")
     with pytest.raises(ValueError, match="reserved"):

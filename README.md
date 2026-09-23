@@ -104,9 +104,12 @@ condition_name=None)` registers a component of your own, and returns the model s
 chain. A component registered under a built-in name replaces that built-in rather than
 colliding with it, so `add_seasonality('weekly', 7, 10)` is how you ask for a
 higher-resolution weekly term than the default order 3. `prior_scale` falls back to the
-model's `seasonality_prior_scale`. `mode='multiplicative'` and `condition_name` are
-validated exactly as Prophet validates them and then **refused**, since this
-implementation cannot fit either yet — see [Not implemented](#not-implemented).
+model's `seasonality_prior_scale`. `condition_name` names a boolean
+column, required on the frames passed to both `fit` and `predict`, whose False rows have
+that component's features zeroed — the columns stay, so `beta` keeps its width and only
+the excluded rows inform it. `mode='multiplicative'` is validated exactly as Prophet
+validates it and then **refused**, since this implementation cannot fit it yet — see
+[Not implemented](#not-implemented).
 
 **Initialization** — Prophet overrides Stan's random initialization with deterministic
 values, so Stan's `init_r · N(0,1)` default is never reached: `k`, `m` from
@@ -344,8 +347,6 @@ Tracked, deliberate, and not yet closed:
 
 ## Not implemented
 
-- Conditional seasonalities (`condition_name`) — `add_seasonality` accepts the argument
-  only to reject it
 - Holidays and extra regressors
 - Multiplicative seasonality (`trend · (1 + X·β)`)
 - Logistic and flat growth — linear only
@@ -362,7 +363,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 242 tests
+pytest tests/                        # 260 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
@@ -393,6 +394,7 @@ numbers rather than errors.
 | | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 7 | Conditional seasonalities. The feature matrix now reproduces Prophet's by equality rather than to a tolerance: matching its order of operations in the Fourier basis — `(i+1)/period · (2π·t)` rather than a folded `2π/period` — closed a 7e-12 gap that came from angles running to ~15000 radians |
 | | [#43](https://github.com/adlyZaroui/analytic-prophet/issues/43) | Eigen answers a size mismatch with an assertion, which calls `abort()`: the interpreter died with no traceback and, in a test run, no failing test name. Four such mismatches aborted and eleven more returned plausible wrong numbers. Every dimension and scale is now checked in one place, through both entry points |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 6 | The registry built by tasks 2–5 had no public entry point: fitting anything other than what the auto rule selects meant assigning to `model.seasonalities` directly. `add_seasonality` added, with Prophet's validation checked branch for branch |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 5 | `beta`'s prior used one scalar for every column, where Stan has `vector[K] sigmas`. Verified per-column against Stan's own `sigmas` and `log_prob`, and the shrinkage checked against the ridge algebra rather than merely being nonzero |
