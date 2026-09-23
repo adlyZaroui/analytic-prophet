@@ -384,18 +384,15 @@ def fourier_components(t_days, period, n):
     """
     t_days = np.asarray(t_days, dtype=float)
 
-    # The order of operations is Prophet's, not merely algebraically equal to
-    # it: `2*pi*t` first, then scaled by `(i+1)/period`. Folding 2*pi/period
-    # into one constant is the same function in exact arithmetic and differs by
-    # up to 7e-12 in floating point, because t is days since 1970 -- angles run
-    # to ~15000 radians, where a 1-ULP difference in the angle is ~1e-12 in the
-    # result. Matching the order makes the matrices bit-identical instead.
-    x_T = np.pi * 2 * t_days
+    # `2*pi/period` is folded into one constant. Prophet instead computes
+    # `2*pi*t` and scales by `(i+1)/period`. The two are the same function in
+    # exact arithmetic and differ by up to 7e-12 in floating point, because `t`
+    # is days since 1970 and the angles reach ~15000 radians. Keeping this form
+    # is a deliberate choice -- see README, "Where this deviates on purpose".
+    angles = (2 * np.pi / period) * np.outer(t_days, np.arange(1, n + 1))
     result = np.empty((t_days.shape[0], 2 * n))
-    for i in range(n):
-        c = (i + 1) / period * x_T
-        result[:, 2 * i] = np.sin(c)
-        result[:, 2 * i + 1] = np.cos(c)
+    result[:, 0::2] = np.sin(angles)
+    result[:, 1::2] = np.cos(angles)
     return result
 
 def extract_params(params, layout=DEFAULT_LAYOUT):

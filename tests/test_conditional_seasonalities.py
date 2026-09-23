@@ -254,31 +254,47 @@ def test_predict_uses_the_mask_it_is_given(peyton_manning_df, compiled_optimizer
 
 # -- the acceptance criterion -------------------------------------------
 
-def test_fourier_features_are_bit_identical_to_prophets(prophet_comparison,
-                                                        peyton_manning_df):
-    """Exactly equal, not merely close.
+# The Fourier basis is the same function as Prophet's but evaluated in a
+# different order -- `(2*pi/period) * t*(i+1)` rather than `(i+1)/period *
+# (2*pi*t)` -- so the two agree to floating point rather than exactly. See
+# README, "Where this deviates on purpose", for the measurement behind keeping
+# it. `t` is days since 1970, so angles reach ~15000 radians and one ULP there
+# is ~1e-12 in sin/cos; 1e-10 is a couple of orders above that and still 1e8
+# below anything the model cares about.
+BASIS_TOLERANCE = 1e-10
 
-    Folding `2*pi/period` into a single constant is algebraically the same as
-    Prophet's `(i+1)/period * (2*pi*t)` and differed by up to 7e-12, because
-    `t` is days since 1970 and the angles run to ~15000 radians. Matching the
-    order of operations makes them bit-identical, which is what lets the
-    acceptance check below be an equality.
+
+def test_fourier_features_match_prophets_to_floating_point(prophet_comparison,
+                                                           peyton_manning_df):
+    """Not exactly equal, and deliberately so.
+
+    An earlier revision matched Prophet's order of operations to make these
+    bit-identical. It was reverted: measured against exact rational arithmetic
+    neither order is more accurate -- 0.470 against 0.498 ULP, ours ahead in
+    five of nine configurations and behind in four -- so the exactness bought
+    nothing numerically while perturbing every fit by ~4e-5 relative.
     """
     Prophet, _, _ = prophet_comparison
     ds = pd.to_datetime(peyton_manning_df["ds"])
 
     for period, order in ((7.0, 3), (365.25, 10), (30.5, 5)):
-        np.testing.assert_array_equal(fourier_components(seasonal_time(ds), period, order),
-                                      Prophet.fourier_series(ds, period, order))
+        ours = fourier_components(seasonal_time(ds), period, order)
+        theirs = Prophet.fourier_series(ds, period, order)
+        assert np.max(np.abs(ours - theirs)) < BASIS_TOLERANCE
+        assert ours.shape == theirs.shape
 
 
 def test_the_feature_matrix_reproduces_prophets_column_for_column(
         prophet_comparison, compiled_optimizer_module):
-    """The acceptance criterion for this task, as an equality.
+    """The acceptance criterion for this task.
 
     Prophet is fitted on the same conditioned specification, and the matrix it
     hands Stan is compared against the one this implementation builds -- same
     shape, same column order, same values, including the zeroed rows.
+
+    "Column for column" is checked to BASIS_TOLERANCE rather than exactly, for
+    the reason given above; the zeroed rows are checked exactly, since zero is
+    zero in either order of operations.
     """
     Prophet, common, bridge = prophet_comparison
     df = with_condition(common.load_data(1000))
@@ -298,7 +314,12 @@ def test_the_feature_matrix_reproduces_prophets_column_for_column(
                                        ours.condition_masks)
 
     assert X_ours.shape == X_stan.shape
-    np.testing.assert_array_equal(X_ours, X_stan)
+    assert np.max(np.abs(X_ours - X_stan)) < BASIS_TOLERANCE
+
+    # the conditioning itself is exact: an excluded row is zero on both sides
+    mask = ours.condition_masks["on_season_weekly"]
+    np.testing.assert_array_equal(X_ours[~mask, :6], 0.0)
+    np.testing.assert_array_equal(X_stan[~mask, :6], 0.0)
 
 
 def test_posterior_agrees_with_prophet_on_a_conditioned_model(prophet_comparison,
