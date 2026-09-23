@@ -157,28 +157,30 @@ def test_adding_after_a_fit_is_refused(peyton_manning_df, compiled_optimizer_mod
 
 # -- the deliberate divergences -----------------------------------------
 
-def test_arguments_this_implementation_cannot_fit_are_refused():
-    """Refused at the call site, not at fit time, and refused rather than
-    accepted-and-dropped. `condition_name` was on this list until task 7."""
-    with pytest.raises(NotImplementedError, match="mode"):
-        CustomProphet().add_seasonality("monthly", 30.5, 5, mode="multiplicative")
+def test_every_argument_prophet_accepts_is_now_accepted():
+    """This test used to assert the opposite for `mode` and `condition_name`.
+    Both are fitted as of tasks 11 and 7, so the refusals are gone and the
+    signature matches Prophet's in what it accepts as well as what it rejects.
+    """
+    model = (CustomProphet()
+             .add_seasonality("monthly", 30.5, 5, mode="multiplicative")
+             .add_seasonality("quarterly", 91.0, 3, condition_name="in_season"))
+
+    assert registered(model, "monthly")["mode"] == "multiplicative"
+    assert registered(model, "quarterly")["condition_name"] == "in_season"
 
 
-def test_nothing_is_registered_when_the_call_is_refused():
-    model = CustomProphet()
-    with pytest.raises(NotImplementedError):
-        model.add_seasonality("monthly", 30.5, 5, mode="multiplicative")
-
-    assert model.seasonalities == {}
-
-
-def test_validation_runs_before_the_refusal():
-    """A nonsense `mode` has to give Prophet's ValueError -- otherwise the
-    refusal would mask real mistakes behind "not implemented"."""
+def test_invalid_values_are_still_rejected():
+    """Accepting the argument is not accepting anything for it."""
     with pytest.raises(ValueError, match="additive"):
         CustomProphet().add_seasonality("monthly", 30.5, 5, mode="sideways")
     with pytest.raises(ValueError, match="reserved"):
         CustomProphet().add_seasonality("monthly", 30.5, 5, condition_name="trend")
+
+    model = CustomProphet()
+    with pytest.raises(ValueError):
+        model.add_seasonality("monthly", 30.5, 5, mode="sideways")
+    assert model.seasonalities == {}
 
 
 # -- reaching the fit ---------------------------------------------------

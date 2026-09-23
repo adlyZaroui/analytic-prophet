@@ -38,6 +38,16 @@ s(t) = X(t)·β                                seasonality
 rᵢ   = yᵢ − g(tᵢ) − s(tᵢ)                    residual
 ```
 
+Each of the `K` regressor columns is marked additive or multiplicative — Stan's `s_a`
+and `s_m` — giving
+
+```
+yhat = trend · (1 + X_sm·β) + X_sa·β
+```
+
+which is the trend plus the additive columns, scaled by what the multiplicative ones
+contribute. With every column additive the multiplier is 1 and this is `trend + X·β`.
+
 ### Objective
 
 ```
@@ -119,9 +129,9 @@ higher-resolution weekly term than the default order 3. `prior_scale` falls back
 model's `seasonality_prior_scale`. `condition_name` names a boolean
 column, required on the frames passed to both `fit` and `predict`, whose False rows have
 that component's features zeroed — the columns stay, so `beta` keeps its width and only
-the excluded rows inform it. `mode='multiplicative'` is validated exactly as Prophet
-validates it and then **refused**, since this implementation cannot fit it yet — see
-[Not implemented](#not-implemented).
+the excluded rows inform it. `mode` is `'additive'` or `'multiplicative'`: an
+additive component adds to the trend, a multiplicative one scales it, so its effect
+grows with the level of the series.
 
 **Initialization** — Prophet overrides Stan's random initialization with deterministic
 values, so Stan's `init_r · N(0,1)` default is never reached: `k`, `m` from
@@ -407,7 +417,6 @@ Tracked, deliberate, and not yet closed:
 ## Not implemented
 
 - Country holidays (`add_country_holidays`) and extra regressors
-- Multiplicative seasonality (`trend · (1 + X·β)`)
 - Logistic and flat growth — linear only
 - MCMC sampling — MAP only
 
@@ -422,7 +431,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 288 tests
+pytest tests/                        # 303 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
@@ -453,6 +462,7 @@ numbers rather than errors.
 | | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 11 | Multiplicative mode. The first change to the gradient since `sigma_obs` became free: every trend block picks up the `(1 + X_sm·β)` factor and `β`'s picks up the trend. The all-additive case keeps its own branch — not for speed, but because `y − g − s` and `y − (g·1 + s)` differ in the last bits, which was enough to move the scipy path to a point 2.96 nats worse |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 8 | Holidays. The objective and gradient needed no change — a holiday column is a column of `X` — so the work was alignment: columns sorted by name rather than frame order, all-zero columns kept for occurrences outside a frame, and the fit's holiday set reconciled with predict's |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 7 | Conditional seasonalities: a named boolean column zeroes a component's features where it is False. The feature matrix reproduces Prophet's to 1e-10 — see [Where this deviates on purpose](#where-this-deviates-on-purpose) for why not exactly |
 | | [#43](https://github.com/adlyZaroui/analytic-prophet/issues/43) | Eigen answers a size mismatch with an assertion, which calls `abort()`: the interpreter died with no traceback and, in a test run, no failing test name. Four such mismatches aborted and eleven more returned plausible wrong numbers. Every dimension and scale is now checked in one place, through both entry points |

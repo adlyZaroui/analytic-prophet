@@ -112,13 +112,13 @@ def test_adding_holidays_after_a_fit_is_refused(peyton_manning_df, compiled_opti
         model.add_holidays(superbowls())
 
 
-def test_multiplicative_holidays_are_refused():
-    """As with seasonality mode: validated as Prophet validates it, then
-    refused rather than fitted additively. #16 task 11."""
+def test_holidays_mode_is_validated_and_accepted():
+    """Refused as unimplemented until task 11; fitted now."""
     with pytest.raises(ValueError, match='"additive" or "multiplicative"'):
         CustomProphet().add_holidays(superbowls(), mode="sideways")
-    with pytest.raises(NotImplementedError, match="task 11"):
-        CustomProphet().add_holidays(superbowls(), mode="multiplicative")
+
+    model = CustomProphet().add_holidays(superbowls(), mode="multiplicative")
+    assert model.holidays_mode == "multiplicative"
 
 
 def test_a_non_positive_prior_scale_is_refused():

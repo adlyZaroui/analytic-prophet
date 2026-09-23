@@ -197,6 +197,7 @@ void validate_inputs(const Eigen::VectorXd& t_scaled_vec,
                      double sigma_k,
                      double sigma_m,
                      const Eigen::Ref<const Eigen::VectorXd>& sigmas,
+                     const Eigen::Ref<const Eigen::VectorXd>& s_m,
                      double tau) {
     const Eigen::Index T = t_scaled_vec.size();
     if (T == 0) {
@@ -230,6 +231,18 @@ void validate_inputs(const Eigen::VectorXd& t_scaled_vec,
     if ((sigmas.array() <= 0.0).any()) {
         throw std::invalid_argument("every entry of sigmas must be positive");
     }
+    // Empty means every column is additive, which is the common case and the
+    // binding's default; anything else must cover the matrix exactly.
+    if (s_m.size() != 0 && s_m.size() != x.cols()) {
+        throw std::invalid_argument(
+            "s_m has " + std::to_string(s_m.size()) + " entries but the design "
+            "matrix has " + std::to_string(x.cols()) + " columns; there must be "
+            "one mode indicator per column, or none at all");
+    }
+    if (s_m.size() != 0 && ((s_m.array() != 0.0) && (s_m.array() != 1.0)).any()) {
+        throw std::invalid_argument(
+            "s_m must hold only 0 (additive) or 1 (multiplicative)");
+    }
     if (!(tau > 0.0)) {
         throw std::invalid_argument("tau must be positive");
     }
@@ -257,12 +270,13 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       double sigma_k,
                                       double sigma_m,
                                       const Eigen::Ref<const Eigen::VectorXd>& sigmas,
+                                      const Eigen::Ref<const Eigen::VectorXd>& s_m,
                                       double tau,
                                       double& mlp_out,
                                       Eigen::Ref<Eigen::VectorXd> grad_out,
                                       bool include_l1_prior = true) {
     validate_inputs(t_scaled_vec, change_points_vec, A, x, normalized_y_vec,
-                    sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, tau);
+                    sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, s_m, tau);
     const ModelParams p = extract_params(params_vec,
                                          static_cast<int>(change_points_vec.size()),
                                          static_cast<int>(x.cols()));
@@ -278,11 +292,32 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
     Eigen::VectorXd gamma = -delta.array() * change_points_vec.array();
     Eigen::VectorXd g = (k * ones + A * delta).array() * t_scaled_vec.array() + (m * ones + A * gamma).array();
 
-    // Seasonality component
-    Eigen::VectorXd s = x * beta;
+    // [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...):
+    // additive columns add to the trend, multiplicative ones scale it.
+    //
+    // With every column additive the multiplier is exactly 1, so the whole
+    // thing collapses to g + x*beta. That case takes a separate branch rather
+    // than multiplying by a vector of ones: it is the common one, and going
+    // through the general path would allocate two K-column matrices per
+    // evaluation and perturb every existing fit in the last bits.
+    const bool multiplicative = s_m.size() != 0 && (s_m.array() != 0.0).any();
 
-    Eigen::VectorXd y_pred = g + s;
+    Eigen::MatrixXd x_sm, x_sa;
+    Eigen::VectorXd multiplier, y_pred;
+    if (multiplicative) {
+        x_sm = x * s_m.asDiagonal();
+        x_sa = x - x_sm;
+        multiplier = Eigen::VectorXd::Ones(t_scaled_vec.size()) + x_sm * beta;
+        y_pred = g.array() * multiplier.array() + (x_sa * beta).array();
+    } else {
+        y_pred = g + x * beta;
+    }
     Eigen::VectorXd r = normalized_y_vec - y_pred;
+    // d(yhat)/d(a trend parameter) = d(g)/d(that parameter) * multiplier, so
+    // every trend block below scales the residual by it.
+    Eigen::VectorXd r_scaled = multiplicative
+        ? Eigen::VectorXd(r.array() * multiplier.array())
+        : r;
 
     double sum_squared_diff = r.array().square().sum();
 
@@ -310,13 +345,13 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
     grad_out.resize(params_vec.size());
 
     // Compute dk and dm
-    grad_out(0) = -r.dot(t_scaled_vec) / (sigma_obs * sigma_obs) + k / (sigma_k * sigma_k);
-    grad_out(1) = -r.sum() / (sigma_obs * sigma_obs) + m / (sigma_m * sigma_m);
+    grad_out(0) = -r_scaled.dot(t_scaled_vec) / (sigma_obs * sigma_obs) + k / (sigma_k * sigma_k);
+    grad_out(1) = -r_scaled.sum() / (sigma_obs * sigma_obs) + m / (sigma_m * sigma_m);
 
     // Compute ddelta
     Eigen::MatrixXd t_diff = t_scaled_vec.replicate(1, change_points_vec.size()).array().rowwise() - change_points_vec.transpose().array();
     Eigen::MatrixXd delta_contrib = t_diff.array() * A.array();
-    Eigen::VectorXd ddelta = -(r.transpose() * delta_contrib).transpose() / (sigma_obs * sigma_obs);
+    Eigen::VectorXd ddelta = -(r_scaled.transpose() * delta_contrib).transpose() / (sigma_obs * sigma_obs);
 
     if (include_l1_prior) {
         ddelta += (delta.array().sign() / tau).matrix();
@@ -326,8 +361,13 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
 
     // Compute dbeta
     int beta_start_index = 2 + delta.size(); // Dynamically calculate the starting index for beta
-    Eigen::VectorXd dbeta = -(x.transpose() * r) / (sigma_obs * sigma_obs) +
-                            (beta.array() / sigmas.array().square()).matrix();
+    // beta's gradient picks up the trend on its multiplicative columns.
+    Eigen::VectorXd dbeta =
+        (multiplicative
+             ? Eigen::VectorXd(-(x_sm.transpose() * (r.array() * g.array()).matrix()
+                                 + x_sa.transpose() * r) / (sigma_obs * sigma_obs))
+             : Eigen::VectorXd(-(x.transpose() * r) / (sigma_obs * sigma_obs)))
+        + (beta.array() / sigmas.array().square()).matrix();
 
     grad_out.segment(beta_start_index, beta.size()) = dbeta;
 
@@ -397,6 +437,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       double sigma_k,
                                       double sigma_m,
                                       const Eigen::Ref<const Eigen::VectorXd>& sigmas,
+                                      const Eigen::Ref<const Eigen::VectorXd>& s_m,
                                       double tau,
                                       const std::vector<int>& fourier_orders,
                                       const std::vector<double>& seasonality_periods,
@@ -412,7 +453,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                                         seasonality_conditions,
                                                         holiday_features),
                                      normalized_y_vec, sigma_obs_prior_scale, sigma_k,
-                                     sigma_m, sigmas, tau, mlp_out, grad_out,
+                                     sigma_m, sigmas, s_m, tau, mlp_out, grad_out,
                                      include_l1_prior);
 }
 
@@ -428,6 +469,7 @@ struct SplitObjective {
     double sigma_k;
     double sigma_m;
     Eigen::VectorXd sigmas;
+    Eigen::VectorXd s_m;
     double tau;
     int S;
     int K;
@@ -456,7 +498,7 @@ struct SplitObjective {
         Eigen::VectorXd natural_grad(natural.size());
         minus_log_posterior_and_gradient(natural, t_scaled, change_points, A, x,
                                          normalized_y, sigma_obs_prior_scale, sigma_k,
-                                         sigma_m, sigmas, tau, value, natural_grad,
+                                         sigma_m, sigmas, s_m, tau, value, natural_grad,
                                          // the split form supplies the L1 term itself
                                          /*include_l1_prior=*/false);
 
@@ -498,6 +540,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
                         double sigma_k,
                         double sigma_m,
                         const Eigen::Ref<const Eigen::VectorXd>& sigmas,
+                        const Eigen::Ref<const Eigen::VectorXd>& s_m,
                         double tau,
                         const std::vector<int>& fourier_orders,
                         const std::vector<double>& seasonality_periods,
@@ -523,7 +566,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
                                                      seasonality_conditions,
                                                      holiday_features);
         validate_inputs(t_scaled, change_points, A, x, normalized_y,
-                        sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, tau);
+                        sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, s_m, tau);
 
         // Specific to this entry point: the split vector is laid out from K,
         // which is read off `params` rather than from the design matrix.
@@ -574,7 +617,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
 
         SplitObjective objective{t_scaled, change_points, A, x,
                                  normalized_y, sigma_obs_prior_scale,
-                                 sigma_k, sigma_m, sigmas, tau, S, K, {}};
+                                 sigma_k, sigma_m, sigmas, s_m, tau, S, K, {}};
         LBFGSpp::LBFGSBSolver<double> solver(param);
 
         double fx = 0.0;
@@ -621,6 +664,7 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         double sigma_k,
         double sigma_m,
         const Eigen::Ref<const Eigen::VectorXd>& sigmas,
+        const Eigen::Ref<const Eigen::VectorXd>& s_m,
         double tau,
         const std::vector<int>& fourier_orders,
         const std::vector<double>& seasonality_periods,
@@ -631,7 +675,7 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
     Eigen::VectorXd gradient(params.size());
     minus_log_posterior_and_gradient(params, t_scaled, change_points, t_seasonality,
                                      normalized_y, sigma_obs_prior_scale, sigma_k, sigma_m, sigmas,
-                                     tau, fourier_orders, seasonality_periods,
+                                     s_m, tau, fourier_orders, seasonality_periods,
                                      seasonality_conditions, holiday_features,
                                      mlp, gradient,
                                      include_l1_prior);
@@ -673,6 +717,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("sigma_k"),
           py::arg("sigma_m"),
           py::arg("sigmas"),
+          py::arg("s_m") = Eigen::VectorXd(),
           py::arg("tau"),
           py::arg("fourier_orders"),
           py::arg("seasonality_periods"),
@@ -695,6 +740,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("sigma_k"),
           py::arg("sigma_m"),
           py::arg("sigmas"),
+          py::arg("s_m") = Eigen::VectorXd(),
           py::arg("tau"),
           py::arg("fourier_orders"),
           py::arg("seasonality_periods"),
