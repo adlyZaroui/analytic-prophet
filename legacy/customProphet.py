@@ -587,6 +587,101 @@ def seasonality_prior_scales(seasonalities):
         for props in seasonalities.values()
     ]) if seasonalities else np.empty(0)
 
+def logistic_gamma_and_jacobian(k, m, delta, change_points):
+    """Piecewise offsets for the logistic trend, and their Jacobian.
+
+    [stan] logistic_gamma. Each segment's offset is chosen so the curve stays
+    continuous where the rate changes:
+
+        k_s        = [k, k + cumsum(delta)]                 S+1 segment rates
+        gamma[i]   = (t_change[i] - m_pr_i) * (1 - k_s[i]/k_s[i+1])
+        m_pr_{i+1} = m_pr_i + gamma[i],   m_pr_1 = m
+
+    Unlike the linear case, where gamma is just `-t_change * delta`, this is a
+    recursion: gamma[i] depends on every earlier gamma through `m_pr`. So its
+    Jacobian is accumulated forward alongside it rather than written down.
+
+    Returns (gamma, dgamma) with dgamma of shape (S, 2 + S), columns ordered
+    (k, m, delta).
+    """
+    delta = np.asarray(delta, dtype=float)
+    n = len(delta)
+    k_s = np.concatenate(([k], k + np.cumsum(delta)))
+
+    # d k_s[i] / d(k, m, delta): 1 for k, 0 for m, and delta_j enters k_s[i]
+    # for every j < i
+    dk_s = np.zeros((n + 1, 2 + n))
+    dk_s[:, 0] = 1.0
+    for i in range(1, n + 1):
+        dk_s[i, 2:2 + i] = 1.0
+
+    gamma = np.empty(n)
+    dgamma = np.zeros((n, 2 + n))
+    m_pr = m
+    dm_pr = np.zeros(2 + n)
+    dm_pr[1] = 1.0
+
+    for i in range(n):
+        c = 1.0 - k_s[i] / k_s[i + 1]
+        dc = -(dk_s[i] * k_s[i + 1] - k_s[i] * dk_s[i + 1]) / k_s[i + 1] ** 2
+
+        gamma[i] = (change_points[i] - m_pr) * c
+        dgamma[i] = -dm_pr * c + (change_points[i] - m_pr) * dc
+
+        m_pr = m_pr + gamma[i]
+        dm_pr = dm_pr + dgamma[i]
+    return gamma, dgamma
+
+
+def logistic_trend_and_jacobian(k, m, delta, t_scaled, cap_scaled, A, change_points):
+    """The logistic trend and d(trend)/d(k, m, delta).
+
+    [stan] logistic_trend: cap .* inv_logit((k + A*delta) .* (t - (m + A*gamma))).
+
+    Returns (trend, jacobian) with jacobian of shape (T, 2 + S). The caller
+    contracts it with the residual; keeping the full Jacobian here rather than
+    the contracted gradient is what lets the multiplicative multiplier be
+    applied outside, exactly as it is for the linear trend.
+    """
+    gamma, dgamma = logistic_gamma_and_jacobian(k, m, delta, change_points)
+    rate = k + np.dot(A, delta)
+    offset = m + np.dot(A, gamma)
+    z = rate * (t_scaled - offset)
+
+    # exp(-|z|) form: the naive 1/(1+exp(-z)) overflows for z very negative
+    sigmoid = np.where(z >= 0, 1.0 / (1.0 + np.exp(-np.abs(z))),
+                       np.exp(-np.abs(z)) / (1.0 + np.exp(-np.abs(z))))
+    trend = cap_scaled * sigmoid
+
+    d_offset = np.dot(A, dgamma)
+    d_offset[:, 1] += 1.0                      # offset = m + A*gamma
+    d_rate = np.zeros((len(t_scaled), 2 + len(delta)))
+    d_rate[:, 0] = 1.0
+    d_rate[:, 2:] = A
+
+    dz = d_rate * (t_scaled - offset)[:, None] - rate[:, None] * d_offset
+    jacobian = (cap_scaled * sigmoid * (1.0 - sigmoid))[:, None] * dz
+    return trend, jacobian
+
+
+def logistic_growth_init(t_scaled, normalized_y, cap_scaled):
+    """[fc] logistic_growth_init: put the curve through the first and last
+    points, clamping y into (0, cap) first so the logs are defined."""
+    i0, i1 = int(np.argmin(t_scaled)), int(np.argmax(t_scaled))
+    span = t_scaled[i1] - t_scaled[i0]
+
+    c0, c1 = cap_scaled[i0], cap_scaled[i1]
+    y0 = max(0.01 * c0, min(0.99 * c0, normalized_y[i0]))
+    y1 = max(0.01 * c1, min(0.99 * c1, normalized_y[i1]))
+
+    r0, r1 = c0 / y0, c1 / y1
+    if abs(r0 - r1) <= 0.01:
+        r0 = 1.05 * r0
+
+    l0, l1 = np.log(r0 - 1), np.log(r1 - 1)
+    return (l0 - l1) / span, l0 * span / (l0 - l1)
+
+
 def linear_growth_init(t_scaled, normalized_y):
     """Prophet's deterministic starting point for (k, m): the line through the
     first and last points of the scaled series.
@@ -762,14 +857,23 @@ def split_to_canonical(z, n_delta=N_CHANGE_POINTS):
     beta = z[3 + 2 * n_delta:]
     return np.concatenate(([k], [m], delta_pos - delta_neg, [sigma_obs], beta))
 
-def compute_trend(k, m, delta, change_points, t_scaled, y_absmax):
-    """Piecewise-linear trend in normalized-y space, de-normalized once at
-    the end. Shared by predict() and trend_forecast_uncertainty() so the
-    de-normalization can't drift apart between the two again."""
+def compute_trend(k, m, delta, change_points, t_scaled, y_absmax,
+                  cap_scaled=None, floor=None):
+    """The trend in normalized-y space, de-normalized once at the end.
+
+    Shared by predict() and trend_forecast_uncertainty() so the
+    de-normalization can't drift apart between the two again. `cap_scaled`
+    selects logistic growth; without it the trend is piecewise linear.
+    """
     A = (t_scaled[:, None] >= change_points) * 1
-    gamma = -change_points * delta
-    trend_normalized = (k + det_dot(A, delta)) * t_scaled + (m + det_dot(A, gamma))
-    return trend_normalized * y_absmax
+    if cap_scaled is None:
+        gamma = -change_points * delta
+        trend_normalized = (k + det_dot(A, delta)) * t_scaled + (m + det_dot(A, gamma))
+    else:
+        trend_normalized = logistic_trend_and_jacobian(
+            k, m, delta, t_scaled, cap_scaled, A, change_points)[0]
+    trend = trend_normalized * y_absmax
+    return trend if floor is None else trend + floor
 
 class CustomProphet:
     
@@ -783,6 +887,11 @@ class CustomProphet:
         self.ds = None
         
         self.T = None
+        # [fc] Prophet.__init__ growth='linear'. 'logistic' needs a `cap`
+        # column on every frame passed to fit() and predict().
+        self.growth = 'linear'
+        self.cap_scaled = None
+        self.floor = None
         self.n_changepoints = N_CHANGE_POINTS
 
         # [fc] Prophet.__init__. 'auto' lets the history decide; True forces the
@@ -861,6 +970,51 @@ class CustomProphet:
     def _normalize_y(self) -> None:
         self.y_absmax = np.max(np.abs(self.y))
         self.normalized_y = np.array(self.y / self.y_absmax)
+
+    def _future_capacity(self, future_df):
+        """(cap_scaled, floor) for a frame passed to predict, or (None, None).
+
+        Logistic growth reads `cap` from whichever frame it is given, so a
+        forecast can carry a capacity the history never had.
+        """
+        if self.growth != 'logistic':
+            return None, None
+        if 'cap' not in future_df:
+            raise ValueError(
+                'Capacities must be supplied for logistic growth in column "cap"')
+        floor = future_df['floor'].to_numpy(dtype=float) if 'floor' in future_df \
+            else np.zeros(len(future_df))
+        cap = future_df['cap'].to_numpy(dtype=float)
+        if np.any(cap <= floor):
+            raise ValueError('cap must be greater than floor (which defaults to 0).')
+        return (cap - floor) / self.y_absmax, floor
+
+    def _setup_growth(self, df) -> None:
+        """Validate the growth mode and read `cap` for logistic growth.
+
+        [fc] setup_dataframe. `floor` defaults to 0 under absmax scaling, which
+        is the only scaling here, so `cap_scaled` is `cap / y_absmax`.
+        """
+        if self.growth not in ('linear', 'logistic'):
+            raise ValueError(
+                f"growth={self.growth!r} is not supported; it must be "
+                f"'linear' or 'logistic' ('flat' is #16 task 13)")
+        if self.growth != 'logistic':
+            self.cap_scaled = None
+            return
+
+        if 'cap' not in df:
+            raise ValueError(
+                'Capacities must be supplied for logistic growth in column "cap"')
+        floor = df['floor'].to_numpy(dtype=float) if 'floor' in df \
+            else np.zeros(len(df))
+        cap = df['cap'].to_numpy(dtype=float)
+        if np.any(cap <= floor):
+            raise ValueError('cap must be greater than floor (which defaults to 0).')
+
+        self.floor = floor
+        self.cap_scaled = (cap - floor) / self.y_absmax
+        self.normalized_y = (self.y - floor) / self.y_absmax
     
     def add_holidays(self, holidays, prior_scale=None, mode=None):
         """Register a holidays frame. Returns self, so calls chain.
@@ -1161,9 +1315,16 @@ class CustomProphet:
 
         A, x = design if design is not None else self._design_matrices()
 
-        # trend component
-        gamma = -self.change_points * delta
-        g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
+        # trend component. Linear keeps its own expression rather than going
+        # through the Jacobian form: it is the common case, and its fits are
+        # sensitive to the last bits (see the note on the additive branch).
+        if self.growth == 'logistic':
+            g, trend_jacobian = logistic_trend_and_jacobian(
+                k, m, delta, self.t_scaled, self.cap_scaled, A, self.change_points)
+        else:
+            trend_jacobian = None
+            gamma = -self.change_points * delta
+            g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
         # [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...)
         # -- additive columns add to the trend, multiplicative ones scale it.
@@ -1190,9 +1351,16 @@ class CustomProphet:
 
         A, x = design if design is not None else self._design_matrices()
 
-        # trend component
-        gamma = -self.change_points * delta
-        g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
+        # trend component. Linear keeps its own expression rather than going
+        # through the Jacobian form: it is the common case, and its fits are
+        # sensitive to the last bits (see the note on the additive branch).
+        if self.growth == 'logistic':
+            g, trend_jacobian = logistic_trend_and_jacobian(
+                k, m, delta, self.t_scaled, self.cap_scaled, A, self.change_points)
+        else:
+            trend_jacobian = None
+            gamma = -self.change_points * delta
+            g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
         # [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...).
         # The all-additive case takes its own branch rather than multiplying by
@@ -1211,9 +1379,17 @@ class CustomProphet:
         # trend on its multiplicative columns. All of them reduce to the
         # additive forms when s_m is zero, because the multiplier is then 1.
         r_scaled = r if multiplier is None else r * multiplier
-        dk = np.array([-np.sum(r_scaled * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
-        dm = np.array([-np.sum(r_scaled) / sigma_obs**2 + m / self.sigma_m**2])
-        ddelta = -np.sum(r_scaled[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
+        if trend_jacobian is None:
+            dk = np.array([-np.sum(r_scaled * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
+            dm = np.array([-np.sum(r_scaled) / sigma_obs**2 + m / self.sigma_m**2])
+            ddelta = -np.sum(r_scaled[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
+        else:
+            # one contraction for all three blocks: the Jacobian already holds
+            # d(trend)/d(k, m, delta), including gamma's recursion
+            d_trend = -np.dot(r_scaled, trend_jacobian) / sigma_obs**2
+            dk = np.array([d_trend[0] + k / self.sigma_k**2])
+            dm = np.array([d_trend[1] + m / self.sigma_m**2])
+            ddelta = d_trend[2:]
         dsigma_obs = np.array([self.T / sigma_obs - np.sum(r**2) / sigma_obs**3 + sigma_obs / SIGMA_OBS_PRIOR_SCALE**2])
         dbeta = (-np.dot(r, x) / sigma_obs**2 if multiplier is None else
                  -(np.dot(r * g, x * self.s_m) + np.dot(r, x * self.s_a)) / sigma_obs**2) \
@@ -1231,9 +1407,16 @@ class CustomProphet:
 
         A, x = design if design is not None else self._design_matrices()
 
-        # trend component
-        gamma = -self.change_points * delta
-        g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
+        # trend component. Linear keeps its own expression rather than going
+        # through the Jacobian form: it is the common case, and its fits are
+        # sensitive to the last bits (see the note on the additive branch).
+        if self.growth == 'logistic':
+            g, trend_jacobian = logistic_trend_and_jacobian(
+                k, m, delta, self.t_scaled, self.cap_scaled, A, self.change_points)
+        else:
+            trend_jacobian = None
+            gamma = -self.change_points * delta
+            g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
         # [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...).
         # The all-additive case takes its own branch rather than multiplying by
@@ -1259,9 +1442,17 @@ class CustomProphet:
         # trend on its multiplicative columns. All of them reduce to the
         # additive forms when s_m is zero, because the multiplier is then 1.
         r_scaled = r if multiplier is None else r * multiplier
-        dk = np.array([-np.sum(r_scaled * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
-        dm = np.array([-np.sum(r_scaled) / sigma_obs**2 + m / self.sigma_m**2])
-        ddelta = -np.sum(r_scaled[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
+        if trend_jacobian is None:
+            dk = np.array([-np.sum(r_scaled * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
+            dm = np.array([-np.sum(r_scaled) / sigma_obs**2 + m / self.sigma_m**2])
+            ddelta = -np.sum(r_scaled[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
+        else:
+            # one contraction for all three blocks: the Jacobian already holds
+            # d(trend)/d(k, m, delta), including gamma's recursion
+            d_trend = -np.dot(r_scaled, trend_jacobian) / sigma_obs**2
+            dk = np.array([d_trend[0] + k / self.sigma_k**2])
+            dm = np.array([d_trend[1] + m / self.sigma_m**2])
+            ddelta = d_trend[2:]
         dsigma_obs = np.array([self.T / sigma_obs - np.sum(r**2) / sigma_obs**3 + sigma_obs / SIGMA_OBS_PRIOR_SCALE**2])
         dbeta = (-np.dot(r, x) / sigma_obs**2 if multiplier is None else
                  -(np.dot(r * g, x * self.s_m) + np.dot(r, x * self.s_a)) / sigma_obs**2) \
@@ -1329,6 +1520,7 @@ class CustomProphet:
         self.t_seasonality = seasonal_time(self.ds)
 
         self._normalize_y()
+        self._setup_growth(df)
         self._set_auto_seasonalities()
         # after selection, since a conditioned component may have been added by
         # hand while an auto-selected one never carries a condition
@@ -1357,7 +1549,10 @@ class CustomProphet:
         # [fc] calculate_initial_params: k/m from linear_growth_init, delta and
         # beta at zero, sigma_obs at 1.0. Prophet passes these to Stan
         # explicitly, so Stan's random init is never used.
-        k_init, m_init = linear_growth_init(self.t_scaled, self.normalized_y)
+        k_init, m_init = (
+            logistic_growth_init(self.t_scaled, self.normalized_y, self.cap_scaled)
+            if self.growth == 'logistic'
+            else linear_growth_init(self.t_scaled, self.normalized_y))
         initial_params_dict = {
             'k': k_init,
             'm': m_init,
@@ -1457,6 +1652,7 @@ class CustomProphet:
 
         self.t_seasonality = seasonal_time(self.ds)
         self._normalize_y()
+        self._setup_growth(df)
         self._set_auto_seasonalities()
         # after selection, since a conditioned component may have been added by
         # hand while an auto-selected one never carries a condition
@@ -1489,7 +1685,10 @@ class CustomProphet:
         # "STAN initialization" -- but Prophet always passes explicit inits, so
         # Stan's random default is never reached. The draw also came from an
         # unseeded RNG, making fit_cpp() non-reproducible run to run.
-        k_init, m_init = linear_growth_init(self.t_scaled, self.normalized_y)
+        k_init, m_init = (
+            logistic_growth_init(self.t_scaled, self.normalized_y, self.cap_scaled)
+            if self.growth == 'logistic'
+            else linear_growth_init(self.t_scaled, self.normalized_y))
         defaults = {
             'k': k_init,
             'm': m_init,
@@ -1519,6 +1718,8 @@ class CustomProphet:
             sigma_m=self.sigma_m,
             sigmas=self.sigmas,
             s_m=self.s_m,
+            cap_scaled=(self.cap_scaled if self.growth == 'logistic'
+                        else np.empty(0)),
             tau=self.tau,
             fourier_orders=[props["fourier_order"] for props in self.seasonalities.values()],
             seasonality_periods=[props["period"] for props in self.seasonalities.values()],
@@ -1640,8 +1841,13 @@ class CustomProphet:
         # Normalize future dates
         future_df['t_scaled'] = (pd.to_datetime(future_df['ds']) - self.ds.min()) / (self.ds.max() - self.ds.min())
         
-        # Trend component calculation
-        trend = compute_trend(k, m, delta, self.change_points, future_df['t_scaled'].values, self.y_absmax)
+        # Trend component calculation. Logistic growth needs the future frame's
+        # own capacities -- they are data, and may well differ from the
+        # history's. [fc] predict re-runs setup_dataframe for the same reason.
+        cap_scaled, floor = self._future_capacity(future_df)
+        trend = compute_trend(k, m, delta, self.change_points,
+                              future_df['t_scaled'].values, self.y_absmax,
+                              cap_scaled, floor)
 
         # Seasonality component calculation. The masks come from `future_df`,
         # not from the fit: a conditioned component applies on whichever future

@@ -212,6 +212,8 @@ def cpp_mlp_and_gradient(cpp_module):
             sigma_m=model.sigma_m,
             sigmas=model.sigmas,
             s_m=model.s_m,
+            cap_scaled=(model.cap_scaled if model.growth == 'logistic'
+                        else np.empty(0)),
             tau=model.tau,
             # from the model's registry, so a test that registers a second
             # seasonality gets the design matrix it asked for
