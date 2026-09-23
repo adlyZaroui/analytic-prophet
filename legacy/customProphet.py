@@ -155,15 +155,15 @@ BETA_SLICE = DEFAULT_LAYOUT.beta
 
 # An entry mirrors Prophet's own, field for field -- [fc] add_seasonality:
 #     {period, fourier_order, prior_scale, mode, condition_name}
-# `mode` is not honored yet. It is carried at its Prophet default and *checked*
-# rather than silently ignored, because a registry that accepted
-# `mode="multiplicative"` and fitted it additively would be worse than one that
-# cannot express it: see check_seasonality_supported.
+# Every field is honored as of #16 task 11. check_seasonality_supported still
+# validates them, since a value outside the allowed set would otherwise reach
+# the design matrix rather than the caller.
 SEASONALITY_DEFAULTS = {"prior_scale": SIGMA, "mode": "additive", "condition_name": None}
 
 # Of those, the ones the fit actually reads. The rest are checked rather than
 # ignored -- see check_seasonality_supported.
-HONORED_SEASONALITY_FIELDS = ("period", "fourier_order", "prior_scale", "condition_name")
+HONORED_SEASONALITY_FIELDS = ("period", "fourier_order", "prior_scale",
+                              "condition_name", "mode")
 
 
 def seasonality(period, fourier_order, **overrides):
@@ -266,13 +266,11 @@ UNDER_IDENTIFIED_WARNING = (
 def check_seasonality_supported(seasonalities):
     """Reject registry fields the fit does not yet honor.
 
-    `mode` needs the s_a/s_m split of #16 task 11. Until then a non-default
-    value would be accepted and quietly dropped, which is the failure mode this
-    whole issue exists to avoid.
-
-    `prior_scale` used to be on this list and is honored as of task 5, so it is
-    validated for sanity rather than rejected -- Stan declares `sigmas` with no
-    lower bound but `normal(0, sigmas)` is undefined at or below zero.
+    Nothing is rejected outright any more -- `prior_scale` became honored in
+    task 5, `condition_name` in task 7 and `mode` in task 11 -- so this is now
+    a validity check rather than a refusal. It still earns its place: an
+    unrecognized mode would otherwise reach the design matrix as "not
+    multiplicative", i.e. silently additive.
     """
     for name, props in seasonalities.items():
         for field, default in SEASONALITY_DEFAULTS.items():
@@ -289,6 +287,11 @@ def check_seasonality_supported(seasonalities):
             raise ValueError(
                 f"seasonality {name!r} has prior_scale={scale!r}; the prior "
                 f"normal(0, prior_scale) needs a positive scale")
+        mode = props.get("mode", "additive")
+        if mode not in ("additive", "multiplicative"):
+            raise ValueError(
+                f"seasonality {name!r} has mode={mode!r}; it must be "
+                f'"additive" or "multiplicative"')
 
 
 def condition_masks(seasonalities, df):
@@ -455,6 +458,21 @@ def holiday_features(dates, holidays, default_prior_scale):
     features = np.column_stack([columns[name] for name in names])
     scales = [prior_scales[name.split("_delim_")[0]] for name in names]
     return features, scales, list(prior_scales)
+
+
+def seasonality_modes(seasonalities):
+    """1 where a column is multiplicative, 0 where additive, per column.
+
+    [stan] `vector[K] s_a` / `vector[K] s_m`; [fc] make_all_seasonality_features
+    records a mode per component and regressor_column_matrix spreads it over
+    that component's columns. Every column of a component shares its mode, so
+    this repeats each one across its block.
+    """
+    return np.concatenate([
+        np.full(2 * props["fourier_order"],
+                1.0 if props.get("mode", "additive") == "multiplicative" else 0.0)
+        for props in seasonalities.values()
+    ]) if seasonalities else np.empty(0)
 
 
 def seasonality_prior_scales(seasonalities):
@@ -710,6 +728,9 @@ class CustomProphet:
         
         self.tau = TAU # sparse prior on rate adjustments delta
         self.sigmas = seasonality_prior_scales({})  # per column; set by _build_layout
+        self.s_m = np.empty(0)   # 1 where a column multiplies the trend
+        self.s_a = np.empty(0)   # its complement; both set by _build_layout
+        self._multiplicative = False
         self.sigma_obs = SIGMA_OBS_INIT # estimated by fit(); fit_cpp() keeps this fixed
 
         self.m = None
@@ -752,10 +773,6 @@ class CustomProphet:
         mode = self.seasonality_mode if mode is None else mode
         if mode not in ('additive', 'multiplicative'):
             raise ValueError('holidays_mode must be "additive" or "multiplicative"')
-        if mode != 'additive':
-            raise NotImplementedError(
-                f"holidays_mode={mode!r} needs the s_a/s_m split of #16 task 11; "
-                f"only additive holidays are fitted.")
         if prior_scale is not None:
             if not float(prior_scale) > 0:
                 raise ValueError("Prior scale must be > 0")
@@ -831,11 +848,9 @@ class CustomProphet:
         fit() and predict() must both carry; rows where it is False have this
         component's features zeroed, so it contributes nothing there.
 
-        One argument is accepted, validated, and then refused rather than
-        silently dropped: `mode='multiplicative'` needs the s_a/s_m split of
-        #16 task 11. Prophet accepts it. Raising here instead of at fit time is
-        deliberate -- the call site is where the mistake is, and a
-        NotImplementedError three steps later is worth much less.
+        `mode` is 'additive' or 'multiplicative'. A multiplicative component
+        scales the trend rather than adding to it, so its contribution grows
+        with the level of the series.
         """
         if self.opt_params is not None:
             raise RuntimeError(
@@ -922,6 +937,15 @@ class CustomProphet:
         # in the same order as the design matrix.
         self.sigmas = np.concatenate([seasonality_prior_scales(self.seasonalities),
                                       np.asarray(self._holiday_prior_scales, dtype=float)])
+        # [stan] vector[K] s_m / s_a: which columns multiply the trend and
+        # which add to it. Every holiday column shares holidays_mode.
+        holiday_mode = self.holidays_mode or self.seasonality_mode
+        self.s_m = np.concatenate([
+            seasonality_modes(self.seasonalities),
+            np.full(self._holiday_columns,
+                    1.0 if holiday_mode == "multiplicative" else 0.0)])
+        self.s_a = 1.0 - self.s_m
+        self._multiplicative = bool(np.any(self.s_m))
 
     def _generate_change_points(self) -> None:
         """Changepoints spaced uniformly in *scaled time* over the first
@@ -969,10 +993,10 @@ class CustomProphet:
         gamma = -self.change_points * delta
         g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
-        # seasonality component
-        s = np.dot(x, beta)
-
-        y_pred = g + s
+        # [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...)
+        # -- additive columns add to the trend, multiplicative ones scale it.
+        y_pred = g + np.dot(x, beta) if not self._multiplicative else \
+            g * (1.0 + np.dot(x * self.s_m, beta)) + np.dot(x * self.s_a, beta)
         y_true = self.normalized_y
 
         # T*log(sigma_obs) is the Gaussian normalizing constant -- it can't be
@@ -998,16 +1022,30 @@ class CustomProphet:
         gamma = -self.change_points * delta
         g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
-        # seasonality component
-        s = np.dot(x, beta)
+        # [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...).
+        # The all-additive case takes its own branch rather than multiplying by
+        # a vector of ones. Not only for speed: `y - g - s` and `y - (g*1 + s)`
+        # differ in the last bits, and on this objective's flat directions that
+        # was enough to move the scipy path to a point 2.96 nats worse.
+        if self._multiplicative:
+            multiplier = 1.0 + np.dot(x * self.s_m, beta)
+            r = self.normalized_y - (g * multiplier + np.dot(x * self.s_a, beta))
+        else:
+            multiplier = None
+            r = self.normalized_y - g - np.dot(x, beta)
 
-        r = self.normalized_y - g - s
-
-        dk = np.array([-np.sum(r * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
-        dm = np.array([-np.sum(r) / sigma_obs**2 + m / self.sigma_m**2])
-        ddelta = -np.sum(r[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
+        # Every trend block picks up the multiplier, since d(yhat)/d(a trend
+        # parameter) = d(g)/d(that parameter) * multiplier. beta's picks up the
+        # trend on its multiplicative columns. All of them reduce to the
+        # additive forms when s_m is zero, because the multiplier is then 1.
+        r_scaled = r if multiplier is None else r * multiplier
+        dk = np.array([-np.sum(r_scaled * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
+        dm = np.array([-np.sum(r_scaled) / sigma_obs**2 + m / self.sigma_m**2])
+        ddelta = -np.sum(r_scaled[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
         dsigma_obs = np.array([self.T / sigma_obs - np.sum(r**2) / sigma_obs**3 + sigma_obs / SIGMA_OBS_PRIOR_SCALE**2])
-        dbeta = -np.dot(r, x) / sigma_obs**2 + beta / self.sigmas**2
+        dbeta = (-np.dot(r, x) / sigma_obs**2 if multiplier is None else
+                 -(np.dot(r * g, x * self.s_m) + np.dot(r, x * self.s_a)) / sigma_obs**2) \
+                + beta / self.sigmas**2
 
         if include_l1_prior:
             ddelta = ddelta + np.sign(delta) / self.tau
@@ -1025,10 +1063,17 @@ class CustomProphet:
         gamma = -self.change_points * delta
         g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
-        # seasonality component
-        s = np.dot(x, beta)
-
-        r = self.normalized_y - g - s
+        # [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...).
+        # The all-additive case takes its own branch rather than multiplying by
+        # a vector of ones. Not only for speed: `y - g - s` and `y - (g*1 + s)`
+        # differ in the last bits, and on this objective's flat directions that
+        # was enough to move the scipy path to a point 2.96 nats worse.
+        if self._multiplicative:
+            multiplier = 1.0 + np.dot(x * self.s_m, beta)
+            r = self.normalized_y - (g * multiplier + np.dot(x * self.s_a, beta))
+        else:
+            multiplier = None
+            r = self.normalized_y - g - np.dot(x, beta)
 
         minus_log_posterior = self.T * np.log(sigma_obs) + \
                       np.sum(r**2) / (2*sigma_obs**2) + \
@@ -1037,11 +1082,18 @@ class CustomProphet:
                       m**2 / (2*self.sigma_m**2) + \
                       np.sum(beta**2 / (2 * self.sigmas**2))
 
-        dk = np.array([-np.sum(r * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
-        dm = np.array([-np.sum(r) / sigma_obs**2 + m / self.sigma_m**2])
-        ddelta = -np.sum(r[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
+        # Every trend block picks up the multiplier, since d(yhat)/d(a trend
+        # parameter) = d(g)/d(that parameter) * multiplier. beta's picks up the
+        # trend on its multiplicative columns. All of them reduce to the
+        # additive forms when s_m is zero, because the multiplier is then 1.
+        r_scaled = r if multiplier is None else r * multiplier
+        dk = np.array([-np.sum(r_scaled * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
+        dm = np.array([-np.sum(r_scaled) / sigma_obs**2 + m / self.sigma_m**2])
+        ddelta = -np.sum(r_scaled[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
         dsigma_obs = np.array([self.T / sigma_obs - np.sum(r**2) / sigma_obs**3 + sigma_obs / SIGMA_OBS_PRIOR_SCALE**2])
-        dbeta = -np.dot(r, x) / sigma_obs**2 + beta / self.sigmas**2
+        dbeta = (-np.dot(r, x) / sigma_obs**2 if multiplier is None else
+                 -(np.dot(r * g, x * self.s_m) + np.dot(r, x * self.s_a)) / sigma_obs**2) \
+                + beta / self.sigmas**2
 
         if include_l1_prior:
             minus_log_posterior += np.sum(np.abs(delta)) / self.tau
@@ -1272,6 +1324,7 @@ class CustomProphet:
             sigma_k=self.sigma_k,
             sigma_m=self.sigma_m,
             sigmas=self.sigmas,
+            s_m=self.s_m,
             tau=self.tau,
             fourier_orders=[props["fourier_order"] for props in self.seasonalities.values()],
             seasonality_periods=[props["period"] for props in self.seasonalities.values()],
@@ -1368,10 +1421,18 @@ class CustomProphet:
                                       condition_masks(self.seasonalities, future_df))
         if self._holiday_columns:
             x = np.concatenate([x, self._holiday_design(future_df['ds'])[0]], axis=1)
-        seasonality = x.dot(beta)
+        # [stan] trend .* (1 + X_sm * beta) + X_sa * beta. `trend` is already in
+        # the series' own units, and the multiplier is unitless, so only the
+        # additive part needs de-normalizing.
+        if self._multiplicative:
+            multiplier = 1.0 + x.dot(self.s_m * beta)
+            seasonality = x.dot(self.s_a * beta)
+        else:
+            multiplier = 1.0
+            seasonality = x.dot(beta)
 
         # Combine trend and seasonality for the forecast
-        yhat = trend + seasonality * self.y_absmax  # De-normalize the forecasted values
+        yhat = trend * multiplier + seasonality * self.y_absmax
 
         # Create forecast DataFrame
         forecast = future_df[['ds']].copy()
@@ -1383,10 +1444,12 @@ class CustomProphet:
         forecast['trend_upper'] = quantiles[1, :]
         
         # Now that 'trend_lower' and 'trend_upper' are defined, calculate 'yhat_lower' and 'yhat_upper'
-        forecast['yhat_lower'] = forecast['trend_lower'] + seasonality * self.y_absmax
-        forecast['yhat_upper'] = forecast['trend_upper'] + seasonality * self.y_absmax
+        forecast['yhat_lower'] = forecast['trend_lower'] * multiplier + seasonality * self.y_absmax
+        forecast['yhat_upper'] = forecast['trend_upper'] * multiplier + seasonality * self.y_absmax
         
-        forecast['seasonality'] = seasonality * self.y_absmax
+        # the additive part in the series' units, plus what the multiplicative
+        # part contributes at the fitted trend -- together, yhat - trend
+        forecast['seasonality'] = seasonality * self.y_absmax + trend * (multiplier - 1.0)
         
         forecast['yhat'] = yhat
         

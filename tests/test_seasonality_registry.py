@@ -99,23 +99,20 @@ def test_entries_carry_prophets_full_field_set():
 
 
 @pytest.mark.parametrize("field,value", [
-    ("mode", "multiplicative"),       # needs the s_a/s_m split -- #16 task 11
+    ("prior_scale", 0.0),
+    ("prior_scale", -1.0),
+    ("mode", "sideways"),
 ])
-def test_unhonored_fields_are_rejected_not_ignored(peyton_manning_df,
-                                                   compiled_optimizer_module, field, value):
-    """A field the fit does not read must fail loudly. Accepting
-    mode="multiplicative" and fitting additively is the exact failure this
-    whole issue exists to prevent."""
+def test_invalid_field_values_are_rejected(field, value):
+    """Nothing is refused as unimplemented any more -- prior_scale became
+    honored in task 5, condition_name in task 7 and mode in task 11. The check
+    remains as a validity test: an unrecognized mode would otherwise reach the
+    design matrix as "not multiplicative", i.e. silently additive.
+    """
     entry = seasonality(365.25, 10, **{field: value})
 
-    with pytest.raises(NotImplementedError, match=field):
+    with pytest.raises(ValueError):
         check_seasonality_supported({"yearly": entry})
-
-    model = CustomProphet()
-    model.seasonalities = {"yearly": entry}
-    with pytest.raises(NotImplementedError, match=field):
-        model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
-                      lib_path=compiled_optimizer_module)
 
 
 def test_design_matrix_concatenates_blocks_in_registry_order(prepared_model):

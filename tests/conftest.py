@@ -211,6 +211,7 @@ def cpp_mlp_and_gradient(cpp_module):
             sigma_k=model.sigma_k,
             sigma_m=model.sigma_m,
             sigmas=model.sigmas,
+            s_m=model.s_m,
             tau=model.tau,
             # from the model's registry, so a test that registers a second
             # seasonality gets the design matrix it asked for
