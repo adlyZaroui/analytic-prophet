@@ -22,7 +22,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "legacy"))
 from customProphet import (CustomProphet, N_CHANGE_POINTS, n_yearly,  # noqa: E402
                            SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE, CPP_MODULE_NAME,
-                           load_cpp_module, seasonal_time, seasonality, YEARLY_PERIOD)
+                           load_cpp_module, seasonal_time, seasonality,
+                           condition_matrix, YEARLY_PERIOD)
 
 # The Prophet-comparison plumbing lives with the benchmarks, which is also
 # where it is exercised interactively. The agreement tests reuse it rather
@@ -215,6 +216,12 @@ def cpp_mlp_and_gradient(cpp_module):
             # seasonality gets the design matrix it asked for
             fourier_orders=[p["fourier_order"] for p in model.seasonalities.values()],
             seasonality_periods=[p["period"] for p in model.seasonalities.values()],
+            seasonality_conditions=condition_matrix(model.seasonalities,
+                                                    model.condition_masks,
+                                                    len(model.t_scaled)),
+            holiday_features=(model._holiday_features
+                              if model._holiday_columns
+                              else np.empty((len(model.t_scaled), 0))),
             include_l1_prior=include_l1_prior,
         )
 
