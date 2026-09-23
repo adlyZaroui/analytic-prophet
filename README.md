@@ -99,6 +99,15 @@ from the history, exactly as Prophet does it:
 `True` forces the default order, `False` leaves the component out, an integer sets the
 order directly. Forcing yearly on under 730 days of history warns, as Prophet's does.
 
+`add_seasonality(name, period, fourier_order, prior_scale=None, mode=None,
+condition_name=None)` registers a component of your own, and returns the model so calls
+chain. A component registered under a built-in name replaces that built-in rather than
+colliding with it, so `add_seasonality('weekly', 7, 10)` is how you ask for a
+higher-resolution weekly term than the default order 3. `prior_scale` falls back to the
+model's `seasonality_prior_scale`. `mode='multiplicative'` and `condition_name` are
+validated exactly as Prophet validates them and then **refused**, since this
+implementation cannot fit either yet — see [Not implemented](#not-implemented).
+
 **Initialization** — Prophet overrides Stan's random initialization with deterministic
 values, so Stan's `init_r · N(0,1)` default is never reached: `k`, `m` from
 `linear_growth_init` (the line through the first and last points of the scaled series),
@@ -342,7 +351,8 @@ Tracked, deliberate, and not yet closed:
 
 ## Not implemented
 
-- `add_seasonality` and conditional seasonalities
+- Conditional seasonalities (`condition_name`) — `add_seasonality` accepts the argument
+  only to reject it
 - Holidays and extra regressors
 - Multiplicative seasonality (`trend · (1 + X·β)`)
 - Logistic and flat growth — linear only
@@ -390,6 +400,7 @@ numbers rather than errors.
 | | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 6 | The registry built by tasks 2–5 had no public entry point: fitting anything other than what the auto rule selects meant assigning to `model.seasonalities` directly. `add_seasonality` added, with Prophet's validation checked branch for branch |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 5 | `beta`'s prior used one scalar for every column, where Stan has `vector[K] sigmas`. Verified per-column against Stan's own `sigmas` and `log_prob`, and the shrinkage checked against the ridge algebra rather than merely being nonzero |
 | | [#34](https://github.com/adlyZaroui/analytic-prophet/issues/34) | `from_dict_to_array` overwrote `beta` with zeros regardless of what was passed. Invisible only because every caller happened to pass zeros |
 | Infrastructure | [#1](https://github.com/adlyZaroui/analytic-prophet/issues/1), [#11](https://github.com/adlyZaroui/analytic-prophet/pull/11) | ctypes → pybind11. The old binding hardcoded a relative library path and carried a 19-entry `argtypes` list kept in sync by hand; mismatches were undefined behaviour rather than errors |
