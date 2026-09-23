@@ -220,7 +220,7 @@ def cpp_mlp_and_gradient(cpp_module):
             seasonality_conditions=condition_matrix(model.seasonalities,
                                                     model.condition_masks,
                                                     len(model.t_scaled)),
-            holiday_features=(model._holiday_features
+            data_columns=(model._data_columns
                               if model._holiday_columns
                               else np.empty((len(model.t_scaled), 0))),
             include_l1_prior=include_l1_prior,

@@ -421,6 +421,46 @@ def country_holidays_frame(years, country):
     return frame
 
 
+def regressor_standardization(column, standardize):
+    """(mu, std) for one regressor. [fc] initialize_scales.
+
+    'auto' standardizes unless the column is binary, since centring a 0/1
+    indicator turns "the flag is on" into two values neither of which is zero,
+    and its coefficient stops meaning what it did. A constant column is left
+    alone too -- there is nothing to divide by.
+    """
+    values = pd.to_numeric(column)
+    if len(values.unique()) < 2:
+        standardize = False
+    elif standardize == "auto":
+        standardize = set(values.unique()) != {1, 0}
+
+    if not standardize:
+        return 0.0, 1.0
+    return float(values.mean()), float(values.std())
+
+
+def regressor_columns(extra_regressors, df):
+    """The standardized regressor columns, in registration order.
+
+    [fc] setup_dataframe validates and `df[name] = (df[name] - mu) / std`
+    applies the standardization fitted on the history -- at predict time too,
+    with the *fitted* mu and std rather than the future frame's own.
+    """
+    if not extra_regressors:
+        return np.empty((len(df), 0))
+
+    columns = []
+    for name, props in extra_regressors.items():
+        if name not in df:
+            raise ValueError(f"Regressor {name!r} missing from dataframe")
+        values = pd.to_numeric(df[name])
+        if values.isnull().any():
+            raise ValueError(f"Found NaN in column {name!r}")
+        columns.append((values.to_numpy(dtype=float) - props["mu"]) / props["std"])
+    return np.column_stack(columns)
+
+
 def validate_holidays_frame(holidays, validate_name):
     """Check and normalize the holidays frame. [fc] Prophet.validate_inputs.
 
@@ -776,7 +816,13 @@ class CustomProphet:
         self.country_holidays = None
         self._holiday_columns = 0
         self._holiday_prior_scales = []
-        self._holiday_features = None   # set by a fit; None means no holidays
+        # [fc] make_all_seasonality_features: holiday columns then regressor
+        # ones, appended after the seasonal block. Held together because the
+        # objective does not distinguish them -- only their construction does.
+        self._data_columns = None       # set by a fit; None means neither
+        self._data_column_count = 0
+        self._data_prior_scales = []
+        self._data_modes = []
         # name -> boolean array, for the conditioned components only. Set from
         # the frame each fit is given, and required again at predict time.
         self.condition_masks = {}
@@ -900,6 +946,30 @@ class CustomProphet:
                 frame = pd.concat([frame, pd.DataFrame({"holiday": missing, "ds": pd.NaT})],
                                   sort=False, ignore_index=True)
         return frame
+
+    def _data_design(self, dates, df, holidays_block=None):
+        """(columns, prior_scales, modes) for the holiday and regressor blocks.
+
+        One block because the objective treats them alike: both are columns of
+        X with their own entry in `sigmas` and their own mode. They differ only
+        in how they are built, which is why the two halves are assembled
+        separately and concatenated here.
+        """
+        if holidays_block is None:
+            holidays_block, holiday_scales = self._holiday_design(dates)
+        else:
+            holiday_scales = self._holiday_prior_scales
+        holidays_block = np.empty((len(df), 0)) if holidays_block is None else holidays_block
+
+        holiday_mode = self.holidays_mode or self.seasonality_mode
+        modes = [holiday_mode] * holidays_block.shape[1]
+        modes += [props["mode"] for props in self.extra_regressors.values()]
+
+        scales = list(holiday_scales) + [props["prior_scale"]
+                                         for props in self.extra_regressors.values()]
+        columns = np.concatenate([holidays_block, regressor_columns(self.extra_regressors, df)],
+                                 axis=1)
+        return columns, scales, modes
 
     def _holiday_design(self, dates):
         """(features, prior_scales) for `dates`, in the fit's column order."""
@@ -1031,7 +1101,7 @@ class CustomProphet:
         check_seasonality_supported(self.seasonalities)
         self.layout = ParameterLayout(self.n_changepoints,
                                       seasonality_columns(self.seasonalities),
-                                      self._holiday_columns)
+                                      self._data_column_count)
         # `sigmas` in Stan's data block: one entry per column of the design
         # matrix, so it is fixed by the registry at the same moment the layout
         # is. self.seasonality_prior_scale remains the model-wide default a
@@ -1039,14 +1109,13 @@ class CustomProphet:
         # [stan] `sigmas` spans every regressor column, seasonal then holiday,
         # in the same order as the design matrix.
         self.sigmas = np.concatenate([seasonality_prior_scales(self.seasonalities),
-                                      np.asarray(self._holiday_prior_scales, dtype=float)])
+                                      np.asarray(self._data_prior_scales, dtype=float)])
         # [stan] vector[K] s_m / s_a: which columns multiply the trend and
         # which add to it. Every holiday column shares holidays_mode.
-        holiday_mode = self.holidays_mode or self.seasonality_mode
         self.s_m = np.concatenate([
             seasonality_modes(self.seasonalities),
-            np.full(self._holiday_columns,
-                    1.0 if holiday_mode == "multiplicative" else 0.0)])
+            np.array([1.0 if mode == "multiplicative" else 0.0
+                      for mode in self._data_modes])])
         self.s_a = 1.0 - self.s_m
         self._multiplicative = bool(np.any(self.s_m))
 
@@ -1083,8 +1152,8 @@ class CustomProphet:
         # seasonal ones; `beta` and `sigmas` follow that order.
         x = seasonality_design_matrix(self.t_seasonality, self.seasonalities,
                                       self.condition_masks)
-        if self._holiday_columns:
-            x = np.concatenate([x, self._holiday_features], axis=1)
+        if self._data_column_count:
+            x = np.concatenate([x, self._data_columns], axis=1)
         return A, x
 
     def _minus_log_posterior(self, params: np.array, include_l1_prior: bool=True, design=None) -> float:
@@ -1264,13 +1333,24 @@ class CustomProphet:
         # after selection, since a conditioned component may have been added by
         # hand while an auto-selected one never carries a condition
         self.condition_masks = condition_masks(self.seasonalities, df)
-        self._holiday_features, self._holiday_prior_scales = self._holiday_design(self.ds)
-        self._holiday_columns = 0 if self._holiday_features is None else self._holiday_features.shape[1]
+        holidays_block, self._holiday_prior_scales = self._holiday_design(self.ds)
+        self._holiday_columns = 0 if holidays_block is None else holidays_block.shape[1]
         # recorded after the features are built, so predict presents the same
         # columns even for a holiday that never lands in the future frame
         if self.train_holiday_names is None and self._holiday_columns:
             self.train_holiday_names = list(holiday_features(
                 self.ds, self._holiday_frame_for(self.ds), self.holidays_prior_scale)[2])
+
+        # standardization is fitted here, on the history, and reapplied
+        # unchanged at predict time. [fc] initialize_scales.
+        for name, props in self.extra_regressors.items():
+            if name not in df:
+                raise ValueError(f"Regressor {name!r} missing from dataframe")
+            props["mu"], props["std"] = regressor_standardization(
+                df[name], props["standardize"])
+        self._data_columns, self._data_prior_scales, self._data_modes = \
+            self._data_design(self.ds, df, holidays_block)
+        self._data_column_count = self._data_columns.shape[1]
         self._build_layout()
         self._generate_change_points()
 
@@ -1381,13 +1461,24 @@ class CustomProphet:
         # after selection, since a conditioned component may have been added by
         # hand while an auto-selected one never carries a condition
         self.condition_masks = condition_masks(self.seasonalities, df)
-        self._holiday_features, self._holiday_prior_scales = self._holiday_design(self.ds)
-        self._holiday_columns = 0 if self._holiday_features is None else self._holiday_features.shape[1]
+        holidays_block, self._holiday_prior_scales = self._holiday_design(self.ds)
+        self._holiday_columns = 0 if holidays_block is None else holidays_block.shape[1]
         # recorded after the features are built, so predict presents the same
         # columns even for a holiday that never lands in the future frame
         if self.train_holiday_names is None and self._holiday_columns:
             self.train_holiday_names = list(holiday_features(
                 self.ds, self._holiday_frame_for(self.ds), self.holidays_prior_scale)[2])
+
+        # standardization is fitted here, on the history, and reapplied
+        # unchanged at predict time. [fc] initialize_scales.
+        for name, props in self.extra_regressors.items():
+            if name not in df:
+                raise ValueError(f"Regressor {name!r} missing from dataframe")
+            props["mu"], props["std"] = regressor_standardization(
+                df[name], props["standardize"])
+        self._data_columns, self._data_prior_scales, self._data_modes = \
+            self._data_design(self.ds, df, holidays_block)
+        self._data_column_count = self._data_columns.shape[1]
         self._build_layout()
         self._generate_change_points()
 
@@ -1433,7 +1524,7 @@ class CustomProphet:
             seasonality_periods=[props["period"] for props in self.seasonalities.values()],
             seasonality_conditions=condition_matrix(self.seasonalities,
                                                     self.condition_masks, self.T),
-            holiday_features=(self._holiday_features if self._holiday_columns
+            data_columns=(self._data_columns if self._data_column_count
                               else np.empty((self.T, 0))),
             verbose=verbose,
         )
@@ -1462,8 +1553,44 @@ class CustomProphet:
         return -1
         
         
-    def add_regressor(self, regressor: pd.Series) -> None:
-        pass
+    def add_regressor(self, name, prior_scale=None, standardize='auto', mode=None):
+        """Register an extra regressor. Returns self, so calls chain.
+
+        [fc] Prophet.add_regressor. The column is read from the dataframe
+        passed to fit() and predict() by `name`, rather than being handed over
+        as a series -- which is what the stub this replaces took (#33), and why
+        it could not have worked: a series carries no way to produce the future
+        values predict() needs.
+
+        `prior_scale` defaults to `holidays_prior_scale`, not to
+        `seasonality_prior_scale`. That looks like a mistake in the original
+        and is not: [fc] `prior_scale = float(self.holidays_prior_scale)`.
+
+        `standardize='auto'` standardizes unless the column is binary. The mean
+        and standard deviation are fitted on the history and reapplied
+        unchanged at predict time, so a future frame with a different spread
+        does not rescale the coefficient out from under itself.
+        """
+        if self.opt_params is not None:
+            raise RuntimeError(
+                "regressors must be added before fitting; this model has "
+                "already been fit. Add them to a fresh model.")
+
+        self.validate_column_name(name, check_regressors=False)
+
+        prior_scale = self.holidays_prior_scale if prior_scale is None else float(prior_scale)
+        mode = self.seasonality_mode if mode is None else mode
+        if prior_scale <= 0:
+            raise ValueError("Prior scale must be > 0")
+        if mode not in ('additive', 'multiplicative'):
+            raise ValueError("mode must be 'additive' or 'multiplicative'")
+
+        # mu and std are placeholders until a fit measures them on the history
+        self.extra_regressors[name] = {"prior_scale": prior_scale,
+                                       "standardize": standardize,
+                                       "mu": 0.0, "std": 1.0, "mode": mode}
+        return self
+
     
 
     def make_future_dataframe(self, periods, include_history=True):
@@ -1522,8 +1649,8 @@ class CustomProphet:
         # so the same column is required there as at fit time.
         x = seasonality_design_matrix(seasonal_time(future_df['ds']), self.seasonalities,
                                       condition_masks(self.seasonalities, future_df))
-        if self._holiday_columns:
-            x = np.concatenate([x, self._holiday_design(future_df['ds'])[0]], axis=1)
+        if self._data_column_count:
+            x = np.concatenate([x, self._data_design(future_df['ds'], future_df)[0]], axis=1)
         # [stan] trend .* (1 + X_sm * beta) + X_sa * beta. `trend` is already in
         # the series' own units, and the multiplier is unitless, so only the
         # additive part needs de-normalizing.
