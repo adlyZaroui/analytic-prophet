@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import CustomProphet, PREDICTOR_SPEC_FIELDS
+from customProphet import CustomProphet
 
 
 def driven(df):
@@ -57,20 +57,21 @@ def test_a_truthy_non_dict_means_default_settings(argument, expected):
 
 
 def test_an_unsupported_setting_is_rejected():
-    """Prophet writes `self.__class__(**spec)` and lets the constructor reject
-    what it does not know. This constructor takes no arguments (#52), so an
-    unknown key would become a silent no-op attribute instead."""
-    with pytest.raises(ValueError, match="unsupported setting"):
+    """[fc] the spec goes to the constructor, which rejects what it does not
+    know. Until #52 this ran against a hand-kept whitelist, which was a second
+    list of settable arguments maintained alongside the first."""
+    with pytest.raises(TypeError, match="unexpected keyword"):
         CustomProphet().add_regressor("driver",
-                                      regressor_predictor={"interval_width": 0.95})
+                                      regressor_predictor={"not_a_setting": 1})
 
 
-def test_the_spec_whitelist_is_settable_on_a_model():
-    """Every field in the whitelist must actually be an attribute the model
-    reads, or the spec would be accepted and ignored."""
-    model = CustomProphet()
-    for field in PREDICTOR_SPEC_FIELDS:
-        assert hasattr(model, field), field
+def test_a_setting_prophet_has_and_this_rejects_still_rejects():
+    """`mcmc_samples` is a real Prophet argument this implementation refuses.
+    The refusal has to reach the spec too, rather than being accepted there
+    and failing later inside the nested fit."""
+    with pytest.raises(NotImplementedError, match="MAP only"):
+        CustomProphet().add_regressor("driver",
+                                      regressor_predictor={"mcmc_samples": 100})
 
 
 # -- fitting the nested model -------------------------------------------

@@ -4,6 +4,12 @@ A reimplementation of [Facebook Prophet](https://github.com/facebook/prophet)'s 
 engine that replaces Stan's automatic differentiation with a hand-derived, closed-form
 gradient.
 
+**Status: early development.** The constructor takes Prophet's arguments, so
+`CustomProphet(seasonality_mode='multiplicative', changepoint_prior_scale=0.01)` works as
+it would there. Arguments for what is not implemented — `mcmc_samples`, `stan_backend`,
+`scaling='minmax'`, an explicit `changepoints` list — are accepted and then **rejected**,
+so a ported script fails where it is wrong rather than at the first `AttributeError`.
+
 **Status: early development.** The model is additive with linear growth, and selects
 yearly, weekly and daily seasonality from the history by Prophet's own rule. It is not a
 drop-in replacement for Prophet yet — see [Not implemented](#not-implemented).
@@ -457,6 +463,12 @@ Tracked, deliberate, and not yet closed:
 - **The Python path's convergence tolerances**
   ([#24](https://github.com/adlyZaroui/analytic-prophet/issues/24)) deviate from Stan's,
   because Stan's values make scipy stall on the split reformulation.
+- **Trend intervals are far too wide**
+  ([#58](https://github.com/adlyZaroui/analytic-prophet/issues/58)). The sampler that
+  widens `trend_lower`/`trend_upper` places new changepoints across the whole frame
+  rather than past the end of the history, so most of them land *inside* the fitted
+  history. Measured at ~170× Prophet's band. `yhat` is unaffected — it comes from the
+  fitted parameters, not these draws — but the intervals are not usable yet.
 - **Refitting is allowed** ([#41](https://github.com/adlyZaroui/analytic-prophet/issues/41)).
   `Prophet.fit` refuses a second call; this implementation accepts one. Neither the
   divergence nor the contract is currently written down, and it has already produced one
@@ -488,7 +500,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 410 tests
+pytest tests/                        # 441 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
