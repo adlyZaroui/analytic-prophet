@@ -125,7 +125,10 @@ caller supplies per row, in a `cap` column on every frame passed to `fit` and `p
 
 `gamma` keeps the curve continuous where the rate changes, and unlike the linear case it
 is defined by a recursion — `gamma[i]` depends on every earlier one — so its Jacobian is
-accumulated forward alongside it. `'flat'` is not implemented yet.
+accumulated forward alongside it.
+
+`model.growth = 'flat'` fits the constant `m`. `k` and `delta` stay parameters and keep
+their priors, but the likelihood never sees them, so both go to zero.
 
 **REGRESSORS** — `add_regressor(name, prior_scale=None, standardize='auto', mode=None)`
 names a column that the frames passed to `fit` and `predict` must both carry. Its
@@ -278,6 +281,30 @@ the posterior because it pays less in the Laplace prior, i.e. it finds a sparser
 Whether a better MAP point generalizes better is an empirical question requiring
 held-out evaluation, which has not been done. The planned prediction benchmark is where
 that gets settled.
+
+### Flat growth is an exact tie, and that is the point
+
+Every comparison above ends with our posterior a few nats ahead, attributed throughout
+to Prophet stopping short on the trend's flat directions — `k` against `delta`, which
+trade off almost freely.
+
+Flat growth removes those directions. `k` and `delta` remain parameters and keep their
+priors, but the likelihood never sees them, so nothing pulls against the shrinkage and
+both are pinned at zero. What is left is well conditioned.
+
+The result is an **exact tie**, at every size measured:
+
+| T | Prophet `lp__` | ours | difference |
+|---|---|---|---|
+| 300 | 720.336510 | 720.336510 | 0 |
+| 1000 | 2698.194700 | 2698.194700 | 0 |
+| 2905 | 7494.870800 | 7494.870800 | 0 |
+
+Not "ours is no worse" — identical to Stan's full printed precision, with `beta` agreeing
+to ~1e-7 and `m` to 1e-5. This is the strongest evidence the project has that the margin
+under linear growth is optimizer behaviour on a flat objective, not a difference in what
+is being fitted. Take the flat directions away and both implementations land on the same
+point.
 
 ### One claim that was withdrawn
 
@@ -441,7 +468,6 @@ Tracked, deliberate, and not yet closed:
 
 ## Not implemented
 
-- Flat growth (`growth='flat'`) — linear and logistic only
 - MCMC sampling — MAP only
 
 Tracked in [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16).
@@ -455,7 +481,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 375 tests
+pytest tests/                        # 390 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
@@ -488,6 +514,7 @@ numbers rather than errors.
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
 | | [#33](https://github.com/adlyZaroui/analytic-prophet/issues/33), [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 10 | `add_regressor` accepted a `pd.Series` and discarded it, so a caller's regressor was simply absent with no error. The signature could not have worked either: a series carries the history's values and no way to produce the future ones `predict` needs |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 9 | Country holidays, via the `holidays` package rather than by importing anything from Prophet. Frames and name sets checked against Prophet's own helpers for five countries, since the underlying data moves between releases and asserting specific dates would test the package rather than this code |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 13 | Flat growth, and with it the first exact agreement with Prophet — identical `lp__` at every size, which is what confirms the margin elsewhere is optimizer behaviour rather than a modelling difference |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 12 | Logistic growth. The hardest derivative in the project so far: `gamma` is a recursion, so `d(gamma)/d(k, m, delta)` is accumulated forward rather than written down, and the trend's chain rule carries that S×(2+S) Jacobian through `inv_logit` |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 11 | Multiplicative mode. The first change to the gradient since `sigma_obs` became free: every trend block picks up the `(1 + X_sm·β)` factor and `β`'s picks up the trend. The all-additive case keeps its own branch — not for speed, but because `y − g − s` and `y − (g·1 + s)` differ in the last bits, which was enough to move the scipy path to a point 2.96 nats worse |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 8 | Holidays. The objective and gradient needed no change — a holiday column is a column of `X` — so the work was alignment: columns sorted by name rather than frame order, all-zero columns kept for occurrences outside a frame, and the fit's holiday set reconciled with predict's |

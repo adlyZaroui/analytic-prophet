@@ -208,9 +208,11 @@ def test_a_cap_below_the_floor_is_rejected(peyton_manning_df,
 
 def test_an_unsupported_growth_mode_says_so(peyton_manning_df,
                                             compiled_optimizer_module):
+    """'flat' was on this list until #16 task 13; anything outside the three
+    Stan knows about still is."""
     model = CustomProphet()
-    model.growth = "flat"
-    with pytest.raises(ValueError, match="task 13"):
+    model.growth = "quadratic"
+    with pytest.raises(ValueError, match="flat, linear, logistic"):
         model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                       lib_path=compiled_optimizer_module)
 

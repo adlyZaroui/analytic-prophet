@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "legacy"))
 from customProphet import (CustomProphet, N_CHANGE_POINTS, n_yearly,  # noqa: E402
                            SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE, CPP_MODULE_NAME,
                            load_cpp_module, seasonal_time, seasonality,
-                           condition_matrix, YEARLY_PERIOD)
+                           condition_matrix, TREND_INDICATORS, YEARLY_PERIOD)
 
 # The Prophet-comparison plumbing lives with the benchmarks, which is also
 # where it is exercised interactively. The agreement tests reuse it rather
@@ -214,6 +214,7 @@ def cpp_mlp_and_gradient(cpp_module):
             s_m=model.s_m,
             cap_scaled=(model.cap_scaled if model.growth == 'logistic'
                         else np.empty(0)),
+            trend_indicator=TREND_INDICATORS[model.growth],
             tau=model.tau,
             # from the model's registry, so a test that registers a second
             # seasonality gets the design matrix it asked for
