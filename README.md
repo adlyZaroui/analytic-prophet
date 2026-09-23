@@ -311,6 +311,53 @@ The two agree to **1.5e-8** relative on the full series.
 
 ---
 
+## Where this deviates on purpose
+
+One deviation is a decision rather than an outstanding gap, and it is recorded here
+because it was implemented, measured and then reverted.
+
+**The Fourier basis is evaluated in a different order from Prophet's.** This
+implementation folds the frequency into one constant, `(2π/period) · t·(i+1)`; Prophet
+computes `2π·t` and scales it by `(i+1)/period`. The two are the same function in exact
+arithmetic. In floating point they differ by up to **7e-12**, because `t` is days since
+the 1970 epoch, so the angles reach ~15000 radians where one ULP is ~1e-12 in `sin`/`cos`.
+
+Matching Prophet's order was tried, and it does make the feature matrices bit-identical
+at every period tested. It was reverted for two measured reasons.
+
+*It buys no accuracy.* Against exact rational arithmetic — a 50-digit π and
+`fractions.Fraction`, 27,000 samples over the `t` range of the Peyton Manning series —
+neither order is systematically closer to the true angle:
+
+| period | order | this implementation | Prophet | closer |
+|---|---|---|---|---|
+| 7 | 1 | 0.336 ulp | 0.740 ulp | this |
+| 7 | 3 | 0.377 | 0.539 | this |
+| 7 | 10 | 0.415 | 0.337 | Prophet |
+| 30.5 | 1 | 0.707 | 0.346 | Prophet |
+| 30.5 | 3 | 0.553 | 0.391 | Prophet |
+| 30.5 | 10 | 0.743 | 0.817 | this |
+| 365.25 | 1 | 0.297 | 0.419 | this |
+| 365.25 | 3 | 0.412 | 0.348 | Prophet |
+| 365.25 | 10 | 0.395 | 0.540 | this |
+| **mean** | | **0.470** | **0.498** | — |
+
+Five configurations to four, means well inside one ULP of each other. The difference is
+noise, not an advantage either way.
+
+*It perturbs every fit.* A 7e-12 change in the design matrix moves where L-BFGS stops,
+because the stopping rule is relative objective progress on an objective with flat
+directions. Measured: parameters move by up to 1.7e-3 and `yhat` by 4e-5 relative —
+immaterial against the 1% the project is held to, but not nothing, and paid on every fit
+for a cosmetic match.
+
+So the basis agrees with Prophet's to **1e-10** rather than exactly, which is eight
+orders of magnitude below anything the model resolves, and the fits stay where they are.
+`tests/test_conditional_seasonalities.py` asserts the tolerance and explains it at the
+point of the check.
+
+---
+
 ## Known differences from Prophet
 
 Tracked, deliberate, and not yet closed:
@@ -394,7 +441,7 @@ numbers rather than errors.
 | | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
-| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 7 | Conditional seasonalities. The feature matrix now reproduces Prophet's by equality rather than to a tolerance: matching its order of operations in the Fourier basis — `(i+1)/period · (2π·t)` rather than a folded `2π/period` — closed a 7e-12 gap that came from angles running to ~15000 radians |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 7 | Conditional seasonalities: a named boolean column zeroes a component's features where it is False. The feature matrix reproduces Prophet's to 1e-10 — see [Where this deviates on purpose](#where-this-deviates-on-purpose) for why not exactly |
 | | [#43](https://github.com/adlyZaroui/analytic-prophet/issues/43) | Eigen answers a size mismatch with an assertion, which calls `abort()`: the interpreter died with no traceback and, in a test run, no failing test name. Four such mismatches aborted and eleven more returned plausible wrong numbers. Every dimension and scale is now checked in one place, through both entry points |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 6 | The registry built by tasks 2–5 had no public entry point: fitting anything other than what the auto rule selects meant assigning to `model.seasonalities` directly. `add_seasonality` added, with Prophet's validation checked branch for branch |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 5 | `beta`'s prior used one scalar for every column, where Stan has `vector[K] sigmas`. Verified per-column against Stan's own `sigmas` and `log_prob`, and the shrinkage checked against the ridge algebra rather than merely being nonzero |

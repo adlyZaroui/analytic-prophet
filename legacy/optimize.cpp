@@ -18,16 +18,16 @@ namespace py = pybind11;
 // Must stay in lockstep with fourier_components() in customProphet.py --
 // tests/test_prophet_agreement.py compares both against Prophet's own matrix.
 Eigen::MatrixXd fourier_components(const Eigen::VectorXd& t_days, double period, int n) {
-    // Operation order is Prophet's, not merely algebraically equal to it --
-    // see the note in customProphet.fourier_components. Folding 2*pi/period
-    // into one constant costs up to 7e-12 on angles of ~15000 radians.
-    const Eigen::VectorXd x_T = t_days * (M_PI * 2.0);
+    // `2*pi/period` folded into one constant, matching
+    // customProphet.fourier_components rather than Prophet's operation order.
+    // Deliberate -- see README, "Where this deviates on purpose".
+    Eigen::VectorXd orders = Eigen::VectorXd::LinSpaced(n, 1, n) * (2 * M_PI / period);
+    Eigen::MatrixXd angles = t_days * orders.transpose();
 
     Eigen::MatrixXd result(t_days.size(), 2 * n);
     for (int i = 0; i < n; ++i) {
-        const Eigen::VectorXd angles = x_T * ((i + 1.0) / period);
-        result.col(2 * i) = angles.array().sin();
-        result.col(2 * i + 1) = angles.array().cos();
+        result.col(2 * i) = angles.col(i).array().sin();
+        result.col(2 * i + 1) = angles.col(i).array().cos();
     }
     return result;
 }
