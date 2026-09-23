@@ -1,17 +1,36 @@
-# Dependencies for running the legacy/ reference implementation and its
-# tests. Temporary -- superseded once pyproject.toml declares the real
-# package's dependencies after the C++ consolidation.
+# Dependencies for running the reference implementation in legacy/ and its
+# tests. Temporary: superseded once a pyproject.toml declares the package's
+# real dependencies.
+
+# Required at runtime.
 numpy
 pandas
 scipy
+
+# Required to run the test suite.
 pytest
 
-# Country holidays (#16 task 9). Imported lazily, and only by
-# add_country_holidays -- trend, seasonality and a hand-written holidays frame
-# all work without it, so a user who needs none of them needs none of this.
+# Country holidays (#16 task 9), imported lazily and only by
+# add_country_holidays. Trend, seasonality and a hand-written holidays frame
+# all work without it, so a user who needs none of those needs none of this.
 holidays
 
 # Build-time dependency of the C++ core (legacy/optimize.cpp). Headers only --
-# nothing imports pybind11 at runtime, but the extension can't be compiled
-# without it. Eigen and liblbfgs still come from the system.
+# nothing imports pybind11 at runtime, but the extension cannot be compiled
+# without it.
 pybind11
+
+# NOT listed, deliberately: `prophet` itself.
+#
+# Every comparison against the original needs it, and it pulls cmdstanpy plus a
+# compiled Stan model -- a toolchain far heavier than anything else here. The
+# suite is built to do without: tests/conftest.py's prophet_comparison fixture
+# skips when it is absent, and benchmark/_common.py prints an install hint
+# rather than failing. Install it to run the agreement tests and benchmarks:
+#
+#     pip install prophet
+#
+# The C++ core additionally needs Eigen and LBFGSpp headers from the system --
+# `brew install eigen lbfgspp` or equivalent. Both are header-only; nothing is
+# linked. (liblbfgs was a dependency until #23 replaced it with LBFGSpp, and is
+# no longer needed.)
