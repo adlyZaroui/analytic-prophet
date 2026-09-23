@@ -137,9 +137,25 @@ def seasonality(period, fourier_order, **overrides):
             **SEASONALITY_DEFAULTS, **overrides}
 
 
+BUILT_IN_NAMES = ("daily", "weekly", "yearly")
+
+# Column names a component may not take, because predict() and the Stan data
+# already use them. [fc] validate_column_name, which also derives the _lower
+# and _upper variants -- those are uncertainty-interval columns in the output
+# frame, so a component named after one would collide there rather than here.
+_RESERVED_STEMS = ("trend", "additive_terms", "daily", "weekly", "yearly",
+                   "holidays", "zeros", "extra_regressors_additive", "yhat",
+                   "extra_regressors_multiplicative", "multiplicative_terms")
+RESERVED_COLUMN_NAMES = frozenset(
+    _RESERVED_STEMS
+    + tuple(stem + "_lower" for stem in _RESERVED_STEMS)
+    + tuple(stem + "_upper" for stem in _RESERVED_STEMS)
+    + ("ds", "y", "cap", "floor", "y_scaled", "cap_scaled"))
+
+
 # Prophet's built-in seasonalities, as period and default Fourier order.
-# [fc] set_auto_seasonalities. Only yearly is registered by default here;
-# choosing between them from the data is task 3 of #16.
+# [fc] set_auto_seasonalities. Which of them a model fits is decided from the
+# history -- see AUTO_SEASONALITY_RULES.
 BUILT_IN_SEASONALITIES = {
     "yearly": seasonality(365.25, 10),
     "weekly": seasonality(7.0, 3),
@@ -474,12 +490,20 @@ class CustomProphet:
         # component of the same name suppresses its built-in.
         self.seasonalities = {}
         self._auto_registered = set()
+        # [fc] Prophet.__init__. Empty until tasks 8 and 10 of #16 fill them;
+        # carried now so validate_column_name is the same function it will be
+        # then, rather than growing checks as each feature lands.
+        self.extra_regressors = {}
+        self.holidays = None
+        # [fc] Prophet.__init__ seasonality_mode='additive'. The per-component
+        # `mode` falls back to this when add_seasonality is given none.
+        self.seasonality_mode = 'additive'
+        self.seasonality_prior_scale = SIGMA
         self.layout = DEFAULT_LAYOUT
         self.change_points = None
         self.changepoint_range = CHANGEPOINT_RANGE
         
         self.tau = TAU # sparse prior on rate adjustments delta
-        self.sigma = SIGMA # default prior scale on beta, per seasonality
         self.sigmas = seasonality_prior_scales({})  # per column; set by _build_layout
         self.sigma_obs = SIGMA_OBS_INIT # estimated by fit(); fit_cpp() keeps this fixed
 
@@ -504,6 +528,82 @@ class CustomProphet:
         self.y_absmax = np.max(np.abs(self.y))
         self.normalized_y = np.array(self.y / self.y_absmax)
     
+    def validate_column_name(self, name, check_holidays=True,
+                             check_seasonalities=True, check_regressors=True) -> None:
+        """Reject a component name that would collide with something else.
+
+        [fc] Prophet.validate_column_name. The reserved list is about the
+        *output* frame as much as the model: `predict()` emits a column per
+        component, so a seasonality called `trend` or `yhat_lower` would
+        overwrite one of its own results.
+        """
+        if '_delim_' in name:
+            raise ValueError('Name cannot contain "_delim_"')
+        if name in RESERVED_COLUMN_NAMES:
+            raise ValueError(f"Name {name!r} is reserved.")
+        if check_holidays and self.holidays is not None and \
+                name in set(self.holidays['holiday'].unique()):
+            raise ValueError(f"Name {name!r} already used for a holiday.")
+        if check_seasonalities and name in self.seasonalities:
+            raise ValueError(f"Name {name!r} already used for a seasonality.")
+        if check_regressors and name in self.extra_regressors:
+            raise ValueError(f"Name {name!r} already used for an added regressor.")
+
+    def add_seasonality(self, name, period, fourier_order, prior_scale=None,
+                        mode=None, condition_name=None):
+        """Register a seasonal component. Returns self, so calls chain.
+
+        [fc] Prophet.add_seasonality. This is the public way into the registry
+        that tasks 2-5 built: before it, the only way to fit anything other
+        than what the auto rule selects was to assign to `self.seasonalities`.
+
+        A component registered here suppresses the built-in of the same name,
+        which is how `add_seasonality('weekly', 7, 10)` asks for a
+        higher-resolution weekly term than the default order 3 --
+        _set_auto_seasonalities leaves a name it finds already registered
+        alone.
+
+        Two arguments are accepted, validated, and then refused rather than
+        silently dropped: `mode='multiplicative'` needs the s_a/s_m split of
+        #16 task 11, and `condition_name` needs task 7. Prophet accepts both.
+        Raising here instead of at fit time is deliberate -- the call site is
+        where the mistake is, and a NotImplementedError three steps later is
+        worth much less.
+        """
+        if self.opt_params is not None:
+            raise RuntimeError(
+                "seasonality must be added before fitting; this model has "
+                "already been fit. Add it to a fresh model, or register it "
+                "before calling fit()/fit_cpp().")
+
+        # Built-in names are exempt: overwriting `weekly` with a different
+        # order is a supported thing to want. [fc] passes
+        # check_seasonalities=False here, so a custom name may also be
+        # re-registered -- the check is for collisions with holidays and
+        # regressors, not for re-registration.
+        if name not in BUILT_IN_NAMES:
+            self.validate_column_name(name, check_seasonalities=False)
+
+        scale = self.seasonality_prior_scale if prior_scale is None else float(prior_scale)
+        if scale <= 0:
+            raise ValueError("Prior scale must be > 0")
+        if int(fourier_order) <= 0:
+            raise ValueError("Fourier Order must be > 0")
+
+        mode = self.seasonality_mode if mode is None else mode
+        if mode not in ('additive', 'multiplicative'):
+            raise ValueError('mode must be "additive" or "multiplicative"')
+        if condition_name is not None:
+            self.validate_column_name(condition_name)
+
+        entry = seasonality(period, fourier_order, prior_scale=scale, mode=mode,
+                            condition_name=condition_name)
+        # the same check a fit applies, brought forward to the call site
+        check_seasonality_supported({name: entry})
+
+        self.seasonalities[name] = entry
+        return self
+
     def _set_auto_seasonalities(self) -> None:
         """Register the built-in seasonalities the history supports.
 
@@ -530,7 +630,9 @@ class CustomProphet:
             if name == "yearly" and order > 0 and disable:
                 logger.warning(UNDER_IDENTIFIED_WARNING)
             if order > 0:
-                self.seasonalities[name] = seasonality(period, order)
+                self.seasonalities[name] = seasonality(
+                    period, order, prior_scale=self.seasonality_prior_scale,
+                    mode=self.seasonality_mode)
                 self._auto_registered.add(name)
 
     def _build_layout(self) -> None:
@@ -546,8 +648,8 @@ class CustomProphet:
                                       seasonality_columns(self.seasonalities))
         # `sigmas` in Stan's data block: one entry per column of the design
         # matrix, so it is fixed by the registry at the same moment the layout
-        # is. self.sigma remains the model-wide default a component inherits
-        # when it does not carry its own.
+        # is. self.seasonality_prior_scale remains the model-wide default a
+        # component inherits when it does not carry its own.
         self.sigmas = seasonality_prior_scales(self.seasonalities)
 
     def _generate_change_points(self) -> None:
