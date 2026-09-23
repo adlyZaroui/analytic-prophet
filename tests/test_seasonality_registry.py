@@ -133,6 +133,34 @@ def test_empty_registry_gives_a_zero_width_block(prepared_model):
     assert x.shape == (len(prepared_model.t_seasonality), 0)
 
 
+def test_a_model_with_no_seasonality_fits(peyton_manning_df, compiled_optimizer_module):
+    """K = 0 is a model: trend plus noise.
+
+    It used to fail outright -- the C++ length guard read
+    `params_size < 2 + S + 2`, assuming at least one seasonality column. Stan
+    declares K as `int<lower=1>` and Prophet pads X with a zeros column to
+    satisfy it; that column's beta is unidentified and sits at its prior mean,
+    so allowing K = 0 gives the same fit with one fewer parameter.
+
+    Found via a nested regressor model (#16 task 14) on 400 days with weekly
+    turned off, which puts yearly below its threshold too.
+    """
+    model = CustomProphet()
+    model.yearly_seasonality = model.weekly_seasonality = model.daily_seasonality = False
+    model.fit_cpp(peyton_manning_df.iloc[:400].reset_index(drop=True),
+                  lib_path=compiled_optimizer_module)
+
+    assert model.seasonalities == {}
+    assert model.layout.n_regressor_columns == 0
+    assert model.opt_params.shape == (model.layout.size,)
+    assert np.all(np.isfinite(model.opt_params))
+
+    forecast = model.predict(model.make_future_dataframe(periods=30))
+    assert np.all(np.isfinite(forecast["yhat"].values))
+    # nothing but trend: the seasonality column is identically zero
+    np.testing.assert_array_equal(forecast["seasonality"].values, 0.0)
+
+
 def test_layout_follows_the_registered_seasonalities(peyton_manning_df,
                                                      compiled_optimizer_module):
     model = CustomProphet()
