@@ -421,6 +421,17 @@ def country_holidays_frame(years, country):
     return frame
 
 
+# Settings a nested regressor model may be given. Deliberately a whitelist:
+# Prophet writes `self.__class__(**spec)` and lets the constructor reject what
+# it does not know, but this constructor takes no arguments (#52), so an
+# unknown key would otherwise become a silent no-op attribute.
+PREDICTOR_SPEC_FIELDS = frozenset({
+    "growth", "n_changepoints", "changepoint_range", "yearly_seasonality",
+    "weekly_seasonality", "daily_seasonality", "seasonality_mode",
+    "seasonality_prior_scale", "holidays_prior_scale", "tau",
+})
+
+
 def regressor_standardization(column, standardize):
     """(mu, std) for one regressor. [fc] initialize_scales.
 
@@ -931,6 +942,14 @@ class CustomProphet:
         # the future frame still gets its (all-zero) column and one that only
         # appears later is dropped.
         self.train_holiday_names = None
+        # how this model was fitted, so a nested regressor model is fitted the
+        # same way rather than falling back to the slow path
+        self._fitted_with_cpp = False
+        self._fit_lib_path = None
+        self._regressor_name = None      # set on a nested model, [fc] marker
+        # raw regressor values from the last fit, so predict() can fill history
+        # rows the caller left out. [fc] reads them back off self.history.
+        self._regressor_history = None
         # [fc] Prophet.country_holidays: one country at a time, resolved into
         # dated holidays for whichever years a frame covers.
         self.country_holidays = None
@@ -1680,6 +1699,8 @@ class CustomProphet:
         self.opt = opt_params
         self.opt_params = split_to_canonical(opt_params.x, self.layout.n_changepoints)
         self.sigma_obs = self.opt_params[self.layout.sigma_obs_idx]
+        self._fitted_with_cpp = False
+        self._fit_regressor_models(df)
         self.loss_over_iterations = loss_over_iterations
     
     def fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None, verbose: bool=False) -> Tuple[float, float, np.array, np.array]:
@@ -1797,12 +1818,16 @@ class CustomProphet:
         # which fit method produced opt_params.
         self.opt_params = cpp_to_canonical(result.params, self.layout)
         self.sigma_obs = self.opt_params[self.layout.sigma_obs_idx]
+        self._fitted_with_cpp = True
+        self._fit_lib_path = lib_path
+        self._fit_regressor_models(df)
 
         # Return whatever values are necessary
         return -1
         
         
-    def add_regressor(self, name, prior_scale=None, standardize='auto', mode=None):
+    def add_regressor(self, name, prior_scale=None, standardize='auto', mode=None,
+                      regressor_predictor=None):
         """Register an extra regressor. Returns self, so calls chain.
 
         [fc] Prophet.add_regressor. The column is read from the dataframe
@@ -1834,11 +1859,101 @@ class CustomProphet:
         if mode not in ('additive', 'multiplicative'):
             raise ValueError("mode must be 'additive' or 'multiplicative'")
 
+        # [fc] a truthy non-dict means "default settings"; a dict is the
+        # nested model's configuration.
+        predictor_spec = None
+        if regressor_predictor:
+            predictor_spec = dict(regressor_predictor) if isinstance(regressor_predictor, dict) else {}
+            unknown = set(predictor_spec) - PREDICTOR_SPEC_FIELDS
+            if unknown:
+                raise ValueError(
+                    f"regressor_predictor got unsupported setting(s) "
+                    f"{sorted(unknown)}; supported: {sorted(PREDICTOR_SPEC_FIELDS)}")
+
         # mu and std are placeholders until a fit measures them on the history
         self.extra_regressors[name] = {"prior_scale": prior_scale,
                                        "standardize": standardize,
-                                       "mu": 0.0, "std": 1.0, "mode": mode}
+                                       "mu": 0.0, "std": 1.0, "mode": mode,
+                                       "predictor_spec": predictor_spec,
+                                       "predictor": None}
         return self
+
+    def _fit_regressor_models(self, df) -> None:
+        """Fit a nested model per regressor that asked for one.
+
+        [fc] _fit_regressor_models. The nested model is fitted on the raw
+        regressor values, not the standardized ones -- it forecasts the column
+        the user supplies, and this model standardizes whatever comes back.
+
+        It is fitted the same way this model was, compiled path included, so a
+        regressor predictor does not quietly fall back to the slow path.
+        """
+        if self.extra_regressors:
+            self._regressor_history = df[["ds", *self.extra_regressors]].copy()
+            self._regressor_history["ds"] = pd.to_datetime(self._regressor_history["ds"])
+
+        for name, props in self.extra_regressors.items():
+            if props.get("predictor_spec") is None:
+                continue
+
+            regressor_df = df[["ds", name]].copy()
+            regressor_df = regressor_df[regressor_df[name].notnull()]
+            if regressor_df.shape[0] < 2:
+                raise ValueError(
+                    f"Not enough data to fit regressor model for {name!r}.")
+            regressor_df = regressor_df.rename(columns={name: "y"})
+
+            predictor = CustomProphet()
+            for field, value in props["predictor_spec"].items():
+                setattr(predictor, field, value)
+            predictor._regressor_name = name          # marker, [fc]
+
+            logger.info("Fitting regressor model %r with %d observations",
+                        name, regressor_df.shape[0])
+            if self._fitted_with_cpp:
+                predictor.fit_cpp(regressor_df, lib_path=self._fit_lib_path)
+            else:
+                predictor.fit(regressor_df)
+            props["predictor"] = predictor
+
+    def _ensure_regressor_values(self, future_df):
+        """Fill future regressor values from their nested models.
+
+        [fc] _ensure_regressor_values. "Future" is any row past the end of the
+        history, which is where the caller has nothing to supply. Rows inside
+        the history keep whatever they were given.
+
+        Returns a copy: predict() must not write into the frame it is handed.
+        """
+        if not any(props.get("predictor") is not None
+                   for props in self.extra_regressors.values()):
+            return future_df
+
+        filled = future_df.copy()
+        last_history_date = pd.to_datetime(self.ds).max()
+        is_future = pd.to_datetime(filled["ds"]) > last_history_date
+
+        for name, props in self.extra_regressors.items():
+            predictor = props.get("predictor")
+            if predictor is None:
+                continue
+            if name not in filled:
+                filled[name] = np.nan
+
+            # [fc] history rows the caller left out come back from the fit's
+            # own values, not from the nested model -- the model is there to
+            # forecast, not to re-explain what was already observed.
+            missing_history = (~is_future) & filled[name].isna()
+            if missing_history.any() and self._regressor_history is not None:
+                lookup = self._regressor_history.set_index("ds")[name]
+                filled.loc[missing_history, name] = lookup.reindex(
+                    pd.to_datetime(filled.loc[missing_history, "ds"])).to_numpy()
+
+            if is_future.any():
+                forecast = predictor.predict(
+                    pd.DataFrame({"ds": filled.loc[is_future, "ds"].to_numpy()}))
+                filled.loc[is_future, name] = forecast["yhat"].to_numpy()
+        return filled
 
     
 
@@ -1883,6 +1998,8 @@ class CustomProphet:
         return future_df, quantiles
     
     def predict(self, future_df):
+        future_df = self._ensure_regressor_values(future_df)
+
         # Extract optimal parameters
         k, m, delta, _sigma_obs, beta = extract_params(self.opt_params, self.layout)
         

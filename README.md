@@ -136,6 +136,13 @@ names a column that the frames passed to `fit` and `predict` must both carry. It
 `standardize='auto'` standardizes unless the column is binary, with the mean and spread
 fitted on the history and reapplied unchanged at predict time.
 
+`regressor_predictor=True` fits a second model on the regressor itself and uses it to
+supply the future values, so `predict` needs only `ds`. It fills rows past the end of the
+history only — rows inside it come back from the fit's own values, and rows the caller
+supplied are left alone. Its uncertainty is **not** propagated: Prophet widens `yhat`'s
+interval with draws from the nested model, and there is no sampling path here, so the
+forecast enters as a point estimate.
+
 **SELECTED** — `K` is not a constant. Which seasonal components a model fits is decided
 from the history, exactly as Prophet does it:
 
@@ -481,7 +488,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 390 tests
+pytest tests/                        # 410 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
@@ -512,6 +519,7 @@ numbers rather than errors.
 | | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14 | A model with every seasonality disabled could not fit: the C++ length guard read `params_size < 2 + S + 2`, assuming at least one seasonality column. `K = 0` is trend plus noise, and a model. Found through a nested regressor model on 400 days with weekly turned off, which puts yearly below its threshold too |
 | | [#33](https://github.com/adlyZaroui/analytic-prophet/issues/33), [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 10 | `add_regressor` accepted a `pd.Series` and discarded it, so a caller's regressor was simply absent with no error. The signature could not have worked either: a series carries the history's values and no way to produce the future ones `predict` needs |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 9 | Country holidays, via the `holidays` package rather than by importing anything from Prophet. Frames and name sets checked against Prophet's own helpers for five countries, since the underlying data moves between releases and asserting specific dates would test the package rather than this code |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 13 | Flat growth, and with it the first exact agreement with Prophet — identical `lp__` at every size, which is what confirms the margin elsewhere is optimizer behaviour rather than a modelling difference |

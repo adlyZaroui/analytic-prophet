@@ -693,8 +693,17 @@ OptimizeResult optimize(Eigen::VectorXd params,
         const int S = static_cast<int>(change_points.size());
         const int K = params_size - 3 - S;
 
-        if (params_size < 2 + S + 2) {
-            throw std::invalid_argument("params is too short for the given number of change points");
+        // 2 + S + K + 1 with K >= 0: a model with every seasonality disabled
+        // is trend plus noise, which is a model. Stan declares K as
+        // `int<lower=1>` and Prophet pads X with a zeros column to satisfy it;
+        // that column's beta is unidentified and sits at its prior mean, so it
+        // changes nothing but the parameter count. Allowing K = 0 gives the
+        // same fit without it.
+        if (params_size < 2 + S + 1) {
+            throw std::invalid_argument(
+                "params has length " + std::to_string(params_size) + ", too short "
+                "for " + std::to_string(S) + " change points; it needs at least "
+                + std::to_string(2 + S + 1) + " (k, m, delta, zeta)");
         }
 
         // Built here rather than in the solver loop (#28), which also means
