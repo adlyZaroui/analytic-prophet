@@ -421,17 +421,6 @@ def country_holidays_frame(years, country):
     return frame
 
 
-# Settings a nested regressor model may be given. Deliberately a whitelist:
-# Prophet writes `self.__class__(**spec)` and lets the constructor reject what
-# it does not know, but this constructor takes no arguments (#52), so an
-# unknown key would otherwise become a silent no-op attribute.
-PREDICTOR_SPEC_FIELDS = frozenset({
-    "growth", "n_changepoints", "changepoint_range", "yearly_seasonality",
-    "weekly_seasonality", "daily_seasonality", "seasonality_mode",
-    "seasonality_prior_scale", "holidays_prior_scale", "tau",
-})
-
-
 def regressor_standardization(column, standardize):
     """(mu, std) for one regressor. [fc] initialize_scales.
 
@@ -898,87 +887,79 @@ def compute_trend(k, m, delta, change_points, t_scaled, y_absmax,
     return trend if floor is None else trend + floor
 
 class CustomProphet:
-    
-    def __init__(self):
+
+    def __init__(self, growth='linear', changepoints=None, n_changepoints=N_CHANGE_POINTS,
+                 changepoint_range=CHANGEPOINT_RANGE, yearly_seasonality='auto',
+                 weekly_seasonality='auto', daily_seasonality='auto', holidays=None,
+                 seasonality_mode='additive', seasonality_prior_scale=SIGMA,
+                 holidays_prior_scale=SIGMA, changepoint_prior_scale=TAU,
+                 mcmc_samples=0, interval_width=0.8, uncertainty_samples=1000,
+                 stan_backend=None, scaling='absmax', holidays_mode=None):
+        """Argument for argument, [fc] Prophet.__init__.
+
+        Arguments for things this implementation does not do are accepted and
+        then *rejected*, rather than being absent: a script ported from Prophet
+        should fail where it is actually wrong, not at the first AttributeError
+        for something that would have been ignored anyway.
+
+        `changepoint_prior_scale` is Prophet's name for what the Stan model and
+        every derivation in this repository call `tau`. The argument takes
+        Prophet's name and the attribute keeps Stan's.
+        """
         self.rng = np.random.default_rng()
-        
+
         self.t_scaled = None
         self.y = None
         self.normalized_y = None
         self.y_absmax = None
         self.ds = None
-        
+
         self.T = None
-        # [fc] Prophet.__init__ growth='linear'. 'logistic' needs a `cap`
-        # column on every frame passed to fit() and predict().
-        self.growth = 'linear'
+        self.growth = growth
         self.cap_scaled = None
         self.floor = None
-        self.n_changepoints = N_CHANGE_POINTS
+        self.n_changepoints = n_changepoints
+        self.change_points = None
+        self.changepoint_range = changepoint_range
 
-        # [fc] Prophet.__init__. 'auto' lets the history decide; True forces the
-        # built-in default order, False leaves the component out, an int sets
-        # the order directly.
-        self.yearly_seasonality = 'auto'
-        self.weekly_seasonality = 'auto'
-        self.daily_seasonality = 'auto'
-        # Registered seasonal components, name -> entry. Empty until a fit
-        # calls _set_auto_seasonalities, which is what Prophet does: the
-        # built-ins are added to whatever was registered by hand, and a custom
-        # component of the same name suppresses its built-in.
+        self.yearly_seasonality = yearly_seasonality
+        self.weekly_seasonality = weekly_seasonality
+        self.daily_seasonality = daily_seasonality
         self.seasonalities = {}
         self._auto_registered = set()
-        # [fc] Prophet.__init__. Empty until tasks 8 and 10 of #16 fill them;
-        # carried now so validate_column_name is the same function it will be
-        # then, rather than growing checks as each feature lands.
+
         self.extra_regressors = {}
-        # [fc] Prophet.__init__ holidays=None, holidays_prior_scale=10.0,
-        # holidays_mode=None (falling back to seasonality_mode).
         self.holidays = None
-        self.holidays_prior_scale = 10.0
-        self.holidays_mode = None
-        # The holiday names the last fit saw. [fc] train_holiday_names: predict
-        # must present the same columns the fit did, so a holiday absent from
-        # the future frame still gets its (all-zero) column and one that only
-        # appears later is dropped.
+        self.holidays_prior_scale = holidays_prior_scale
+        self.holidays_mode = holidays_mode
         self.train_holiday_names = None
-        # how this model was fitted, so a nested regressor model is fitted the
-        # same way rather than falling back to the slow path
+        self.country_holidays = None
         self._fitted_with_cpp = False
         self._fit_lib_path = None
-        self._regressor_name = None      # set on a nested model, [fc] marker
-        # raw regressor values from the last fit, so predict() can fill history
-        # rows the caller left out. [fc] reads them back off self.history.
+        self._regressor_name = None
         self._regressor_history = None
-        # [fc] Prophet.country_holidays: one country at a time, resolved into
-        # dated holidays for whichever years a frame covers.
-        self.country_holidays = None
         self._holiday_columns = 0
         self._holiday_prior_scales = []
-        # [fc] make_all_seasonality_features: holiday columns then regressor
-        # ones, appended after the seasonal block. Held together because the
-        # objective does not distinguish them -- only their construction does.
-        self._data_columns = None       # set by a fit; None means neither
+        self._data_columns = None
         self._data_column_count = 0
         self._data_prior_scales = []
         self._data_modes = []
-        # name -> boolean array, for the conditioned components only. Set from
-        # the frame each fit is given, and required again at predict time.
         self.condition_masks = {}
-        # [fc] Prophet.__init__ seasonality_mode='additive'. The per-component
-        # `mode` falls back to this when add_seasonality is given none.
-        self.seasonality_mode = 'additive'
-        self.seasonality_prior_scale = SIGMA
+
+        self.seasonality_mode = seasonality_mode
+        self.seasonality_prior_scale = seasonality_prior_scale
         self.layout = DEFAULT_LAYOUT
-        self.change_points = None
-        self.changepoint_range = CHANGEPOINT_RANGE
-        
-        self.tau = TAU # sparse prior on rate adjustments delta
-        self.sigmas = seasonality_prior_scales({})  # per column; set by _build_layout
-        self.s_m = np.empty(0)   # 1 where a column multiplies the trend
-        self.s_a = np.empty(0)   # its complement; both set by _build_layout
+
+        # Prophet's name on the argument, Stan's on the attribute.
+        self.tau = changepoint_prior_scale
+        self.sigmas = seasonality_prior_scales({})
+        self.s_m = np.empty(0)
+        self.s_a = np.empty(0)
         self._multiplicative = False
-        self.sigma_obs = SIGMA_OBS_INIT # estimated by fit(); fit_cpp() keeps this fixed
+        self.sigma_obs = SIGMA_OBS_INIT
+
+        self.interval_width = interval_width
+        self.uncertainty_samples = uncertainty_samples
 
         self.m = None
         self.k = None
@@ -988,11 +969,41 @@ class CustomProphet:
         self.opt_params = None
         self.loss_over_iterations = None
         self.opt = None
-        
+
         self.sigma_k = sigma_k
         self.sigma_m = sigma_m
 
         self.t_seasonality = None
+
+        self._reject_unsupported(changepoints, mcmc_samples, stan_backend, scaling)
+        if holidays is not None:
+            self.add_holidays(holidays)
+
+    @staticmethod
+    def _reject_unsupported(changepoints, mcmc_samples, stan_backend, scaling):
+        """Refuse what Prophet accepts and this does not.
+
+        Accepting these silently would be the failure mode the whole of #16
+        exists to avoid, and omitting them would fail with an AttributeError
+        that says nothing about why.
+        """
+        if changepoints is not None:
+            raise NotImplementedError(
+                "changepoints=... (an explicit list) is not supported; "
+                "changepoints are placed from n_changepoints and "
+                "changepoint_range. Tracked in #15.")
+        if mcmc_samples:
+            raise NotImplementedError(
+                f"mcmc_samples={mcmc_samples} is not supported; this "
+                f"implementation is MAP only.")
+        if stan_backend is not None:
+            raise NotImplementedError(
+                f"stan_backend={stan_backend!r} is not supported; there is no "
+                f"Stan here -- that is the point of the project.")
+        if scaling != 'absmax':
+            raise NotImplementedError(
+                f"scaling={scaling!r} is not supported; only 'absmax' is "
+                f"implemented.")
 
     def get_parameters(self) -> np.array:
         return self.opt_params
@@ -1864,11 +1875,10 @@ class CustomProphet:
         predictor_spec = None
         if regressor_predictor:
             predictor_spec = dict(regressor_predictor) if isinstance(regressor_predictor, dict) else {}
-            unknown = set(predictor_spec) - PREDICTOR_SPEC_FIELDS
-            if unknown:
-                raise ValueError(
-                    f"regressor_predictor got unsupported setting(s) "
-                    f"{sorted(unknown)}; supported: {sorted(PREDICTOR_SPEC_FIELDS)}")
+            # [fc] the spec goes to the constructor, which rejects what it does
+            # not know. This used to run against a hand-kept whitelist, because
+            # the constructor took no arguments (#16 task 14c, #52).
+            CustomProphet(**predictor_spec)
 
         # mu and std are placeholders until a fit measures them on the history
         self.extra_regressors[name] = {"prior_scale": prior_scale,
@@ -1903,9 +1913,7 @@ class CustomProphet:
                     f"Not enough data to fit regressor model for {name!r}.")
             regressor_df = regressor_df.rename(columns={name: "y"})
 
-            predictor = CustomProphet()
-            for field, value in props["predictor_spec"].items():
-                setattr(predictor, field, value)
+            predictor = CustomProphet(**props["predictor_spec"])
             predictor._regressor_name = name          # marker, [fc]
 
             logger.info("Fitting regressor model %r with %d observations",
@@ -1970,31 +1978,71 @@ class CustomProphet:
 
         return future_df
     
-    def trend_forecast_uncertainty(self, horizon=30, n_samples=500):
+    def trend_forecast_uncertainty(self, horizon=30, n_samples=None,
+                                   t_scaled=None, cap_scaled=None, floor=None):
+        """Quantiles of the trend under future changepoints drawn from the
+        fitted rate distribution.
+
+        `t_scaled` is the grid to evaluate on. predict() passes the one it
+        already built, which is the frame it was given; without it the grid
+        comes from `make_future_dataframe(horizon)` as before.
+
+        Passing it is not a convenience. predict() called this with
+        `horizon=len(future_df)`, where that length already counted the
+        history, so the method built a second grid twice as long and truncated
+        it back -- landing on the right dates by arithmetic coincidence. Under
+        logistic growth the coincidence broke, because the capacity is
+        per-row and the two grids no longer had the same length.
+
+        `cap_scaled` and `floor` come from the caller for the same reason: the
+        capacity is data on the frame being forecast, and the frame this method
+        builds for itself carries only `ds`.
+        """
         k, m, delta, _sigma_obs, beta = extract_params(self.opt_params, self.layout)
+        n_samples = self.uncertainty_samples if n_samples is None else n_samples
         probability_changepoint = self.n_changepoints / self.T
         future_df = self.make_future_dataframe(horizon)
-        
-        # Normalize the future dates
-        future_t_scaled = np.array((pd.to_datetime(future_df['ds']) - self.ds.min()) / (self.ds.max() - self.ds.min()))
-        
+
+        if t_scaled is None:
+            future_t_scaled = np.array(
+                (pd.to_datetime(future_df['ds']) - self.ds.min())
+                / (self.ds.max() - self.ds.min()))
+            horizon = len(future_t_scaled)
+        else:
+            future_t_scaled = np.asarray(t_scaled, dtype=float)
+            horizon = len(future_t_scaled)
+
+        if self.growth == 'logistic' and cap_scaled is None:
+            raise ValueError(
+                'Capacities must be supplied for logistic growth in column "cap"')
+
         forecast = []
         lambda_mle = abs(delta).mean()  # MLE of laplace distribution's scale parameter
-        
+
         for _ in range(n_samples):
-            sample = np.random.random(future_t_scaled.shape)
+            # self.rng, not np.random: the global generator left this
+            # irreproducible even on a model with its own seeded one
+            sample = self.rng.random(future_t_scaled.shape)
             new_changepoints = future_t_scaled[sample <= probability_changepoint]
-            
+
             new_delta = np.r_[delta, self.rng.laplace(0, lambda_mle, new_changepoints.shape[0])]
             new_change_points = np.r_[self.change_points, new_changepoints]
-            future_trend = compute_trend(k, m, new_delta, new_change_points, future_t_scaled, self.y_absmax)
-            future_trend = future_trend[:horizon]  # Ensure only the required horizon is included
-            
-            forecast.append(future_trend)
-            
+            # the growth mode has to be the fitted one: sampling a linear trend
+            # for a logistic fit reported an interval around a curve the model
+            # never produced
+            future_trend = compute_trend(k, m, new_delta, new_change_points,
+                                         future_t_scaled, self.y_absmax,
+                                         cap_scaled, floor, self.growth)
+            forecast.append(future_trend[:horizon])
+
         forecast = np.array(forecast)
-        quantiles = np.percentile(forecast, [2.5, 97.5], axis=0)
-        
+        # [fc] predict_uncertainty: the interval is centred, so its edges are
+        # (1 -+ interval_width) / 2. These were hardcoded at [2.5, 97.5] -- a
+        # 95% interval, where Prophet's default is 80%.
+        lower = 100 * (1.0 - self.interval_width) / 2
+        upper = 100 * (1.0 + self.interval_width) / 2
+        quantiles = np.percentile(forecast, [lower, upper], axis=0)
+
         return future_df, quantiles
     
     def predict(self, future_df):
@@ -2040,7 +2088,9 @@ class CustomProphet:
         forecast['trend'] = trend
         
         # Add uncertainty intervals for trend
-        _, quantiles = self.trend_forecast_uncertainty(horizon=len(future_df))
+        _, quantiles = self.trend_forecast_uncertainty(
+            t_scaled=future_df['t_scaled'].values,
+            cap_scaled=cap_scaled, floor=floor)
         forecast['trend_lower'] = quantiles[0, :]
         forecast['trend_upper'] = quantiles[1, :]
         
