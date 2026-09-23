@@ -362,6 +362,65 @@ def seasonality_columns(seasonalities):
     return sum(2 * props["fourier_order"] for props in seasonalities.values())
 
 
+# [fc] make_holidays.get_country_holidays_class. The one substitution Prophet
+# carries, for callers still passing Turkey as 'TU'.
+COUNTRY_CODE_SUBSTITUTIONS = {"TU": "TR"}
+
+# [fc] get_holiday_names sweeps these years to enumerate a country's names.
+COUNTRY_NAME_SWEEP = range(1995, 2045)
+
+HOLIDAYS_PACKAGE_HINT = (
+    "country holidays need the `holidays` package, which is not installed. "
+    "`pip install holidays`, or pass a holidays frame to add_holidays() "
+    "instead.")
+
+
+def _country_holidays_class(country):
+    """The `holidays` class for a country code, imported lazily.
+
+    Lazily because the rest of the model does not need the package: a user
+    fitting trend and seasonality should not be required to install it, and a
+    missing import should surface here rather than at import time.
+    """
+    try:
+        import holidays as holidays_package
+    except ImportError as exc:                    # pragma: no cover
+        raise ImportError(HOLIDAYS_PACKAGE_HINT) from exc
+
+    country = COUNTRY_CODE_SUBSTITUTIONS.get(country, country)
+    if not hasattr(holidays_package, country):
+        raise AttributeError(f"Holidays in {country} are not currently supported!")
+    return getattr(holidays_package, country)
+
+
+def country_holiday_names(country):
+    """Every holiday name the country can produce. [fc] get_holiday_names.
+
+    Swept over a fixed window of years rather than the data's, because the
+    names are validated once when the country is registered -- before any
+    frame has been seen.
+    """
+    return set(_country_holidays_class(country)(
+        language="en_US", years=np.arange(COUNTRY_NAME_SWEEP.start,
+                                          COUNTRY_NAME_SWEEP.stop)).values())
+
+
+def country_holidays_frame(years, country):
+    """A holidays frame for `years`. [fc] make_holidays_df.
+
+    `expand=False` keeps the observed-date variants from being generated as
+    separate entries, and one date can carry several names, so the list column
+    is exploded into one row each.
+    """
+    generated = _country_holidays_class(country)(
+        expand=False, language="en_US", years=list(years))
+    frame = pd.DataFrame([(date, generated.get_list(date)) for date in generated],
+                         columns=["ds", "holiday"])
+    frame = frame.explode("holiday").reset_index(drop=True)
+    frame["ds"] = pd.to_datetime(frame["ds"])
+    return frame
+
+
 def validate_holidays_frame(holidays, validate_name):
     """Check and normalize the holidays frame. [fc] Prophet.validate_inputs.
 
@@ -712,6 +771,9 @@ class CustomProphet:
         # the future frame still gets its (all-zero) column and one that only
         # appears later is dropped.
         self.train_holiday_names = None
+        # [fc] Prophet.country_holidays: one country at a time, resolved into
+        # dated holidays for whichever years a frame covers.
+        self.country_holidays = None
         self._holiday_columns = 0
         self._holiday_prior_scales = []
         self._holiday_features = None   # set by a fit; None means no holidays
@@ -782,6 +844,35 @@ class CustomProphet:
         self.holidays_mode = mode
         return self
 
+    def add_country_holidays(self, country_name):
+        """Add a country's built-in holidays. Returns self, so calls chain.
+
+        [fc] Prophet.add_country_holidays. These are generated for whichever
+        years a frame covers, at fit and at predict alike, so a forecast past
+        the end of the history still gets its holidays -- unlike a frame passed
+        to add_holidays(), which only contains the dates it lists.
+
+        Only one country at a time, as in Prophet; setting a second replaces
+        the first and says so.
+        """
+        if self.opt_params is not None:
+            raise RuntimeError(
+                "country holidays must be added before fitting; this model has "
+                "already been fit. Add them to a fresh model.")
+
+        # every name the country can produce, checked before it is registered
+        # -- a collision only found at fit time would be found after the frame
+        # had already been built around it. check_holidays=False so a country
+        # may be merged with a hand-written frame naming the same holiday.
+        for name in country_holiday_names(country_name):
+            self.validate_column_name(name, check_holidays=False)
+
+        if self.country_holidays is not None and self.country_holidays != country_name:
+            logger.warning("Changing country holidays from %r to %r.",
+                           self.country_holidays, country_name)
+        self.country_holidays = country_name
+        return self
+
     def _holiday_frame_for(self, dates):
         """The holidays relevant to `dates`, reconciled with what the fit saw.
 
@@ -790,9 +881,17 @@ class CustomProphet:
         fit saw but this frame does not contain is kept with a null `ds`, so
         its column is still present and all zeros.
         """
-        if self.holidays is None:
+        if self.holidays is None and self.country_holidays is None:
             return None
-        frame = self.holidays.copy()
+
+        frame = pd.DataFrame(columns=["holiday", "ds"]) if self.holidays is None \
+            else self.holidays.copy()
+        if self.country_holidays is not None:
+            years = sorted({timestamp.year for timestamp in pd.to_datetime(pd.Series(
+                np.asarray(dates)))})
+            frame = pd.concat([frame, country_holidays_frame(years, self.country_holidays)],
+                              sort=False, ignore_index=True)
+
         if self.train_holiday_names is not None:
             frame = frame[frame["holiday"].isin(self.train_holiday_names)]
             missing = [name for name in self.train_holiday_names
@@ -804,10 +903,10 @@ class CustomProphet:
 
     def _holiday_design(self, dates):
         """(features, prior_scales) for `dates`, in the fit's column order."""
-        if self.holidays is None:
+        frame = self._holiday_frame_for(dates)
+        if frame is None:
             return None, []
-        return holiday_features(dates, self._holiday_frame_for(dates),
-                                self.holidays_prior_scale)[:2]
+        return holiday_features(dates, frame, self.holidays_prior_scale)[:2]
 
     def validate_column_name(self, name, check_holidays=True,
                              check_seasonalities=True, check_regressors=True) -> None:
@@ -825,6 +924,10 @@ class CustomProphet:
         if check_holidays and self.holidays is not None and \
                 name in set(self.holidays['holiday'].dropna().unique()):
             raise ValueError(f"Name {name!r} already used for a holiday.")
+        if check_holidays and self.country_holidays is not None and \
+                name in country_holiday_names(self.country_holidays):
+            raise ValueError(
+                f"Name {name!r} is a holiday name in {self.country_holidays}.")
         if check_seasonalities and name in self.seasonalities:
             raise ValueError(f"Name {name!r} already used for a seasonality.")
         if check_regressors and name in self.extra_regressors:
@@ -1165,9 +1268,9 @@ class CustomProphet:
         self._holiday_columns = 0 if self._holiday_features is None else self._holiday_features.shape[1]
         # recorded after the features are built, so predict presents the same
         # columns even for a holiday that never lands in the future frame
-        if self.holidays is not None and self.train_holiday_names is None:
-            self.train_holiday_names = list(
-                holiday_features(self.ds, self.holidays, self.holidays_prior_scale)[2])
+        if self.train_holiday_names is None and self._holiday_columns:
+            self.train_holiday_names = list(holiday_features(
+                self.ds, self._holiday_frame_for(self.ds), self.holidays_prior_scale)[2])
         self._build_layout()
         self._generate_change_points()
 
@@ -1282,9 +1385,9 @@ class CustomProphet:
         self._holiday_columns = 0 if self._holiday_features is None else self._holiday_features.shape[1]
         # recorded after the features are built, so predict presents the same
         # columns even for a holiday that never lands in the future frame
-        if self.holidays is not None and self.train_holiday_names is None:
-            self.train_holiday_names = list(
-                holiday_features(self.ds, self.holidays, self.holidays_prior_scale)[2])
+        if self.train_holiday_names is None and self._holiday_columns:
+            self.train_holiday_names = list(holiday_features(
+                self.ds, self._holiday_frame_for(self.ds), self.holidays_prior_scale)[2])
         self._build_layout()
         self._generate_change_points()
 
