@@ -358,7 +358,20 @@ def test_design_matrix_and_sigmas_match_prophets(prophet_comparison,
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     _, X_ours = ours._design_matrices()
-    np.testing.assert_array_equal(X_ours, np.asarray(stan_data["X"], dtype=float))
+    X_stan = np.asarray(stan_data["X"], dtype=float)
+    assert X_ours.shape == X_stan.shape
+
+    # The seasonal block agrees to floating point rather than exactly: the
+    # Fourier basis is evaluated in a different order from Prophet's, which is
+    # a deliberate choice (README, "Where this deviates on purpose").
+    seasonal, holiday = ours.layout.seasonality_block, ours.layout.holiday_block
+    assert np.max(np.abs(X_ours[:, seasonal] - X_stan[:, seasonal])) < 1e-10
+
+    # The holiday block is exact, and has to be: these are 0/1 indicators, so
+    # no order of operations can perturb them. A difference here would be a
+    # column landing on the wrong day, not arithmetic.
+    np.testing.assert_array_equal(X_ours[:, holiday], X_stan[:, holiday])
+
     np.testing.assert_array_equal(ours.sigmas, np.asarray(stan_data["sigmas"], dtype=float))
 
 
