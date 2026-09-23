@@ -116,6 +116,17 @@ alike, so the holidays keep coming. It needs the [`holidays`](https://pypi.org/p
 package — the same one Prophet uses, imported lazily, so nothing else in the model
 requires it.
 
+**GROWTH** — `model.growth = 'logistic'` fits a saturating trend toward a capacity the
+caller supplies per row, in a `cap` column on every frame passed to `fit` and `predict`:
+
+```
+[stan]  cap .* inv_logit((k + A·delta) .* (t - (m + A·gamma)))
+```
+
+`gamma` keeps the curve continuous where the rate changes, and unlike the linear case it
+is defined by a recursion — `gamma[i]` depends on every earlier one — so its Jacobian is
+accumulated forward alongside it. `'flat'` is not implemented yet.
+
 **REGRESSORS** — `add_regressor(name, prior_scale=None, standardize='auto', mode=None)`
 names a column that the frames passed to `fit` and `predict` must both carry. Its
 `prior_scale` defaults to `holidays_prior_scale` — surprising, and matched deliberately.
@@ -430,7 +441,7 @@ Tracked, deliberate, and not yet closed:
 
 ## Not implemented
 
-- Logistic and flat growth — linear only
+- Flat growth (`growth='flat'`) — linear and logistic only
 - MCMC sampling — MAP only
 
 Tracked in [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16).
@@ -444,7 +455,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 357 tests
+pytest tests/                        # 375 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
@@ -477,6 +488,7 @@ numbers rather than errors.
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
 | | [#33](https://github.com/adlyZaroui/analytic-prophet/issues/33), [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 10 | `add_regressor` accepted a `pd.Series` and discarded it, so a caller's regressor was simply absent with no error. The signature could not have worked either: a series carries the history's values and no way to produce the future ones `predict` needs |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 9 | Country holidays, via the `holidays` package rather than by importing anything from Prophet. Frames and name sets checked against Prophet's own helpers for five countries, since the underlying data moves between releases and asserting specific dates would test the package rather than this code |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 12 | Logistic growth. The hardest derivative in the project so far: `gamma` is a recursion, so `d(gamma)/d(k, m, delta)` is accumulated forward rather than written down, and the trend's chain rule carries that S×(2+S) Jacobian through `inv_logit` |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 11 | Multiplicative mode. The first change to the gradient since `sigma_obs` became free: every trend block picks up the `(1 + X_sm·β)` factor and `β`'s picks up the trend. The all-additive case keeps its own branch — not for speed, but because `y − g − s` and `y − (g·1 + s)` differ in the last bits, which was enough to move the scipy path to a point 2.96 nats worse |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 8 | Holidays. The objective and gradient needed no change — a holiday column is a column of `X` — so the work was alignment: columns sorted by name rather than frame order, all-zero columns kept for occurrences outside a frame, and the fit's holiday set reconciled with predict's |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 7 | Conditional seasonalities: a named boolean column zeroes a component's features where it is False. The feature matrix reproduces Prophet's to 1e-10 — see [Where this deviates on purpose](#where-this-deviates-on-purpose) for why not exactly |

@@ -174,6 +174,95 @@ Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
     return x;
 }
 
+// [stan] logistic_gamma: the piecewise offsets that keep the logistic curve
+// continuous where the rate changes, and their Jacobian with respect to
+// (k, m, delta). gamma[i] depends on every earlier gamma through m_pr, so the
+// Jacobian is accumulated forward alongside gamma rather than written down.
+void logistic_gamma_and_jacobian(double k, double m,
+                                 const Eigen::VectorXd& delta,
+                                 const Eigen::VectorXd& change_points,
+                                 Eigen::VectorXd& gamma,
+                                 Eigen::MatrixXd& dgamma) {
+    const int S = static_cast<int>(delta.size());
+    Eigen::VectorXd k_s(S + 1);
+    k_s(0) = k;
+    double running = k;
+    for (int i = 0; i < S; ++i) {
+        running += delta(i);
+        k_s(i + 1) = running;
+    }
+
+    // d k_s[i] / d(k, m, delta): 1 for k, 0 for m, and delta_j enters k_s[i]
+    // for every j < i
+    Eigen::MatrixXd dk_s = Eigen::MatrixXd::Zero(S + 1, 2 + S);
+    dk_s.col(0).setOnes();
+    for (int i = 1; i <= S; ++i) {
+        dk_s.row(i).segment(2, i).setOnes();
+    }
+
+    gamma.resize(S);
+    dgamma.setZero(S, 2 + S);
+    double m_pr = m;
+    Eigen::VectorXd dm_pr = Eigen::VectorXd::Zero(2 + S);
+    dm_pr(1) = 1.0;
+
+    for (int i = 0; i < S; ++i) {
+        const double c = 1.0 - k_s(i) / k_s(i + 1);
+        const Eigen::VectorXd dc =
+            -(dk_s.row(i).transpose() * k_s(i + 1) - dk_s.row(i + 1).transpose() * k_s(i))
+            / (k_s(i + 1) * k_s(i + 1));
+
+        gamma(i) = (change_points(i) - m_pr) * c;
+        dgamma.row(i) = (-dm_pr * c + (change_points(i) - m_pr) * dc).transpose();
+
+        m_pr += gamma(i);
+        dm_pr += dgamma.row(i).transpose();
+    }
+}
+
+// [stan] logistic_trend: cap .* inv_logit((k + A*delta) .* (t - (m + A*gamma))).
+// Returns the trend and d(trend)/d(k, m, delta); the caller contracts the
+// Jacobian with the residual, which is what lets the multiplicative multiplier
+// be applied outside exactly as it is for the linear trend.
+void logistic_trend_and_jacobian(double k, double m,
+                                 const Eigen::VectorXd& delta,
+                                 const Eigen::VectorXd& t_scaled,
+                                 const Eigen::VectorXd& cap_scaled,
+                                 const Eigen::MatrixXd& A,
+                                 const Eigen::VectorXd& change_points,
+                                 Eigen::VectorXd& trend,
+                                 Eigen::MatrixXd& jacobian) {
+    const int T = static_cast<int>(t_scaled.size());
+    const int S = static_cast<int>(delta.size());
+
+    Eigen::VectorXd gamma;
+    Eigen::MatrixXd dgamma;
+    logistic_gamma_and_jacobian(k, m, delta, change_points, gamma, dgamma);
+
+    const Eigen::VectorXd rate = (k * Eigen::VectorXd::Ones(T) + A * delta);
+    const Eigen::VectorXd offset = (m * Eigen::VectorXd::Ones(T) + A * gamma);
+    const Eigen::VectorXd z = rate.array() * (t_scaled - offset).array();
+
+    // exp(-|z|) form: the naive 1/(1+exp(-z)) overflows for z very negative
+    Eigen::VectorXd sigmoid(T);
+    for (int i = 0; i < T; ++i) {
+        const double e = std::exp(-std::abs(z(i)));
+        sigmoid(i) = z(i) >= 0.0 ? 1.0 / (1.0 + e) : e / (1.0 + e);
+    }
+    trend = cap_scaled.array() * sigmoid.array();
+
+    Eigen::MatrixXd d_offset = A * dgamma;
+    d_offset.col(1).array() += 1.0;
+    Eigen::MatrixXd d_rate = Eigen::MatrixXd::Zero(T, 2 + S);
+    d_rate.col(0).setOnes();
+    d_rate.rightCols(S) = A;
+
+    Eigen::MatrixXd dz = d_rate.array().colwise() * (t_scaled - offset).array();
+    dz -= (d_offset.array().colwise() * rate.array()).matrix();
+    jacobian = dz.array().colwise()
+               * (cap_scaled.array() * sigmoid.array() * (1.0 - sigmoid.array()));
+}
+
 // Every dimension and scale the objective relies on, checked in one place.
 //
 // This exists because Eigen answers a size mismatch with an assertion, and an
@@ -272,6 +361,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       double sigma_m,
                                       const Eigen::Ref<const Eigen::VectorXd>& sigmas,
                                       const Eigen::Ref<const Eigen::VectorXd>& s_m,
+                                      const Eigen::Ref<const Eigen::VectorXd>& cap_scaled,
                                       double tau,
                                       double& mlp_out,
                                       Eigen::Ref<Eigen::VectorXd> grad_out,
@@ -288,10 +378,25 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
     const double sigma_obs = p.sigma_obs;
     const double T = static_cast<double>(t_scaled_vec.size());
 
-    // Trend component
-    Eigen::VectorXd ones = Eigen::VectorXd::Ones(t_scaled_vec.size());
-    Eigen::VectorXd gamma = -delta.array() * change_points_vec.array();
-    Eigen::VectorXd g = (k * ones + A * delta).array() * t_scaled_vec.array() + (m * ones + A * gamma).array();
+    // Trend component. Linear keeps its own expression rather than going
+    // through the Jacobian form: it is the common case, and its fits are
+    // sensitive in the last bits (see the note on the additive branch).
+    const bool logistic = cap_scaled.size() != 0;
+    Eigen::VectorXd g;
+    Eigen::MatrixXd trend_jacobian;
+    if (logistic) {
+        if (cap_scaled.size() != t_scaled_vec.size()) {
+            throw std::invalid_argument(
+                "cap_scaled has " + std::to_string(cap_scaled.size()) + " entries "
+                "but t_scaled has " + std::to_string(t_scaled_vec.size()));
+        }
+        logistic_trend_and_jacobian(k, m, delta, t_scaled_vec, cap_scaled, A,
+                                    change_points_vec, g, trend_jacobian);
+    } else {
+        Eigen::VectorXd ones = Eigen::VectorXd::Ones(t_scaled_vec.size());
+        Eigen::VectorXd gamma = -delta.array() * change_points_vec.array();
+        g = (k * ones + A * delta).array() * t_scaled_vec.array() + (m * ones + A * gamma).array();
+    }
 
     // [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...):
     // additive columns add to the trend, multiplicative ones scale it.
@@ -346,13 +451,23 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
     grad_out.resize(params_vec.size());
 
     // Compute dk and dm
-    grad_out(0) = -r_scaled.dot(t_scaled_vec) / (sigma_obs * sigma_obs) + k / (sigma_k * sigma_k);
-    grad_out(1) = -r_scaled.sum() / (sigma_obs * sigma_obs) + m / (sigma_m * sigma_m);
+    Eigen::VectorXd ddelta;
+    if (logistic) {
+        // one contraction for all three blocks: the Jacobian already holds
+        // d(trend)/d(k, m, delta), including gamma's recursion
+        const Eigen::VectorXd d_trend =
+            -(r_scaled.transpose() * trend_jacobian).transpose() / (sigma_obs * sigma_obs);
+        grad_out(0) = d_trend(0) + k / (sigma_k * sigma_k);
+        grad_out(1) = d_trend(1) + m / (sigma_m * sigma_m);
+        ddelta = d_trend.tail(delta.size());
+    } else {
+        grad_out(0) = -r_scaled.dot(t_scaled_vec) / (sigma_obs * sigma_obs) + k / (sigma_k * sigma_k);
+        grad_out(1) = -r_scaled.sum() / (sigma_obs * sigma_obs) + m / (sigma_m * sigma_m);
 
-    // Compute ddelta
-    Eigen::MatrixXd t_diff = t_scaled_vec.replicate(1, change_points_vec.size()).array().rowwise() - change_points_vec.transpose().array();
-    Eigen::MatrixXd delta_contrib = t_diff.array() * A.array();
-    Eigen::VectorXd ddelta = -(r_scaled.transpose() * delta_contrib).transpose() / (sigma_obs * sigma_obs);
+        Eigen::MatrixXd t_diff = t_scaled_vec.replicate(1, change_points_vec.size()).array().rowwise() - change_points_vec.transpose().array();
+        Eigen::MatrixXd delta_contrib = t_diff.array() * A.array();
+        ddelta = -(r_scaled.transpose() * delta_contrib).transpose() / (sigma_obs * sigma_obs);
+    }
 
     if (include_l1_prior) {
         ddelta += (delta.array().sign() / tau).matrix();
@@ -439,6 +554,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       double sigma_m,
                                       const Eigen::Ref<const Eigen::VectorXd>& sigmas,
                                       const Eigen::Ref<const Eigen::VectorXd>& s_m,
+                                      const Eigen::Ref<const Eigen::VectorXd>& cap_scaled,
                                       double tau,
                                       const std::vector<int>& fourier_orders,
                                       const std::vector<double>& seasonality_periods,
@@ -454,7 +570,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                                         seasonality_conditions,
                                                         data_columns),
                                      normalized_y_vec, sigma_obs_prior_scale, sigma_k,
-                                     sigma_m, sigmas, s_m, tau, mlp_out, grad_out,
+                                     sigma_m, sigmas, s_m, cap_scaled, tau, mlp_out, grad_out,
                                      include_l1_prior);
 }
 
@@ -471,6 +587,7 @@ struct SplitObjective {
     double sigma_m;
     Eigen::VectorXd sigmas;
     Eigen::VectorXd s_m;
+    Eigen::VectorXd cap_scaled;
     double tau;
     int S;
     int K;
@@ -499,7 +616,7 @@ struct SplitObjective {
         Eigen::VectorXd natural_grad(natural.size());
         minus_log_posterior_and_gradient(natural, t_scaled, change_points, A, x,
                                          normalized_y, sigma_obs_prior_scale, sigma_k,
-                                         sigma_m, sigmas, s_m, tau, value, natural_grad,
+                                         sigma_m, sigmas, s_m, cap_scaled, tau, value, natural_grad,
                                          // the split form supplies the L1 term itself
                                          /*include_l1_prior=*/false);
 
@@ -542,6 +659,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
                         double sigma_m,
                         const Eigen::Ref<const Eigen::VectorXd>& sigmas,
                         const Eigen::Ref<const Eigen::VectorXd>& s_m,
+                        const Eigen::Ref<const Eigen::VectorXd>& cap_scaled,
                         double tau,
                         const std::vector<int>& fourier_orders,
                         const std::vector<double>& seasonality_periods,
@@ -618,7 +736,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
 
         SplitObjective objective{t_scaled, change_points, A, x,
                                  normalized_y, sigma_obs_prior_scale,
-                                 sigma_k, sigma_m, sigmas, s_m, tau, S, K, {}};
+                                 sigma_k, sigma_m, sigmas, s_m, cap_scaled, tau, S, K, {}};
         LBFGSpp::LBFGSBSolver<double> solver(param);
 
         double fx = 0.0;
@@ -666,6 +784,7 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         double sigma_m,
         const Eigen::Ref<const Eigen::VectorXd>& sigmas,
         const Eigen::Ref<const Eigen::VectorXd>& s_m,
+        const Eigen::Ref<const Eigen::VectorXd>& cap_scaled,
         double tau,
         const std::vector<int>& fourier_orders,
         const std::vector<double>& seasonality_periods,
@@ -676,7 +795,7 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
     Eigen::VectorXd gradient(params.size());
     minus_log_posterior_and_gradient(params, t_scaled, change_points, t_seasonality,
                                      normalized_y, sigma_obs_prior_scale, sigma_k, sigma_m, sigmas,
-                                     s_m, tau, fourier_orders, seasonality_periods,
+                                     s_m, cap_scaled, tau, fourier_orders, seasonality_periods,
                                      seasonality_conditions, data_columns,
                                      mlp, gradient,
                                      include_l1_prior);
@@ -719,6 +838,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("sigma_m"),
           py::arg("sigmas"),
           py::arg("s_m") = Eigen::VectorXd(),
+          py::arg("cap_scaled") = Eigen::VectorXd(),
           py::arg("tau"),
           py::arg("fourier_orders"),
           py::arg("seasonality_periods"),
@@ -742,6 +862,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("sigma_m"),
           py::arg("sigmas"),
           py::arg("s_m") = Eigen::VectorXd(),
+          py::arg("cap_scaled") = Eigen::VectorXd(),
           py::arg("tau"),
           py::arg("fourier_orders"),
           py::arg("seasonality_periods"),
