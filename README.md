@@ -106,7 +106,15 @@ per-column.
 ```python
 model.add_holidays(pd.DataFrame({"holiday": "superbowl", "ds": [...],
                                  "lower_window": -1, "upper_window": 1}))
+model.add_country_holidays("US")
 ```
+
+`add_country_holidays` is not shorthand for writing the dates out. A frame contains the
+occurrences it lists and no others, so a forecast past the end of it silently loses
+them; a country is resolved against whichever years a frame covers, at fit and predict
+alike, so the holidays keep coming. It needs the [`holidays`](https://pypi.org/project/holidays/)
+package — the same one Prophet uses, imported lazily, so nothing else in the model
+requires it.
 
 **SELECTED** — `K` is not a constant. Which seasonal components a model fits is decided
 from the history, exactly as Prophet does it:
@@ -416,7 +424,7 @@ Tracked, deliberate, and not yet closed:
 
 ## Not implemented
 
-- Country holidays (`add_country_holidays`) and extra regressors
+- Extra regressors (`add_regressor`)
 - Logistic and flat growth — linear only
 - MCMC sampling — MAP only
 
@@ -431,7 +439,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 303 tests
+pytest tests/                        # 327 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
@@ -462,6 +470,7 @@ numbers rather than errors.
 | | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 9 | Country holidays, via the `holidays` package rather than by importing anything from Prophet. Frames and name sets checked against Prophet's own helpers for five countries, since the underlying data moves between releases and asserting specific dates would test the package rather than this code |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 11 | Multiplicative mode. The first change to the gradient since `sigma_obs` became free: every trend block picks up the `(1 + X_sm·β)` factor and `β`'s picks up the trend. The all-additive case keeps its own branch — not for speed, but because `y − g − s` and `y − (g·1 + s)` differ in the last bits, which was enough to move the scipy path to a point 2.96 nats worse |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 8 | Holidays. The objective and gradient needed no change — a holiday column is a column of `X` — so the work was alignment: columns sorted by name rather than frame order, all-zero columns kept for occurrences outside a frame, and the fit's holiday set reconciled with predict's |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 7 | Conditional seasonalities: a named boolean column zeroes a component's features where it is False. The feature matrix reproduces Prophet's to 1e-10 — see [Where this deviates on purpose](#where-this-deviates-on-purpose) for why not exactly |

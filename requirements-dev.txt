@@ -6,6 +6,11 @@ pandas
 scipy
 pytest
 
+# Country holidays (#16 task 9). Imported lazily, and only by
+# add_country_holidays -- trend, seasonality and a hand-written holidays frame
+# all work without it, so a user who needs none of them needs none of this.
+holidays
+
 # Build-time dependency of the C++ core (legacy/optimize.cpp). Headers only --
 # nothing imports pybind11 at runtime, but the extension can't be compiled
 # without it. Eigen and liblbfgs still come from the system.
