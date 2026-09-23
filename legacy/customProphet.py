@@ -90,12 +90,14 @@ class ParameterLayout:
     follow, which is what lets a seasonality registry exist at all.
     """
 
-    __slots__ = ("n_changepoints", "n_seasonality_columns", "k_idx", "m_idx",
-                 "delta", "sigma_obs_idx", "beta", "size")
+    __slots__ = ("n_changepoints", "n_seasonality_columns", "n_holiday_columns",
+                 "k_idx", "m_idx", "delta", "sigma_obs_idx", "beta", "size")
 
-    def __init__(self, n_changepoints, n_seasonality_columns):
+    def __init__(self, n_changepoints, n_seasonality_columns, n_holiday_columns=0):
         self.n_changepoints = n_changepoints
         self.n_seasonality_columns = n_seasonality_columns
+        self.n_holiday_columns = n_holiday_columns
+        n_seasonality_columns += n_holiday_columns
         self.k_idx = 0
         self.m_idx = 1
         self.delta = slice(2, 2 + n_changepoints)
@@ -103,9 +105,42 @@ class ParameterLayout:
         self.beta = slice(3 + n_changepoints, 3 + n_changepoints + n_seasonality_columns)
         self.size = 3 + n_changepoints + n_seasonality_columns
 
+    @property
+    def n_regressor_columns(self):
+        """K -- every column of the design matrix, seasonal and holiday alike.
+
+        The objective does not distinguish them: `beta` spans the lot and the
+        prior is per column either way. The split is kept only so the two
+        blocks can be built and sliced separately.
+        """
+        return self.n_seasonality_columns + self.n_holiday_columns
+
+    @property
+    def holidays(self):
+        """The holiday coefficients' slice of the *parameter vector*.
+
+        Indexed like `beta` and `delta`, so it applies to `opt_params`. For the
+        design matrix and `sigmas` -- which are indexed by column, from 0 -- use
+        `holiday_block`. The two differ by the 3 + S offset, and mixing them
+        silently returns the wrong slice rather than raising.
+        """
+        return slice(self.beta.start + self.n_seasonality_columns, self.beta.stop)
+
+    @property
+    def holiday_block(self):
+        """The holiday columns' slice of the *design matrix* and of `sigmas`."""
+        return slice(self.n_seasonality_columns, self.n_regressor_columns)
+
+    @property
+    def seasonality_block(self):
+        """The seasonal columns' slice of the design matrix and of `sigmas`."""
+        return slice(0, self.n_seasonality_columns)
+
     def __repr__(self):
         return (f"ParameterLayout(S={self.n_changepoints}, "
-                f"K={self.n_seasonality_columns}, size={self.size})")
+                f"K={self.n_regressor_columns} "
+                f"({self.n_seasonality_columns} seasonal + "
+                f"{self.n_holiday_columns} holiday), size={self.size})")
 
 
 # The layout a default model uses: 25 changepoints, yearly seasonality at
@@ -324,6 +359,104 @@ def seasonality_columns(seasonalities):
     return sum(2 * props["fourier_order"] for props in seasonalities.values())
 
 
+def validate_holidays_frame(holidays, validate_name):
+    """Check and normalize the holidays frame. [fc] Prophet.validate_inputs.
+
+    `validate_name` is the model's validate_column_name, passed in so the
+    reserved-name and collision checks are the same ones add_seasonality uses.
+    """
+    if holidays is None:
+        return None
+    if not (isinstance(holidays, pd.DataFrame) and "ds" in holidays
+            and "holiday" in holidays):
+        raise ValueError('holidays must be a DataFrame with "ds" and "holiday" columns.')
+
+    holidays = holidays.copy()
+    holidays["ds"] = pd.to_datetime(holidays["ds"])
+    if holidays["ds"].isnull().any() or holidays["holiday"].isnull().any():
+        raise ValueError("Found a NaN in holidays dataframe.")
+
+    has_lower = "lower_window" in holidays
+    has_upper = "upper_window" in holidays
+    if has_lower + has_upper == 1:
+        raise ValueError("Holidays must have both lower_window and upper_window, or neither")
+    if has_lower:
+        if holidays["lower_window"].max() > 0:
+            raise ValueError("Holiday lower_window should be <= 0")
+        if holidays["upper_window"].min() < 0:
+            raise ValueError("Holiday upper_window should be >= 0")
+
+    for name in holidays["holiday"].unique():
+        # check_holidays=False: a holiday may not collide with a seasonality or
+        # regressor, but the frame is allowed to name the same holiday twice --
+        # that is how a recurring holiday lists its occurrences.
+        validate_name(name, check_holidays=False)
+    return holidays
+
+
+def holiday_features(dates, holidays, default_prior_scale):
+    """Indicator columns for every holiday occurrence and window offset.
+
+    [fc] Prophet.make_holiday_features. Returns (features, prior_scales, names):
+    a T x H float array, one prior scale per column, and the holiday names in
+    the order they were first seen.
+
+    One column per (holiday, offset) pair, named `holiday_delim_+n` or
+    `holiday_delim_-n`, and the columns are **sorted by name** -- Prophet sorts
+    them, so `beta` is indexed by that order rather than by the frame's row
+    order, and anything else would misalign the coefficients.
+
+    A window offset that falls outside `dates` still gets its column, all
+    zeros: the fit and the forecast must present the same columns even when a
+    holiday happens not to land in one of them.
+    """
+    dates = pd.to_datetime(pd.Series(np.asarray(dates)))
+    if holidays is None or len(holidays) == 0:
+        return np.empty((len(dates), 0)), [], []
+
+    # a holiday's date matched to the day, not the timestamp
+    row_index = pd.DatetimeIndex(dates.dt.date)
+
+    columns = {}
+    prior_scales = {}
+    for row in holidays.itertuples():
+        if pd.isnull(row.ds):
+            # a training holiday with no occurrence in this frame: its columns
+            # are created below by the offsets of its other rows, or stay absent
+            continue
+        try:
+            lower = int(getattr(row, "lower_window", 0))
+            upper = int(getattr(row, "upper_window", 0))
+        except ValueError:
+            lower = upper = 0
+
+        scale = float(getattr(row, "prior_scale", default_prior_scale))
+        if np.isnan(scale):
+            scale = float(default_prior_scale)
+        if row.holiday in prior_scales and prior_scales[row.holiday] != scale:
+            raise ValueError(
+                f"Holiday {row.holiday!r} does not have consistent prior scale "
+                f"specification.")
+        if scale <= 0:
+            raise ValueError("Prior scale must be > 0")
+        prior_scales[row.holiday] = scale
+
+        for offset in range(lower, upper + 1):
+            key = f"{row.holiday}_delim_{'+' if offset >= 0 else '-'}{abs(offset)}"
+            column = columns.setdefault(key, np.zeros(len(dates)))
+            occurrence = pd.to_datetime(row.ds.date() + pd.Timedelta(days=offset))
+            matches = np.flatnonzero(row_index == occurrence)
+            column[matches] = 1.0
+
+    if not columns:
+        return np.empty((len(dates), 0)), [], list(prior_scales)
+
+    names = sorted(columns)
+    features = np.column_stack([columns[name] for name in names])
+    scales = [prior_scales[name.split("_delim_")[0]] for name in names]
+    return features, scales, list(prior_scales)
+
+
 def seasonality_prior_scales(seasonalities):
     """`sigmas` -- one prior scale per column of the design matrix.
 
@@ -411,10 +544,10 @@ def from_dict_to_array(params, layout=DEFAULT_LAYOUT):
     pass zeros.
     """
     beta = np.asarray(params['beta'], dtype=float)
-    if beta.shape != (layout.n_seasonality_columns,):
+    if beta.shape != (layout.n_regressor_columns,):
         raise ValueError(
             f"beta has {beta.shape} entries but the layout expects "
-            f"{layout.n_seasonality_columns}")
+            f"{layout.n_regressor_columns}")
     return np.concatenate(([params['k']], [params['m']], np.asarray(params['delta'], dtype=float),
                            [params['sigma_obs']], beta))
 
@@ -551,7 +684,19 @@ class CustomProphet:
         # carried now so validate_column_name is the same function it will be
         # then, rather than growing checks as each feature lands.
         self.extra_regressors = {}
+        # [fc] Prophet.__init__ holidays=None, holidays_prior_scale=10.0,
+        # holidays_mode=None (falling back to seasonality_mode).
         self.holidays = None
+        self.holidays_prior_scale = 10.0
+        self.holidays_mode = None
+        # The holiday names the last fit saw. [fc] train_holiday_names: predict
+        # must present the same columns the fit did, so a holiday absent from
+        # the future frame still gets its (all-zero) column and one that only
+        # appears later is dropped.
+        self.train_holiday_names = None
+        self._holiday_columns = 0
+        self._holiday_prior_scales = []
+        self._holiday_features = None   # set by a fit; None means no holidays
         # name -> boolean array, for the conditioned components only. Set from
         # the frame each fit is given, and required again at predict time.
         self.condition_masks = {}
@@ -588,6 +733,65 @@ class CustomProphet:
         self.y_absmax = np.max(np.abs(self.y))
         self.normalized_y = np.array(self.y / self.y_absmax)
     
+    def add_holidays(self, holidays, prior_scale=None, mode=None):
+        """Register a holidays frame. Returns self, so calls chain.
+
+        [fc] Prophet takes this as a constructor argument; a method keeps the
+        validation next to add_seasonality's, which it shares.
+
+        `holidays` is a DataFrame with `holiday` and `ds`, optionally
+        `lower_window`/`upper_window` (a window of days around each occurrence,
+        each becoming its own column) and `prior_scale` (per holiday, and it
+        must be consistent across that holiday's rows).
+        """
+        if self.opt_params is not None:
+            raise RuntimeError(
+                "holidays must be added before fitting; this model has already "
+                "been fit. Add them to a fresh model.")
+
+        mode = self.seasonality_mode if mode is None else mode
+        if mode not in ('additive', 'multiplicative'):
+            raise ValueError('holidays_mode must be "additive" or "multiplicative"')
+        if mode != 'additive':
+            raise NotImplementedError(
+                f"holidays_mode={mode!r} needs the s_a/s_m split of #16 task 11; "
+                f"only additive holidays are fitted.")
+        if prior_scale is not None:
+            if not float(prior_scale) > 0:
+                raise ValueError("Prior scale must be > 0")
+            self.holidays_prior_scale = float(prior_scale)
+
+        self.holidays = validate_holidays_frame(holidays, self.validate_column_name)
+        self.holidays_mode = mode
+        return self
+
+    def _holiday_frame_for(self, dates):
+        """The holidays relevant to `dates`, reconciled with what the fit saw.
+
+        [fc] construct_holiday_dataframe. At predict time a holiday the fit
+        never saw is dropped -- there is no coefficient for it -- and one the
+        fit saw but this frame does not contain is kept with a null `ds`, so
+        its column is still present and all zeros.
+        """
+        if self.holidays is None:
+            return None
+        frame = self.holidays.copy()
+        if self.train_holiday_names is not None:
+            frame = frame[frame["holiday"].isin(self.train_holiday_names)]
+            missing = [name for name in self.train_holiday_names
+                       if name not in set(frame["holiday"])]
+            if missing:
+                frame = pd.concat([frame, pd.DataFrame({"holiday": missing, "ds": pd.NaT})],
+                                  sort=False, ignore_index=True)
+        return frame
+
+    def _holiday_design(self, dates):
+        """(features, prior_scales) for `dates`, in the fit's column order."""
+        if self.holidays is None:
+            return None, []
+        return holiday_features(dates, self._holiday_frame_for(dates),
+                                self.holidays_prior_scale)[:2]
+
     def validate_column_name(self, name, check_holidays=True,
                              check_seasonalities=True, check_regressors=True) -> None:
         """Reject a component name that would collide with something else.
@@ -602,7 +806,7 @@ class CustomProphet:
         if name in RESERVED_COLUMN_NAMES:
             raise ValueError(f"Name {name!r} is reserved.")
         if check_holidays and self.holidays is not None and \
-                name in set(self.holidays['holiday'].unique()):
+                name in set(self.holidays['holiday'].dropna().unique()):
             raise ValueError(f"Name {name!r} already used for a holiday.")
         if check_seasonalities and name in self.seasonalities:
             raise ValueError(f"Name {name!r} already used for a seasonality.")
@@ -700,7 +904,7 @@ class CustomProphet:
 
     def _build_layout(self) -> None:
         """Fix the parameter-vector layout for this fit, from the changepoint
-        count and the registered seasonalities.
+        count, the registered seasonalities and the holiday columns.
 
         Replaces the guard that used to reject any non-default changepoint
         count: the layout is no longer a module constant, so both S and K
@@ -708,12 +912,16 @@ class CustomProphet:
         """
         check_seasonality_supported(self.seasonalities)
         self.layout = ParameterLayout(self.n_changepoints,
-                                      seasonality_columns(self.seasonalities))
+                                      seasonality_columns(self.seasonalities),
+                                      self._holiday_columns)
         # `sigmas` in Stan's data block: one entry per column of the design
         # matrix, so it is fixed by the registry at the same moment the layout
         # is. self.seasonality_prior_scale remains the model-wide default a
         # component inherits when it does not carry its own.
-        self.sigmas = seasonality_prior_scales(self.seasonalities)
+        # [stan] `sigmas` spans every regressor column, seasonal then holiday,
+        # in the same order as the design matrix.
+        self.sigmas = np.concatenate([seasonality_prior_scales(self.seasonalities),
+                                      np.asarray(self._holiday_prior_scales, dtype=float)])
 
     def _generate_change_points(self) -> None:
         """Changepoints spaced uniformly in *scaled time* over the first
@@ -744,8 +952,12 @@ class CustomProphet:
         what keeps the objective usable on its own.
         """
         A = (self.t_scaled[:, None] >= self.change_points) * 1
+        # [fc] make_all_seasonality_features appends holiday columns after the
+        # seasonal ones; `beta` and `sigmas` follow that order.
         x = seasonality_design_matrix(self.t_seasonality, self.seasonalities,
                                       self.condition_masks)
+        if self._holiday_columns:
+            x = np.concatenate([x, self._holiday_features], axis=1)
         return A, x
 
     def _minus_log_posterior(self, params: np.array, include_l1_prior: bool=True, design=None) -> float:
@@ -897,6 +1109,13 @@ class CustomProphet:
         # after selection, since a conditioned component may have been added by
         # hand while an auto-selected one never carries a condition
         self.condition_masks = condition_masks(self.seasonalities, df)
+        self._holiday_features, self._holiday_prior_scales = self._holiday_design(self.ds)
+        self._holiday_columns = 0 if self._holiday_features is None else self._holiday_features.shape[1]
+        # recorded after the features are built, so predict presents the same
+        # columns even for a holiday that never lands in the future frame
+        if self.holidays is not None and self.train_holiday_names is None:
+            self.train_holiday_names = list(
+                holiday_features(self.ds, self.holidays, self.holidays_prior_scale)[2])
         self._build_layout()
         self._generate_change_points()
 
@@ -909,7 +1128,7 @@ class CustomProphet:
             'm': m_init,
             'delta': np.zeros(self.layout.n_changepoints),
             'sigma_obs': SIGMA_OBS_INIT,
-            'beta': np.zeros(self.layout.n_seasonality_columns),
+            'beta': np.zeros(self.layout.n_regressor_columns),
         }
         if initial_params is not None:
             initial_params_dict.update(initial_params)
@@ -934,7 +1153,7 @@ class CustomProphet:
         n_delta = self.layout.n_changepoints
         # Split-space bounds: k, m free; delta_pos/delta_neg >= 0; then sigma_obs, beta
         bounds = [(None, None)] * 2 + [(0, None)] * (2 * n_delta) + [sigma_obs_bounds] + \
-                 [(None, None)] * self.layout.n_seasonality_columns
+                 [(None, None)] * self.layout.n_regressor_columns
 
         z0 = canonical_to_split(initial_params_array, self.layout)
 
@@ -1007,6 +1226,13 @@ class CustomProphet:
         # after selection, since a conditioned component may have been added by
         # hand while an auto-selected one never carries a condition
         self.condition_masks = condition_masks(self.seasonalities, df)
+        self._holiday_features, self._holiday_prior_scales = self._holiday_design(self.ds)
+        self._holiday_columns = 0 if self._holiday_features is None else self._holiday_features.shape[1]
+        # recorded after the features are built, so predict presents the same
+        # columns even for a holiday that never lands in the future frame
+        if self.holidays is not None and self.train_holiday_names is None:
+            self.train_holiday_names = list(
+                holiday_features(self.ds, self.holidays, self.holidays_prior_scale)[2])
         self._build_layout()
         self._generate_change_points()
 
@@ -1022,7 +1248,7 @@ class CustomProphet:
             'k': k_init,
             'm': m_init,
             'delta': np.zeros(self.layout.n_changepoints),
-            'beta': np.zeros(self.layout.n_seasonality_columns),
+            'beta': np.zeros(self.layout.n_regressor_columns),
         }
         if initial_params is not None:
             defaults.update(initial_params)
@@ -1051,6 +1277,8 @@ class CustomProphet:
             seasonality_periods=[props["period"] for props in self.seasonalities.values()],
             seasonality_conditions=condition_matrix(self.seasonalities,
                                                     self.condition_masks, self.T),
+            holiday_features=(self._holiday_features if self._holiday_columns
+                              else np.empty((self.T, 0))),
             verbose=verbose,
         )
 
@@ -1138,6 +1366,8 @@ class CustomProphet:
         # so the same column is required there as at fit time.
         x = seasonality_design_matrix(seasonal_time(future_df['ds']), self.seasonalities,
                                       condition_masks(self.seasonalities, future_df))
+        if self._holiday_columns:
+            x = np.concatenate([x, self._holiday_design(future_df['ds'])[0]], axis=1)
         seasonality = x.dot(beta)
 
         # Combine trend and seasonality for the forecast

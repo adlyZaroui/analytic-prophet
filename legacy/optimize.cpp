@@ -96,7 +96,8 @@ Eigen::MatrixXd changepoint_matrix(const Eigen::VectorXd& t_scaled_vec,
 Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
                                    const std::vector<int>& fourier_orders,
                                    const std::vector<double>& periods,
-                                   const Eigen::Ref<const Eigen::MatrixXd>& conditions) {
+                                   const Eigen::Ref<const Eigen::MatrixXd>& conditions,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& holiday_features) {
     if (fourier_orders.size() != periods.size()) {
         throw std::invalid_argument(
             "fourier_orders has " + std::to_string(fourier_orders.size()) +
@@ -134,12 +135,25 @@ Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
             "column per seasonality, in the same order, or none at all");
     }
 
+    if (holiday_features.size() != 0 &&
+            holiday_features.rows() != t_seasonality_vec.size()) {
+        throw std::invalid_argument(
+            "holiday_features has " + std::to_string(holiday_features.rows()) +
+            " rows but there are " + std::to_string(t_seasonality_vec.size()) +
+            " observations");
+    }
+
     int columns = 0;
     for (int order : fourier_orders) {
         columns += 2 * order;
     }
+    // [fc] make_all_seasonality_features: holiday columns follow the seasonal
+    // ones. They are indicator data rather than anything derivable from a
+    // period, so unlike the Fourier and changepoint blocks they are passed in
+    // rather than built here -- there is nothing to recompute.
+    const int holiday_columns = static_cast<int>(holiday_features.cols());
 
-    Eigen::MatrixXd x(t_seasonality_vec.size(), columns);
+    Eigen::MatrixXd x(t_seasonality_vec.size(), columns + holiday_columns);
     int offset = 0;
     for (std::size_t i = 0; i < fourier_orders.size(); ++i) {
         const int width = 2 * fourier_orders[i];
@@ -152,6 +166,9 @@ Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
         }
         x.block(0, offset, t_seasonality_vec.size(), width) = block;
         offset += width;
+    }
+    if (holiday_columns > 0) {
+        x.block(0, offset, t_seasonality_vec.size(), holiday_columns) = holiday_features;
     }
     return x;
 }
@@ -384,6 +401,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       const std::vector<int>& fourier_orders,
                                       const std::vector<double>& seasonality_periods,
                                       const Eigen::Ref<const Eigen::MatrixXd>& seasonality_conditions,
+                                      const Eigen::Ref<const Eigen::MatrixXd>& holiday_features,
                                       double& mlp_out,
                                       Eigen::Ref<Eigen::VectorXd> grad_out,
                                       bool include_l1_prior = true) {
@@ -391,7 +409,8 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                      changepoint_matrix(t_scaled_vec, change_points_vec),
                                      seasonality_matrix(t_seasonality_vec, fourier_orders,
                                                         seasonality_periods,
-                                                        seasonality_conditions),
+                                                        seasonality_conditions,
+                                                        holiday_features),
                                      normalized_y_vec, sigma_obs_prior_scale, sigma_k,
                                      sigma_m, sigmas, tau, mlp_out, grad_out,
                                      include_l1_prior);
@@ -483,6 +502,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
                         const std::vector<int>& fourier_orders,
                         const std::vector<double>& seasonality_periods,
                         const Eigen::Ref<const Eigen::MatrixXd>& seasonality_conditions,
+                        const Eigen::Ref<const Eigen::MatrixXd>& holiday_features,
                         bool verbose) {
 
         const int params_size = static_cast<int>(params.size());
@@ -500,7 +520,8 @@ OptimizeResult optimize(Eigen::VectorXd params,
         const Eigen::MatrixXd A = changepoint_matrix(t_scaled, change_points);
         const Eigen::MatrixXd x = seasonality_matrix(t_seasonality, fourier_orders,
                                                      seasonality_periods,
-                                                     seasonality_conditions);
+                                                     seasonality_conditions,
+                                                     holiday_features);
         validate_inputs(t_scaled, change_points, A, x, normalized_y,
                         sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, tau);
 
@@ -604,13 +625,15 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         const std::vector<int>& fourier_orders,
         const std::vector<double>& seasonality_periods,
         const Eigen::Ref<const Eigen::MatrixXd>& seasonality_conditions,
+        const Eigen::Ref<const Eigen::MatrixXd>& holiday_features,
         bool include_l1_prior) {
     double mlp = 0.0;
     Eigen::VectorXd gradient(params.size());
     minus_log_posterior_and_gradient(params, t_scaled, change_points, t_seasonality,
                                      normalized_y, sigma_obs_prior_scale, sigma_k, sigma_m, sigmas,
                                      tau, fourier_orders, seasonality_periods,
-                                     seasonality_conditions, mlp, gradient,
+                                     seasonality_conditions, holiday_features,
+                                     mlp, gradient,
                                      include_l1_prior);
     return {mlp, gradient};
 }
@@ -654,6 +677,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("fourier_orders"),
           py::arg("seasonality_periods"),
           py::arg("seasonality_conditions") = Eigen::MatrixXd(),
+          py::arg("holiday_features") = Eigen::MatrixXd(),
           py::arg("verbose") = false,
           // The optimizer touches no Python objects, so let other threads run.
           py::call_guard<py::gil_scoped_release>(),
@@ -675,6 +699,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("fourier_orders"),
           py::arg("seasonality_periods"),
           py::arg("seasonality_conditions") = Eigen::MatrixXd(),
+          py::arg("holiday_features") = Eigen::MatrixXd(),
           py::arg("include_l1_prior") = true,
           py::call_guard<py::gil_scoped_release>(),
           "Return (minus_log_posterior, gradient) at `params`. With "
