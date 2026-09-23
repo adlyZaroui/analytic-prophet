@@ -68,7 +68,12 @@ def test_fitted_sigma_obs_approaches_the_gaussian_mle(peyton_manning_df, compile
     1.00008 at T=600.
     """
     model = pin_yearly_only(CustomProphet())
-    model.tau = model.sigma = model.sigma_k = model.sigma_m = 1e4
+    # seasonality_prior_scale, not `sigma`: the latter was removed in #45 when
+    # the prior scale became per column, so setting it here made an unused
+    # attribute and left beta's prior at its real 10.0 -- defeating the premise
+    # above while the test went on passing.
+    model.tau = model.sigma_k = model.sigma_m = 1e4
+    model.seasonality_prior_scale = 1e4
 
     model.fit_cpp(peyton_manning_df.iloc[:600].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)

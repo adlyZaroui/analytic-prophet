@@ -18,13 +18,16 @@ namespace py = pybind11;
 // Must stay in lockstep with fourier_components() in customProphet.py --
 // tests/test_prophet_agreement.py compares both against Prophet's own matrix.
 Eigen::MatrixXd fourier_components(const Eigen::VectorXd& t_days, double period, int n) {
-    Eigen::VectorXd orders = Eigen::VectorXd::LinSpaced(n, 1, n) * (2 * M_PI / period);
-    Eigen::MatrixXd angles = t_days * orders.transpose();
+    // Operation order is Prophet's, not merely algebraically equal to it --
+    // see the note in customProphet.fourier_components. Folding 2*pi/period
+    // into one constant costs up to 7e-12 on angles of ~15000 radians.
+    const Eigen::VectorXd x_T = t_days * (M_PI * 2.0);
 
     Eigen::MatrixXd result(t_days.size(), 2 * n);
     for (int i = 0; i < n; ++i) {
-        result.col(2 * i) = angles.col(i).array().sin();
-        result.col(2 * i + 1) = angles.col(i).array().cos();
+        const Eigen::VectorXd angles = x_T * ((i + 1.0) / period);
+        result.col(2 * i) = angles.array().sin();
+        result.col(2 * i + 1) = angles.array().cos();
     }
     return result;
 }
@@ -84,9 +87,16 @@ Eigen::MatrixXd changepoint_matrix(const Eigen::VectorXd& t_scaled_vec,
 // order given, which is the order the caller's `beta` is laid out in. Orders
 // and periods are arguments, not constants: registering a second seasonality
 // is the whole point of #16, and nothing here needs recompiling for it.
+// `conditions` is T x n_components, one column per registered seasonality in
+// the same order, holding 1 where the component applies and 0 where it does
+// not. An empty matrix means no component is conditioned, which is the common
+// case; carrying an all-ones matrix for it would be pure overhead, and
+// carrying an index of which components have a condition would be a second
+// thing to keep in step with the registry order.
 Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
                                    const std::vector<int>& fourier_orders,
-                                   const std::vector<double>& periods) {
+                                   const std::vector<double>& periods,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& conditions) {
     if (fourier_orders.size() != periods.size()) {
         throw std::invalid_argument(
             "fourier_orders has " + std::to_string(fourier_orders.size()) +
@@ -112,6 +122,18 @@ Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
         }
     }
 
+    const bool conditioned = conditions.size() != 0;
+    if (conditioned &&
+            (conditions.rows() != t_seasonality_vec.size() ||
+             conditions.cols() != static_cast<Eigen::Index>(fourier_orders.size()))) {
+        throw std::invalid_argument(
+            "seasonality_conditions is " + std::to_string(conditions.rows()) + "x" +
+            std::to_string(conditions.cols()) + " but there are " +
+            std::to_string(t_seasonality_vec.size()) + " observations and " +
+            std::to_string(fourier_orders.size()) + " seasonalities; it needs one "
+            "column per seasonality, in the same order, or none at all");
+    }
+
     int columns = 0;
     for (int order : fourier_orders) {
         columns += 2 * order;
@@ -121,8 +143,14 @@ Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
     int offset = 0;
     for (std::size_t i = 0; i < fourier_orders.size(); ++i) {
         const int width = 2 * fourier_orders[i];
-        x.block(0, offset, t_seasonality_vec.size(), width) =
+        Eigen::MatrixXd block =
             fourier_components(t_seasonality_vec, periods[i], fourier_orders[i]);
+        // [fc] features[~df[condition_name]] = 0 -- the columns stay, so beta
+        // keeps its width and only the excluded rows stop contributing.
+        if (conditioned) {
+            block.array().colwise() *= conditions.col(i).array();
+        }
+        x.block(0, offset, t_seasonality_vec.size(), width) = block;
         offset += width;
     }
     return x;
@@ -355,13 +383,15 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       double tau,
                                       const std::vector<int>& fourier_orders,
                                       const std::vector<double>& seasonality_periods,
+                                      const Eigen::Ref<const Eigen::MatrixXd>& seasonality_conditions,
                                       double& mlp_out,
                                       Eigen::Ref<Eigen::VectorXd> grad_out,
                                       bool include_l1_prior = true) {
     minus_log_posterior_and_gradient(params_vec, t_scaled_vec, change_points_vec,
                                      changepoint_matrix(t_scaled_vec, change_points_vec),
                                      seasonality_matrix(t_seasonality_vec, fourier_orders,
-                                                        seasonality_periods),
+                                                        seasonality_periods,
+                                                        seasonality_conditions),
                                      normalized_y_vec, sigma_obs_prior_scale, sigma_k,
                                      sigma_m, sigmas, tau, mlp_out, grad_out,
                                      include_l1_prior);
@@ -452,6 +482,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
                         double tau,
                         const std::vector<int>& fourier_orders,
                         const std::vector<double>& seasonality_periods,
+                        const Eigen::Ref<const Eigen::MatrixXd>& seasonality_conditions,
                         bool verbose) {
 
         const int params_size = static_cast<int>(params.size());
@@ -468,7 +499,8 @@ OptimizeResult optimize(Eigen::VectorXd params,
         // first objective evaluation inside it.
         const Eigen::MatrixXd A = changepoint_matrix(t_scaled, change_points);
         const Eigen::MatrixXd x = seasonality_matrix(t_seasonality, fourier_orders,
-                                                     seasonality_periods);
+                                                     seasonality_periods,
+                                                     seasonality_conditions);
         validate_inputs(t_scaled, change_points, A, x, normalized_y,
                         sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, tau);
 
@@ -571,12 +603,14 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         double tau,
         const std::vector<int>& fourier_orders,
         const std::vector<double>& seasonality_periods,
+        const Eigen::Ref<const Eigen::MatrixXd>& seasonality_conditions,
         bool include_l1_prior) {
     double mlp = 0.0;
     Eigen::VectorXd gradient(params.size());
     minus_log_posterior_and_gradient(params, t_scaled, change_points, t_seasonality,
                                      normalized_y, sigma_obs_prior_scale, sigma_k, sigma_m, sigmas,
-                                     tau, fourier_orders, seasonality_periods, mlp, gradient,
+                                     tau, fourier_orders, seasonality_periods,
+                                     seasonality_conditions, mlp, gradient,
                                      include_l1_prior);
     return {mlp, gradient};
 }
@@ -619,6 +653,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("tau"),
           py::arg("fourier_orders"),
           py::arg("seasonality_periods"),
+          py::arg("seasonality_conditions") = Eigen::MatrixXd(),
           py::arg("verbose") = false,
           // The optimizer touches no Python objects, so let other threads run.
           py::call_guard<py::gil_scoped_release>(),
@@ -639,6 +674,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("tau"),
           py::arg("fourier_orders"),
           py::arg("seasonality_periods"),
+          py::arg("seasonality_conditions") = Eigen::MatrixXd(),
           py::arg("include_l1_prior") = true,
           py::call_guard<py::gil_scoped_release>(),
           "Return (minus_log_posterior, gradient) at `params`. With "

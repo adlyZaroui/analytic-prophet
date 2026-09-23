@@ -120,15 +120,15 @@ BETA_SLICE = DEFAULT_LAYOUT.beta
 
 # An entry mirrors Prophet's own, field for field -- [fc] add_seasonality:
 #     {period, fourier_order, prior_scale, mode, condition_name}
-# `mode` and `condition_name` are not honored yet. They are carried at their
-# Prophet defaults and *checked* rather than silently ignored, because a
-# registry that accepted `mode="multiplicative"` and fitted it additively would
-# be worse than one that cannot express it: see check_seasonality_supported.
+# `mode` is not honored yet. It is carried at its Prophet default and *checked*
+# rather than silently ignored, because a registry that accepted
+# `mode="multiplicative"` and fitted it additively would be worse than one that
+# cannot express it: see check_seasonality_supported.
 SEASONALITY_DEFAULTS = {"prior_scale": SIGMA, "mode": "additive", "condition_name": None}
 
 # Of those, the ones the fit actually reads. The rest are checked rather than
 # ignored -- see check_seasonality_supported.
-HONORED_SEASONALITY_FIELDS = ("period", "fourier_order", "prior_scale")
+HONORED_SEASONALITY_FIELDS = ("period", "fourier_order", "prior_scale", "condition_name")
 
 
 def seasonality(period, fourier_order, **overrides):
@@ -231,9 +231,9 @@ UNDER_IDENTIFIED_WARNING = (
 def check_seasonality_supported(seasonalities):
     """Reject registry fields the fit does not yet honor.
 
-    `mode` needs the s_a/s_m split of #16 task 11 and `condition_name` needs
-    task 7. Until then a non-default value would be accepted and quietly
-    dropped, which is the failure mode this whole issue exists to avoid.
+    `mode` needs the s_a/s_m split of #16 task 11. Until then a non-default
+    value would be accepted and quietly dropped, which is the failure mode this
+    whole issue exists to avoid.
 
     `prior_scale` used to be on this list and is honored as of task 5, so it is
     validated for sanity rather than rejected -- Stan declares `sigmas` with no
@@ -256,16 +256,67 @@ def check_seasonality_supported(seasonalities):
                 f"normal(0, prior_scale) needs a positive scale")
 
 
-def seasonality_design_matrix(t_seasonality, seasonalities):
+def condition_masks(seasonalities, df):
+    """Validate each component's condition column and return it as a bool array.
+
+    [fc] setup_dataframe. Returns name -> mask for the conditioned components
+    only; a component without a `condition_name` is absent from the result and
+    applies everywhere.
+
+    `isin([True, False])` is Prophet's own test, and it accepts 0/1 as well as
+    True/False because `1 == True` in pandas -- so an integer indicator column
+    works, while NaN does not.
+    """
+    masks = {}
+    for name, props in seasonalities.items():
+        condition_name = props.get("condition_name")
+        if condition_name is None:
+            continue
+        if condition_name not in df:
+            raise ValueError(f"Condition {condition_name!r} missing from dataframe")
+        column = df[condition_name]
+        if not column.isin([True, False]).all():
+            raise ValueError(f"Found non-boolean in column {condition_name!r}")
+        masks[name] = column.astype(bool).to_numpy()
+    return masks
+
+
+def seasonality_design_matrix(t_seasonality, seasonalities, masks=None):
     """Fourier features for every registered component, concatenated.
 
     Column order follows the registry's insertion order, and within a component
     Prophet's own interleaving. With one yearly component this is exactly the
     matrix built before the registry existed.
+
+    A component named in `masks` has the rows where its mask is False zeroed --
+    [fc] `features[~df[props['condition_name']]] = 0`. The columns stay in the
+    matrix, so `beta` keeps its width and only the rows the condition excludes
+    stop contributing.
     """
-    blocks = [fourier_components(t_seasonality, props["period"], props["fourier_order"])
-              for props in seasonalities.values()]
+    masks = masks or {}
+    blocks = []
+    for name, props in seasonalities.items():
+        block = fourier_components(t_seasonality, props["period"], props["fourier_order"])
+        if name in masks:
+            block = np.where(np.asarray(masks[name], dtype=bool)[:, None], block, 0.0)
+        blocks.append(block)
     return np.concatenate(blocks, axis=1) if blocks else np.empty((len(t_seasonality), 0))
+
+
+def condition_matrix(seasonalities, masks, n_rows):
+    """The masks as a T x n_components matrix, in registry order, for the C++.
+
+    An empty matrix means no component is conditioned, which is the common case
+    and the one the C++ takes as its default. Unconditioned components are all
+    ones, so the C++ applies one uniform rule rather than carrying an index of
+    which components have a condition.
+    """
+    if not masks:
+        return np.empty((n_rows, 0))
+    return np.column_stack([
+        np.asarray(masks[name], dtype=float) if name in masks else np.ones(n_rows)
+        for name in seasonalities
+    ])
 
 
 def seasonality_columns(seasonalities):
@@ -332,10 +383,19 @@ def fourier_components(t_days, period, n):
     cosines then all sines, which permutes `beta` even when the phase agrees.
     """
     t_days = np.asarray(t_days, dtype=float)
-    angles = (2 * np.pi / period) * np.outer(t_days, np.arange(1, n + 1))
+
+    # The order of operations is Prophet's, not merely algebraically equal to
+    # it: `2*pi*t` first, then scaled by `(i+1)/period`. Folding 2*pi/period
+    # into one constant is the same function in exact arithmetic and differs by
+    # up to 7e-12 in floating point, because t is days since 1970 -- angles run
+    # to ~15000 radians, where a 1-ULP difference in the angle is ~1e-12 in the
+    # result. Matching the order makes the matrices bit-identical instead.
+    x_T = np.pi * 2 * t_days
     result = np.empty((t_days.shape[0], 2 * n))
-    result[:, 0::2] = np.sin(angles)
-    result[:, 1::2] = np.cos(angles)
+    for i in range(n):
+        c = (i + 1) / period * x_T
+        result[:, 2 * i] = np.sin(c)
+        result[:, 2 * i + 1] = np.cos(c)
     return result
 
 def extract_params(params, layout=DEFAULT_LAYOUT):
@@ -495,6 +555,9 @@ class CustomProphet:
         # then, rather than growing checks as each feature lands.
         self.extra_regressors = {}
         self.holidays = None
+        # name -> boolean array, for the conditioned components only. Set from
+        # the frame each fit is given, and required again at predict time.
+        self.condition_masks = {}
         # [fc] Prophet.__init__ seasonality_mode='additive'. The per-component
         # `mode` falls back to this when add_seasonality is given none.
         self.seasonality_mode = 'additive'
@@ -563,12 +626,15 @@ class CustomProphet:
         _set_auto_seasonalities leaves a name it finds already registered
         alone.
 
-        Two arguments are accepted, validated, and then refused rather than
+        `condition_name` names a boolean column that the frames passed to
+        fit() and predict() must both carry; rows where it is False have this
+        component's features zeroed, so it contributes nothing there.
+
+        One argument is accepted, validated, and then refused rather than
         silently dropped: `mode='multiplicative'` needs the s_a/s_m split of
-        #16 task 11, and `condition_name` needs task 7. Prophet accepts both.
-        Raising here instead of at fit time is deliberate -- the call site is
-        where the mistake is, and a NotImplementedError three steps later is
-        worth much less.
+        #16 task 11. Prophet accepts it. Raising here instead of at fit time is
+        deliberate -- the call site is where the mistake is, and a
+        NotImplementedError three steps later is worth much less.
         """
         if self.opt_params is not None:
             raise RuntimeError(
@@ -681,7 +747,8 @@ class CustomProphet:
         what keeps the objective usable on its own.
         """
         A = (self.t_scaled[:, None] >= self.change_points) * 1
-        x = seasonality_design_matrix(self.t_seasonality, self.seasonalities)
+        x = seasonality_design_matrix(self.t_seasonality, self.seasonalities,
+                                      self.condition_masks)
         return A, x
 
     def _minus_log_posterior(self, params: np.array, include_l1_prior: bool=True, design=None) -> float:
@@ -830,6 +897,9 @@ class CustomProphet:
 
         self._normalize_y()
         self._set_auto_seasonalities()
+        # after selection, since a conditioned component may have been added by
+        # hand while an auto-selected one never carries a condition
+        self.condition_masks = condition_masks(self.seasonalities, df)
         self._build_layout()
         self._generate_change_points()
 
@@ -937,6 +1007,9 @@ class CustomProphet:
         self.t_seasonality = seasonal_time(self.ds)
         self._normalize_y()
         self._set_auto_seasonalities()
+        # after selection, since a conditioned component may have been added by
+        # hand while an auto-selected one never carries a condition
+        self.condition_masks = condition_masks(self.seasonalities, df)
         self._build_layout()
         self._generate_change_points()
 
@@ -979,6 +1052,8 @@ class CustomProphet:
             tau=self.tau,
             fourier_orders=[props["fourier_order"] for props in self.seasonalities.values()],
             seasonality_periods=[props["period"] for props in self.seasonalities.values()],
+            seasonality_conditions=condition_matrix(self.seasonalities,
+                                                    self.condition_masks, self.T),
             verbose=verbose,
         )
 
@@ -1060,8 +1135,12 @@ class CustomProphet:
         # Trend component calculation
         trend = compute_trend(k, m, delta, self.change_points, future_df['t_scaled'].values, self.y_absmax)
 
-        # Seasonality component calculation
-        x = seasonality_design_matrix(seasonal_time(future_df['ds']), self.seasonalities)
+        # Seasonality component calculation. The masks come from `future_df`,
+        # not from the fit: a conditioned component applies on whichever future
+        # rows the caller says it does. [fc] predict() re-runs setup_dataframe,
+        # so the same column is required there as at fit time.
+        x = seasonality_design_matrix(seasonal_time(future_df['ds']), self.seasonalities,
+                                      condition_masks(self.seasonalities, future_df))
         seasonality = x.dot(beta)
 
         # Combine trend and seasonality for the forecast
