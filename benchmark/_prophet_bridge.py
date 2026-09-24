@@ -14,8 +14,12 @@ implementations can be scored by the original's own objective.
 import numpy as np
 
 
-def capture_stan_model(prophet_model, df):
+def capture_stan_model(prophet_model, df, **fit_kwargs):
     """Fit `prophet_model` and return (cmdstan_model, stan_data, params).
+
+    `fit_kwargs` reach `CmdStanModel.optimize` through Prophet's own
+    `args.update(kwargs)`, which is how `algorithm='Newton'` is forced -- see
+    #25, where the two algorithms have to be compared on the same data.
 
     The data Prophet hands to Stan is not exposed on the fitted object, so it
     is intercepted at the `CmdStanModel.optimize` call. That couples this to
@@ -35,7 +39,7 @@ def capture_stan_model(prophet_model, df):
 
     CmdStanModel.optimize = spy
     try:
-        prophet_model.fit(df)
+        prophet_model.fit(df, **fit_kwargs)
     finally:
         CmdStanModel.optimize = original
 
