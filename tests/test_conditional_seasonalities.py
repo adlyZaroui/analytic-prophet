@@ -158,7 +158,7 @@ def test_both_objectives_agree_with_a_conditioned_component(peyton_manning_df,
     model._normalize_y()
     model.condition_masks = condition_masks(model.seasonalities, df)
     model._build_layout()
-    model._generate_change_points()
+    model.set_changepoints()
 
     rng = np.random.default_rng(0)
     params = np.concatenate(([0.3], [-0.7], rng.normal(scale=0.01, size=25), [0.8],
@@ -316,7 +316,7 @@ def test_the_feature_matrix_reproduces_prophets_column_for_column(
     X_stan = np.asarray(stan_data["X"], dtype=float)
 
     ours = conditioned_model()
-    ours._generate_change_points = lambda: setattr(
+    ours.set_changepoints = lambda: setattr(
         ours, "changepoints_t", np.asarray(stan_data["t_change"], dtype=float))
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
@@ -346,7 +346,7 @@ def test_posterior_agrees_with_prophet_on_a_conditioned_model(prophet_comparison
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = conditioned_model()
-    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
+    ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],

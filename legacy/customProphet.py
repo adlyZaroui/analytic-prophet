@@ -909,7 +909,18 @@ class CustomProphet:
         self.growth = growth
         self.cap_scaled = None
         self.floor = None
-        self.n_changepoints = n_changepoints
+        # [fc] an explicit list sets n_changepoints from its length and marks
+        # the model as specified; otherwise the count stands and the dates are
+        # generated at fit time. The flag is what keeps a refit from reading
+        # the previous fit's generated dates back as a user-supplied list.
+        if changepoints is not None:
+            self.changepoints = pd.Series(pd.to_datetime(changepoints), name="ds")
+            self.n_changepoints = len(self.changepoints)
+            self.specified_changepoints = True
+        else:
+            self.changepoints = changepoints
+            self.n_changepoints = n_changepoints
+            self.specified_changepoints = False
         self.changepoints_t = None
         self.changepoint_range = changepoint_range
 
@@ -973,23 +984,18 @@ class CustomProphet:
 
         self.t_seasonality = None
 
-        self._reject_unsupported(changepoints, mcmc_samples, stan_backend, scaling)
+        self._reject_unsupported(mcmc_samples, stan_backend, scaling)
         if holidays is not None:
             self.add_holidays(holidays)
 
     @staticmethod
-    def _reject_unsupported(changepoints, mcmc_samples, stan_backend, scaling):
+    def _reject_unsupported(mcmc_samples, stan_backend, scaling):
         """Refuse what Prophet accepts and this does not.
 
         Accepting these silently would be the failure mode the whole of #16
         exists to avoid, and omitting them would fail with an AttributeError
         that says nothing about why.
         """
-        if changepoints is not None:
-            raise NotImplementedError(
-                "changepoints=... (an explicit list) is not supported; "
-                "changepoints are placed from n_changepoints and "
-                "changepoint_range. Tracked in #15.")
         if mcmc_samples:
             raise NotImplementedError(
                 f"mcmc_samples={mcmc_samples} is not supported; this "
@@ -1376,7 +1382,12 @@ class CustomProphet:
         follow the model rather than the other way round.
         """
         check_seasonality_supported(self.seasonalities)
-        self.layout = ParameterLayout(self.n_changepoints,
+        # from the changepoints themselves: set_changepoints caps the count on
+        # short series ([fc]), so `n_changepoints` is a request and
+        # `len(changepoints_t)` is what was placed
+        n_changepoints = (self.n_changepoints if self.changepoints_t is None
+                          else len(self.changepoints_t))
+        self.layout = ParameterLayout(n_changepoints,
                                       seasonality_columns(self.seasonalities),
                                       self._data_column_count)
         # `sigmas` in Stan's data block: one entry per column of the design
@@ -1396,24 +1407,63 @@ class CustomProphet:
         self.s_a = 1.0 - self.s_m
         self._multiplicative = bool(np.any(self.s_m))
 
-    def _generate_change_points(self) -> None:
-        """Changepoints spaced uniformly in *scaled time* over the first
-        changepoint_range of history.
+    def set_changepoints(self) -> None:
+        """Place the potential changepoints. [fc] Prophet.set_changepoints.
 
-        KNOWN DIVERGENCE from [fc] set_changepoints, which spaces them over
-        uniformly-spaced row *indices* of the first 80% of history:
+        Three behaviours, all of them ported together because splitting the
+        function leaves it half-right:
 
-            np.linspace(0, hist_size - 1, n_changepoints + 1).round().astype(int)
-
-        and then takes the ds values at those rows. For regularly-spaced daily
-        data the two agree; for irregular or gappy series they diverge, since
+        **Placement is by row index, not by time.** Prophet spaces
+        `n_changepoints + 1` indexes evenly across the first
+        `changepoint_range` of the *rows* and takes the dates there. This
+        implementation spaced them evenly in scaled *time* instead. The two
+        agree on regularly-spaced data and diverge on anything gappy, since
         index-spacing follows observation density and time-spacing does not.
-        Left as-is deliberately -- see the follow-up issue.
-        """
-        max_t_scaled = np.max(self.t)
-        self.changepoints_t = np.linspace(0, self.changepoint_range * max_t_scaled, self.n_changepoints + 1)[1:]
 
-        
+        **The count is capped.** `n_changepoints + 1 > floor(T * range)` caps it
+        at `floor(T * range) - 1`, which bites below about 32 observations --
+        15 changepoints at T = 20 where this used 25, ten more rate parameters
+        than Prophet fits on twenty points.
+
+        **An explicit list is honoured**, and must fall inside the training
+        data. `changepoints=` was rejected by the constructor until now (#52).
+
+        One consequence worth naming: Prophet's changepoints land *on actual
+        observation times*, so `t[i] >= t_change[j]` is exactly on the boundary
+        for one row per changepoint. With time-spaced changepoints that never
+        happened here, which is why `>=` against `>` was numerically inert; it
+        is not inert any more.
+        """
+        if self.specified_changepoints:
+            if len(self.changepoints) > 0:
+                changepoints = pd.to_datetime(pd.Series(np.asarray(self.changepoints)))
+                if changepoints.min() < self.ds.min() or changepoints.max() > self.ds.max():
+                    raise ValueError("Changepoints must fall within training data.")
+                self.changepoints = changepoints
+        else:
+            hist_size = int(np.floor(self.T * self.changepoint_range))
+            if self.n_changepoints + 1 > hist_size:
+                self.n_changepoints = hist_size - 1
+                logger.info("n_changepoints greater than number of observations. "
+                            "Using %d.", self.n_changepoints)
+            if self.n_changepoints > 0:
+                indexes = np.linspace(0, hist_size - 1,
+                                      self.n_changepoints + 1).round().astype(int)
+                # tail(-1): the first index is the series start, which is never
+                # itself a changepoint
+                self.changepoints = pd.Series(np.asarray(self.ds)[indexes][1:])
+            else:
+                self.changepoints = pd.Series(pd.to_datetime([]), name="ds")
+
+        if len(self.changepoints) > 0:
+            scale = self.ds.max() - self.ds.min()
+            self.changepoints_t = np.sort(np.asarray(
+                (pd.to_datetime(self.changepoints) - self.ds.min()) / scale, dtype=float))
+        else:
+            # [fc] a dummy, so the design matrix keeps a column and `delta`
+            # keeps an entry rather than the layout collapsing
+            self.changepoints_t = np.array([0.0])
+
     def _design_matrices(self):
         """The changepoint indicator A (T x S) and the Fourier design matrix
         (T x K).
@@ -1708,11 +1758,11 @@ class CustomProphet:
             self.train_holiday_column_names = list(make_holiday_features(
                 self.ds, self.construct_holiday_dataframe(self.ds),
                 self.holidays_prior_scale)[0].columns)
+        self.set_changepoints()
         self._build_layout()
         # built once here, not per objective evaluation (#28)
         self._fit_design_matrix = np.ascontiguousarray(
             self.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
-        self._generate_change_points()
 
         # [fc] calculate_initial_params: k/m from linear_growth_init, delta and
         # beta at zero, sigma_obs at 1.0. Prophet passes these to Stan
@@ -1853,11 +1903,11 @@ class CustomProphet:
             self.train_holiday_column_names = list(make_holiday_features(
                 self.ds, self.construct_holiday_dataframe(self.ds),
                 self.holidays_prior_scale)[0].columns)
+        self.set_changepoints()
         self._build_layout()
         # built once here, not per objective evaluation (#28)
         self._fit_design_matrix = np.ascontiguousarray(
             self.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
-        self._generate_change_points()
 
         # Same deterministic initialization as fit(), so both fit paths start
         # from the same point. [fc] calculate_initial_params.

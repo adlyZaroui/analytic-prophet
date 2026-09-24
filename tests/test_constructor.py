@@ -126,7 +126,6 @@ def test_a_bad_holidays_frame_is_rejected_at_construction():
 # -- what is accepted and then refused ----------------------------------
 
 @pytest.mark.parametrize("kwargs,fragment", [
-    ({"changepoints": ["2010-01-01"]}, "#15"),
     ({"mcmc_samples": 100}, "MAP only"),
     ({"stan_backend": "cmdstanpy"}, "no Stan here"),
     ({"scaling": "minmax"}, "only 'absmax'"),
@@ -141,6 +140,7 @@ def test_unsupported_features_are_refused_not_ignored(kwargs, fragment):
     {"scaling": "absmax"},
     {"changepoints": None},
     {"stan_backend": None},
+    {"changepoints": ["2008-01-01"]},   # supported as of #15
 ])
 def test_the_supported_value_of_each_is_accepted(kwargs):
     """The refusals must not reject Prophet's own defaults, or every ported

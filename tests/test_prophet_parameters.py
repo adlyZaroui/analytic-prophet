@@ -213,7 +213,7 @@ def test_cpp_core_accepts_any_dimensions(prepared_model, cpp_module, n_changepoi
 
     model = prepared_model
     model.n_changepoints = n_changepoints
-    model._generate_change_points()
+    model.set_changepoints()
 
     n_params = 2 + n_changepoints + 2 * fourier_order + 1
     params = np.zeros(n_params)

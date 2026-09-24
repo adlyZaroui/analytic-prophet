@@ -215,7 +215,7 @@ def test_design_matrix_and_posterior_match_prophets(prophet_comparison,
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = CustomProphet().add_country_holidays("US")
-    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
+    ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     _, X_ours = ours._design_matrices()

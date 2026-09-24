@@ -397,9 +397,9 @@ length; `fit_cpp` is the compiled path, `fit` the Python reference.
 
 | T | prophet | `fit` | `fit_cpp` |
 |---|---|---|---|
-| 300 | 0.043 | 0.227 (5.28×) | **0.030 (0.69×)** |
-| 1000 | 0.157 | 0.422 (2.69×) | **0.132 (0.84×)** |
-| 2905 | 0.580 | 1.514 (2.61×) | **0.348 (0.60×)** |
+| 300 | 0.048 | 0.115 (2.40×) | **0.018 (0.40×)** |
+| 1000 | 0.158 | 0.551 (3.49×) | **0.105 (0.68×)** |
+| 2905 | 0.581 | 3.222 (5.55×) | **0.397 (0.68×)** |
 
 **Forecast intervals** — mean band width over the horizon, Peyton Manning at T = 1000:
 
@@ -574,11 +574,6 @@ point of the check.
 
 Tracked, deliberate, and not yet closed:
 
-- **Changepoint placement** ([#15](https://github.com/adlyZaroui/analytic-prophet/issues/15)).
-  Prophet spaces changepoints over uniformly-spaced *row indices* of the first 80% of
-  history; this implementation spaces them uniformly in *scaled time*. Identical for
-  regular daily data, divergent otherwise. Measured contribution to the overall
-  disagreement: about a fifth of it.
 - **Algorithm selection for short series**
   ([#25](https://github.com/adlyZaroui/analytic-prophet/issues/25)). Prophet uses
   **Newton** when `T < 100` and falls back to Newton when L-BFGS raises. This
@@ -597,12 +592,12 @@ Tracked, deliberate, and not yet closed:
   [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) adds fit-time state
   facing the same question.
 - **Overall fit**: on series past two years, predictions differ from Prophet's by
-  0.21–0.54% of the series scale (history plus a 30-day horizon, measured at T = 730,
+  0.17–0.59% of the series scale (history plus a 30-day horizon, measured at T = 730,
   800, 1000, 1500, 2000, 2500, 2905). On shorter series the trend decomposition is
-  looser and the gap reaches 1.22% at T = 500 — not changepoint placement (refitting on
-  Prophet's own changepoints moves that figure to 1.21%), but Prophet stopping in a
-  flatter region than we do. Our posterior is the better one at every size measured,
-  T = 100 through 2905. See
+  looser and the gap reaches 1.21% at T = 500. What remains is **only** the optimizer:
+  the changepoints are now identical to Prophet's ([#15](https://github.com/adlyZaroui/analytic-prophet/issues/15)),
+  the design matrix agrees to 1e-10, and our posterior is the better one at every size
+  measured, T = 100 through 2905. See
   [#30](https://github.com/adlyZaroui/analytic-prophet/issues/30).
 
 ## Not implemented
@@ -628,7 +623,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 526 tests
+pytest tests/                        # 543 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
@@ -666,6 +661,7 @@ numbers rather than errors.
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
 | | [#63](https://github.com/adlyZaroui/analytic-prophet/issues/63), [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14a | `yhat`'s interval was the trend's band shifted, so it carried no observation noise — the term that dominates it. Measured at 0.056× Prophet's, an 18-fold overstatement of precision, and in the dangerous direction: too narrow looks reasonable in a way too wide does not. `predict` now draws `yhat` rather than deriving it, which is also what lets a regressor predictor's own uncertainty enter |
+| | [#15](https://github.com/adlyZaroui/analytic-prophet/issues/15) | Changepoints were spaced uniformly in scaled *time*; Prophet spaces them over evenly-spaced *row indices* and takes the dates there, caps the count on short series, and accepts an explicit list. All three ported together, since porting one leaves the other two wrong. They are now bit-identical to Prophet's at every size — and `fit()` stopped terminating ABNORMAL at T = 30, because a changepoint on an observation has data at it where one in a gap does not |
 | | [#58](https://github.com/adlyZaroui/analytic-prophet/issues/58), [#35](https://github.com/adlyZaroui/analytic-prophet/issues/35) | The trend interval drew its new changepoints across the whole frame at a per-point rate, so most landed *inside* the fitted history and every draw rewrote the past before extrapolating from it — a band ~170× Prophet's, wider than the data. Placed as Prophet's Poisson process on `(1, T]` instead, which brings it to 1.2×, the residual being our own `mean\|delta\|`. `predict` also stopped writing a `t_scaled` column into the caller's frame |
 | | [#52](https://github.com/adlyZaroui/analytic-prophet/issues/52) | The constructor took no arguments, so every setting was an attribute assigned afterwards and a ported Prophet script had to be rewritten line by line. Wiring `interval_width` and `uncertainty_samples` into it exposed three defects in the method they feed: quantiles hardcoded at 95% where Prophet's default is 80%, one draw taken from the global numpy generator so seeding a model did nothing, and `compute_trend` called without the growth mode — a linear band around a logistic fit |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14d | The `K = 0` divergence above was argued rather than measured, which is the one thing every other agreement claim here is not. Measured: the padding column costs exactly `β²/2` and nothing else, and a trend-only fit under flat growth reproduces Prophet's `lp__` exactly |

@@ -267,7 +267,7 @@ def test_matches_the_prior_term_stan_computes(prophet_comparison, compiled_optim
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = configured(CustomProphet(), two_scales())
-    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
+    ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     # the vector itself, element for element -- ordering included

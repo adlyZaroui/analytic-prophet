@@ -73,7 +73,7 @@ model.ds = pd.to_datetime(df["ds"])
 model.t = np.array((model.ds - model.ds.min()) / (model.ds.max() - model.ds.min()))
 model.T = len(df)
 model.t_seasonality = seasonal_time(model.ds)
-model._normalize_y(); model._build_layout(); model._generate_change_points()
+model._normalize_y(); model._build_layout(); model.set_changepoints()
 
 def fresh():
     return dict(params=np.zeros(model.layout.size), t=model.t,

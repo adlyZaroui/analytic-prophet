@@ -274,7 +274,7 @@ def test_objective_and_posterior_agree_with_prophet(prophet_comparison,
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = multiplicative_model()
-    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
+    ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     np.testing.assert_array_equal(ours.s_m, np.asarray(stan_data["s_m"], dtype=float))
