@@ -282,6 +282,31 @@ Its own iteration log shows the cause: repeated `LS failed, Hessian reset` entri
 That is the same non-smoothness, defeating Stan's line search the way it defeated
 liblbfgs's and scipy's.
 
+**It is not specific to L-BFGS.** Stan also ships a Newton optimizer, which Prophet uses
+on series under 100 observations, and it is genuinely the better of the two *for Prophet*
+— it beats Prophet's own L-BFGS at every size measured. It still lands below this
+implementation's optimum, at every size:
+
+| T | Prophet, Newton | Prophet, L-BFGS | this implementation |
+|---|---|---|---|
+| 20 | 74.40912 | 73.93879 | **74.89546** |
+| 50 | 139.93934 | 139.55784 | **139.95119** |
+| 99 | 246.80793 | 246.38023 | **246.82546** |
+| 150 | 380.44485 | 379.47301 | **380.56898** |
+
+That matters for what can be concluded. A first-order method stopping short is
+consistent with "L-BFGS is a poor fit for this objective" — which would be a statement
+about the algorithm. A *second-order* method stopping short in the same place is not:
+Newton uses curvature, and curvature is exactly what a kink does not have. Two
+different algorithms, both defeated at the same point, is the behaviour the Laplace
+prior's non-differentiability predicts.
+
+The third piece is [flat growth](#flat-growth-is-an-exact-tie-and-that-is-the-point),
+where the trend's flat directions are removed and the disagreement vanishes entirely —
+identical `lp__` to Stan's printed precision. Taken together: two of Prophet's
+algorithms stop short where the objective has a kink, and neither does when the kink
+stops mattering.
+
 **Using `lp__` as the yardstick is what made this legible.** Parameters cannot be
 compared directly across the two implementations (rotated Fourier basis, different
 changepoints), but `lp__` is a single scalar, reparameterization-invariant, and is the
