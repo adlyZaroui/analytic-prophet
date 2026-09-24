@@ -1,27 +1,42 @@
 """Facebook Prophet's fitting engine, with a hand-derived analytic gradient.
 
-The model itself lives in `forecaster.py`, mirroring Prophet's own layout --
-`prophet/forecaster.py` holds its `Prophet` class the same way. `optimize.cpp`
-beside it is the compiled core, which is this package's answer to
-`prophet/models.py`: where Prophet hands the problem to Stan, this hands it to
-a gradient written out by hand.
-
     from analytic_prophet import AnalyticProphet
 
     model = AnalyticProphet()
     model.fit_cpp(df)
     forecast = model.predict(model.make_future_dataframe(periods=30))
 
-The star import is deliberate. This package is a facade over a single module,
-and enumerating its surface here would mean maintaining the same list twice --
-with a missing name failing at import time in whatever used it. Anything
-reaching for a module *global* rather than a value, which in practice means a
-test monkeypatching `minimize` or `load_cpp_module`, must import
-`analytic_prophet.forecaster` and patch it there: rebinding a name on this
-facade leaves the module's own global untouched, and the patch silently does
-nothing.
+Where things are:
+
+    forecaster.py     the model. [fc] prophet/forecaster.py, which holds the
+                      `Prophet` class the same way and at a comparable size.
+    constants.py      the numbers the model is defined by, [stan]/[fc]-sourced.
+    layout.py         where each parameter sits in the flat vector.
+    seasonality.py    the Fourier basis, the registry, the selection rule.
+    make_holidays.py  [fc] prophet/make_holidays.py, plus the design columns.
+    trend.py          the three growth modes and their derivatives.
+    optimizer.py      projected Newton, and the tolerances runs stop on.
+    models.py         [fc] prophet/models.py -- the compiled backend's loader.
+    optimize.cpp      that backend.
+
+The last four have no Prophet counterpart worth the name, and that is the point:
+Stan supplies the layout, the derivatives and the optimizer there. Writing them
+down is what this project is.
+
+`forecaster.py` imports every name the other modules define, so the star import
+below still re-exports the whole surface from one place -- and so a test
+patching `forecaster.minimize` patches the name the model actually reads.
+
+**Patch where a name is looked up, not where it is defined.** `load_cpp_module`
+reads `CPP_MODULE_NAME` from `models`' globals, so rebinding
+`forecaster.CPP_MODULE_NAME` changes a copy nothing consults. That is not
+hypothetical -- it is the one test that broke when this package was split, and
+it broke loudly only because the assertion was about behaviour rather than
+about the patch.
 """
 __version__ = "0.1.0"
 
 from .forecaster import *          # noqa: F401,F403,E402
 from .forecaster import AnalyticProphet   # noqa: F401,E402  -- the one that matters
+from . import (constants, forecaster, layout, make_holidays,  # noqa: F401,E402
+               models, optimizer, seasonality, trend)

@@ -548,7 +548,7 @@ python benchmark/benchmark_memory.py
 | | `fit()` | `fit_cpp()` |
 |---|---|---|
 | optimizer | scipy L-BFGS-B | LBFGSpp L-BFGS-B (C++) |
-| Newton | `projected_newton` in `analytic_prophet/forecaster.py` | `newton` in `optimize.cpp` |
+| Newton | `projected_newton` in `analytic_prophet/optimizer.py` | `newton` in `optimize.cpp` |
 | gradient | closed form (or finite differences with `analytic=False`) | closed form |
 | role | readable reference | the deliverable |
 
@@ -820,17 +820,39 @@ for it, rather than being absent.
 
 ```
 analytic_prophet/
-    __init__.py      re-exports the package's surface
-    forecaster.py    the model, mirroring prophet/forecaster.py
-    optimize.cpp     the compiled core, this project's answer to prophet/models.py
-tests/               626 tests, plus the Peyton Manning series under data/
-benchmark/           against the original: agreement, fit time, memory
+    __init__.py       re-exports the package's surface
+    forecaster.py     the model                                    1759
+    constants.py      the numbers the model is defined by             68
+    layout.py         where each parameter sits in the flat vector   159
+    seasonality.py    Fourier basis, registry, selection rule        266
+    make_holidays.py  [fc] prophet/make_holidays.py, plus features   166
+    trend.py          the three growth modes and their derivatives   152
+    optimizer.py      projected Newton, and the stopping tolerances  182
+    models.py         [fc] prophet/models.py — the backend's loader   82
+    optimize.cpp      that backend
+tests/                629 tests, plus the Peyton Manning series under data/
+benchmark/            against the original: agreement, fit time, memory
 ```
 
-`forecaster.py` takes its name from Prophet's own, where `prophet/forecaster.py` holds
-the `Prophet` class. The C++ source sits inside the package rather than beside it because
-it *is* the implementation, not a build input to it — where Prophet hands the problem to
-Stan, this hands it to a gradient written out by hand.
+`forecaster.py` and `models.py` take Prophet's own names, and `make_holidays.py` is the
+file Prophet has too. **The other four have no Prophet counterpart, which is the point:**
+Stan supplies the parameter layout, the derivatives and the optimizer there. Writing them
+down is what this project is, so they get files you can open rather than sitting in front
+of the model.
+
+For scale, Prophet's own `forecaster.py` is 2289 lines holding a 2255-line class. This
+one is 1759 lines holding a 1638-line class — the class was never the long part. What
+made the file 2739 lines was 1100 lines of free functions in front of it, which is the
+material above.
+
+The C++ source sits inside the package rather than beside it because it *is* the
+implementation, not a build input to it — where Prophet hands the problem to Stan, this
+hands it to a gradient written out by hand.
+
+One rule the layout imposes: **patch a name where it is looked up, not where it is
+defined.** `load_cpp_module` reads `CPP_MODULE_NAME` from `models`' globals, so a test
+rebinding `forecaster.CPP_MODULE_NAME` changes a copy nothing consults. That is the one
+test that broke when this package was split.
 
 `pyproject.toml` declares the package, its dependencies and the test configuration.
 `optimize.cpp` ships as package *data*: it is compiled on demand rather than at install
