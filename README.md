@@ -4,15 +4,24 @@ A reimplementation of [Facebook Prophet](https://github.com/facebook/prophet)'s 
 engine that replaces Stan's automatic differentiation with a hand-derived, closed-form
 gradient.
 
-**Status: early development.** The constructor takes Prophet's arguments, so
-`CustomProphet(seasonality_mode='multiplicative', changepoint_prior_scale=0.01)` works as
-it would there. Arguments for what is not implemented — `mcmc_samples`, `stan_backend`,
-`scaling='minmax'`, an explicit `changepoints` list — are accepted and then **rejected**,
-so a ported script fails where it is wrong rather than at the first `AttributeError`.
+**Status: early development.** The model side is feature-complete against Prophet's:
+linear, logistic and flat growth; seasonality selected from the history by Prophet's own
+rule, with per-component Fourier order, prior scale, mode and condition; holidays, country
+holidays and extra regressors; additive and multiplicative modes throughout.
 
-**Status: early development.** The model is additive with linear growth, and selects
-yearly, weekly and daily seasonality from the history by Prophet's own rule. It is not a
-drop-in replacement for Prophet yet — see [Not implemented](#not-implemented).
+The constructor takes Prophet's arguments, so
+`CustomProphet(seasonality_mode='multiplicative', changepoint_prior_scale=0.01)` works as
+it would there. Arguments for what is *not* implemented — `mcmc_samples`,
+`stan_backend`, `scaling='minmax'`, an explicit `changepoints` list — are accepted and
+then **rejected**, so a ported script fails where it is wrong rather than at the first
+`AttributeError`.
+
+It is still not a drop-in replacement: uncertainty intervals are not usable
+([#58](https://github.com/adlyZaroui/analytic-prophet/issues/58)), there is no MCMC or
+plotting, and several names differ from Prophet's
+([#54](https://github.com/adlyZaroui/analytic-prophet/issues/54)). See
+[Not implemented](#not-implemented) and
+[Known differences](#known-differences-from-prophet).
 
 ---
 
@@ -34,15 +43,19 @@ Both now hold. See [Benchmarks](#benchmarks).
 
 ## The model
 
-Additive, linear growth, MAP estimation, no MCMC. With `S` changepoints at `s₁…s_S`,
-indicator `aⱼ(t) = 1[t ≥ sⱼ]`, offset correction `γⱼ = −sⱼδⱼ`, and `K = 2N` Fourier
-features:
+MAP estimation, no MCMC. With `S` changepoints at `s₁…s_S`, indicator
+`aⱼ(t) = 1[t ≥ sⱼ]` and `K` regressor columns `X`, the trend takes one of three forms
+([stan] `trend_indicator`):
 
 ```
-g(t) = (k + a(t)ᵀδ)·t + (m + a(t)ᵀγ)        trend
-s(t) = X(t)·β                                seasonality
-rᵢ   = yᵢ − g(tᵢ) − s(tᵢ)                    residual
+linear     g(t) = (k + a(t)ᵀδ)·t + (m + a(t)ᵀγ),          γⱼ = −sⱼδⱼ
+logistic   g(t) = cap · σ((k + a(t)ᵀδ)·(t − (m + a(t)ᵀγ)))
+flat       g(t) = m
 ```
+
+Under logistic growth `γ` is not `−sⱼδⱼ` but a recursion that keeps the curve continuous
+where the rate changes, which is what makes its derivative the hardest one here — see the
+[development history](#development-history).
 
 Each of the `K` regressor columns is marked additive or multiplicative — Stan's `s_a`
 and `s_m` — giving
@@ -342,7 +355,9 @@ always been a difference in what was being compared, not a defect in the gradien
 ## Benchmarks
 
 Against `prophet` 1.4.0, both sides on their **own defaults** — additive, linear growth,
-MAP, seasonality chosen by the rule above. (Prophet's seasonality used to be pinned to
+MAP, seasonality chosen by the rule above. Every number here is re-measured whenever the
+fit changes, and the fit is checked bit-for-bit against the previous commit on every
+change that should not have moved it. (Prophet's seasonality used to be pinned to
 yearly-only, because that was the only component this implementation could fit;
 comparing its 26-column design matrix against a 20-column one would have called a
 modelling gap "performance".) Peyton Manning series, Apple Silicon. `T` is series
@@ -352,17 +367,17 @@ length; `fit_cpp` is the compiled path, `fit` the Python reference.
 
 | T | prophet | `fit` | `fit_cpp` |
 |---|---|---|---|
-| 300 | 0.043 | 0.222 (5.13×) | **0.030 (0.69×)** |
-| 1000 | 0.157 | 0.414 (2.63×) | **0.130 (0.83×)** |
-| 2905 | 0.576 | 1.504 (2.61×) | **0.348 (0.60×)** |
+| 300 | 0.043 | 0.227 (5.28×) | **0.030 (0.69×)** |
+| 1000 | 0.157 | 0.422 (2.69×) | **0.132 (0.84×)** |
+| 2905 | 0.580 | 1.514 (2.61×) | **0.348 (0.60×)** |
 
 **Peak memory added by fitting** (T = 2905):
 
 | | added |
 |---|---|
-| prophet | 9.5 MiB |
+| prophet | 9.3 MiB |
 | `fit` | **2.6 MiB** |
-| `fit_cpp` | **3.5 MiB** |
+| `fit_cpp` | **4.1 MiB** |
 
 Prophet runs the optimization in a `cmdstan` subprocess, so its memory is measured via
 `RUSAGE_CHILDREN`; see `benchmark/README.md` for the methodology, including why each
@@ -469,6 +484,13 @@ Tracked, deliberate, and not yet closed:
   rather than past the end of the history, so most of them land *inside* the fitted
   history. Measured at ~170× Prophet's band. `yhat` is unaffected — it comes from the
   fitted parameters, not these draws — but the intervals are not usable yet.
+- **Names differ from Prophet's for the same objects**
+  ([#54](https://github.com/adlyZaroui/analytic-prophet/issues/54)). `t_scaled` against
+  `history['t']`, `y_absmax` against `y_scale`, `fourier_components` against
+  `fourier_series`, and eleven more — every pair verified to hold the same value. Some
+  are deliberate (`tau` is what `prophet.stan` calls it, and what every derivation here
+  calls it); most are drift, with nothing checking for it. The constructor's *arguments*
+  match Prophet's exactly as of #52; the attributes behind them do not all follow.
 - **Refitting is allowed** ([#41](https://github.com/adlyZaroui/analytic-prophet/issues/41)).
   `Prophet.fit` refuses a second call; this implementation accepts one. Neither the
   divergence nor the contract is currently written down, and it has already produced one
@@ -487,9 +509,25 @@ Tracked, deliberate, and not yet closed:
 
 ## Not implemented
 
-- MCMC sampling — MAP only
+The model itself is complete against Prophet's — [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16)'s
+fourteen tasks are done. What is missing is around it:
 
-Tracked in [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16).
+- **MCMC sampling** — MAP only. `mcmc_samples > 0` is rejected rather than ignored.
+- **Usable uncertainty intervals**
+  ([#58](https://github.com/adlyZaroui/analytic-prophet/issues/58)) — `yhat` is right,
+  the band around it is not. This is the one gap that would mislead a user rather than
+  merely stop them.
+- **Uncertainty from a regressor's own forecast**
+  ([#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14a) —
+  `regressor_predictor` supplies a point estimate; Prophet widens the interval with draws
+  from the nested model.
+- **Plotting** — no `plot` or `plot_components`.
+- **An explicit `changepoints` list** — placement comes from `n_changepoints` and
+  `changepoint_range`; see [#15](https://github.com/adlyZaroui/analytic-prophet/issues/15).
+- **`scaling='minmax'`** — only `absmax`.
+
+Each of these is accepted as an argument and then rejected, where Prophet has an argument
+for it, rather than being absent.
 
 ---
 
@@ -507,6 +545,12 @@ Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test 
 compiles `legacy/optimize.cpp` into a temporary directory on the fly, which is why no
 binary is checked in. Tests that need the toolchain **skip** rather than fail when it is
 absent.
+
+`prophet` itself is deliberately not a dependency — every comparison against the original
+needs it, and it pulls `cmdstanpy` plus a compiled Stan model. The agreement tests skip
+without it and the benchmarks print an install hint, so `pip install prophet` is only
+needed to run those. `holidays` is required for `add_country_holidays` and imported
+lazily, so nothing else needs it.
 
 ---
 
@@ -531,6 +575,7 @@ numbers rather than errors.
 | | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
+| | [#52](https://github.com/adlyZaroui/analytic-prophet/issues/52) | The constructor took no arguments, so every setting was an attribute assigned afterwards and a ported Prophet script had to be rewritten line by line. Wiring `interval_width` and `uncertainty_samples` into it exposed three defects in the method they feed: quantiles hardcoded at 95% where Prophet's default is 80%, one draw taken from the global numpy generator so seeding a model did nothing, and `compute_trend` called without the growth mode — a linear band around a logistic fit |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14 | A model with every seasonality disabled could not fit: the C++ length guard read `params_size < 2 + S + 2`, assuming at least one seasonality column. `K = 0` is trend plus noise, and a model. Found through a nested regressor model on 400 days with weekly turned off, which puts yearly below its threshold too |
 | | [#33](https://github.com/adlyZaroui/analytic-prophet/issues/33), [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 10 | `add_regressor` accepted a `pd.Series` and discarded it, so a caller's regressor was simply absent with no error. The signature could not have worked either: a series carries the history's values and no way to produce the future ones `predict` needs |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 9 | Country holidays, via the `holidays` package rather than by importing anything from Prophet. Frames and name sets checked against Prophet's own helpers for five countries, since the underlying data moves between releases and asserting specific dates would test the package rather than this code |
