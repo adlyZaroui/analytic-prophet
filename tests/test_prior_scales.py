@@ -18,7 +18,7 @@ scales, our objective has to reproduce what Stan computes, checked through
 import numpy as np
 import pytest
 
-from customProphet import (CustomProphet, SIGMA, canonical_to_cpp,
+from analytic_prophet import (AnalyticProphet, SIGMA, canonical_to_cpp,
                            check_seasonality_supported, seasonality,
                            seasonality_prior_scales)
 
@@ -69,7 +69,7 @@ def test_a_fit_fixes_sigmas_alongside_the_layout(peyton_manning_df,
                                                  compiled_optimizer_module):
     """`sigmas` is data in Stan's sense -- fixed for the whole fit, at the same
     moment `K` is."""
-    model = configured(CustomProphet(), two_scales())
+    model = configured(AnalyticProphet(), two_scales())
     model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
@@ -187,7 +187,7 @@ def test_a_uniform_vector_reproduces_the_old_scalar_term(prepared_model):
     params = non_uniform_point(model)
     beta = params[model.layout.beta]
 
-    scaled = configured(CustomProphet(), {"yearly": seasonality(365.25, 10, prior_scale=1.0)})
+    scaled = configured(AnalyticProphet(), {"yearly": seasonality(365.25, 10, prior_scale=1.0)})
     for attribute in ("t", "changepoints_t", "t_seasonality", "y_scaled",
                       "T", "y_scale", "sigma_k", "sigma_m", "changepoint_prior_scale",
                       "ds", "condition_masks"):
@@ -225,7 +225,7 @@ def test_a_tighter_scale_shrinks_by_the_amount_the_prior_implies(
     weekly = slice(20, 26)
 
     def fit(weekly_scale):
-        model = configured(CustomProphet(),
+        model = configured(AnalyticProphet(),
                            {"yearly": seasonality(365.25, 10, prior_scale=10.0),
                             "weekly": seasonality(7.0, 3, prior_scale=weekly_scale)})
         model.fit_cpp(df, lib_path=compiled_optimizer_module)
@@ -266,7 +266,7 @@ def test_matches_the_prior_term_stan_computes(prophet_comparison, compiled_optim
     stan_model, stan_data, _ = bridge.capture_stan_model(prophet_model, df)
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
-    ours = configured(CustomProphet(), two_scales())
+    ours = configured(AnalyticProphet(), two_scales())
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 

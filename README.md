@@ -10,20 +10,24 @@ rule, with per-component Fourier order, prior scale, mode and condition; holiday
 holidays and extra regressors; additive and multiplicative modes throughout.
 
 The constructor takes Prophet's arguments, so
-`CustomProphet(seasonality_mode='multiplicative', changepoint_prior_scale=0.01)` works as
+`AnalyticProphet(seasonality_mode='multiplicative', changepoint_prior_scale=0.01)` works as
 it would there. Arguments for what is *not* implemented — `mcmc_samples`,
-`stan_backend`, `scaling='minmax'`, an explicit `changepoints` list — are accepted and
-then **rejected**, so a ported script fails where it is wrong rather than at the first
-`AttributeError`.
+`stan_backend`, `scaling='minmax'` — are accepted and then **rejected**, so a ported
+script fails where it is wrong rather than at the first `AttributeError`.
 
-It is still not a drop-in replacement: there is no MCMC or plotting, and several names differ from Prophet's
-([#54](https://github.com/adlyZaroui/analytic-prophet/issues/54)). See
-[Not implemented](#not-implemented) and
+It is still not a drop-in replacement: there is no MCMC or plotting, three names have no
+counterpart to match, and a refit means something here that it cannot mean in Prophet,
+which refuses one. See [Not implemented](#not-implemented),
+[Where this deviates on purpose](#where-this-deviates-on-purpose) and
 [Known differences](#known-differences-from-prophet).
 
 ---
 
 ## Why
+
+Prophet was published by Facebook's Core Data Science team in 2017 and is still widely
+deployed; its successor NeuralProphet (2021) is a different model and out of scope here.
+What this project reimplements is the 2017 model's fitting engine, not the model.
 
 Prophet fits its model by maximum a posteriori estimation, running L-BFGS on a log
 posterior whose gradient Stan obtains by reverse-mode automatic differentiation. The
@@ -544,7 +548,7 @@ python benchmark/benchmark_memory.py
 | | `fit()` | `fit_cpp()` |
 |---|---|---|
 | optimizer | scipy L-BFGS-B | LBFGSpp L-BFGS-B (C++) |
-| Newton | `projected_newton` in `customProphet.py` | `newton` in `optimize.cpp` |
+| Newton | `projected_newton` in `analytic_prophet/forecaster.py` | `newton` in `optimize.cpp` |
 | gradient | closed form (or finite differences with `analytic=False`) | closed form |
 | role | readable reference | the deliverable |
 
@@ -625,23 +629,8 @@ stale.
 
 ## Where this deviates on purpose
 
-Four deviations are decisions rather than outstanding gaps. Each was measured or checked
-against the original before being settled, and each has tests that fail if the reasoning
-goes stale.
-
-| deviation | what Prophet does | what this does | why |
-|---|---|---|---|
-| [Three names](#three-names-stay-different) | no counterpart exists | `fit_cpp`, `sigma_k`/`sigma_m`, `T` | nothing to match; everything else was renamed to Prophet's |
-| [`K = 0`](#a-model-with-no-seasonality-fits-k--0-where-prophet-fits-k--1) | appends a dummy zeros column, since Stan declares `int<lower=1> K` | fits one parameter fewer | measured to cost exactly `β²/2`; a trend-only flat fit reproduces Prophet's `lp__` exactly |
-| [Fourier evaluation order](#the-fourier-basis-is-evaluated-in-a-different-order) | per-row | vectorized | the features agree to 1e-10, not bitwise; vectorizing is what makes the design matrix affordable |
-| [**Refitting**](#refitting-is-allowed-and-a-refit-means-something-specific) | **raises** — *"Prophet object can only be fit once"* | **allows it**, under a stated contract | a refusal is not a behaviour to copy; allowing the call is more useful and needed a contract in its place |
-
-The **refit divergence is the one to notice** if you are porting a script: Prophet would
-have stopped you, and this will not. See
-[What changed in the last round](#what-changed-in-the-last-round) for the rest of this
-round's decisions, and
-[Known differences from Prophet](#known-differences-from-prophet) for the gaps that are
-*not* decisions.
+Three deviations are decisions rather than outstanding gaps. Each was measured before
+being settled.
 
 ### Three names stay different
 
@@ -747,7 +736,7 @@ is the one the refusal implies
 > on the new data.**
 
 What the caller set survives. What the previous history produced does not.
-`FIT_DERIVED_ATTRIBUTES` in `customProphet.py` is the list that makes it true, and
+`FIT_DERIVED_ATTRIBUTES` in `analytic_prophet/forecaster.py` is the list that makes it true, and
 `_reset_fit_state` applies it at the top of both `fit()` and `fit_cpp()`.
 
 Keeping refits is the more useful behaviour and costs nothing measurable — the
@@ -795,9 +784,7 @@ field by field instead, and also reach the sweep through `params`, `_params_vect
 
 ## Known differences from Prophet
 
-Tracked and not yet closed. The divergences that *are* settled — including refitting,
-which Prophet refuses outright — are in
-[Where this deviates on purpose](#where-this-deviates-on-purpose).
+Tracked, deliberate, and not yet closed:
 
 - **One convergence tolerance on the Python path**
   ([#24](https://github.com/adlyZaroui/analytic-prophet/issues/24)). `fit()` runs under
@@ -822,12 +809,32 @@ fourteen tasks are done. What is missing is around it:
 
 - **MCMC sampling** — MAP only. `mcmc_samples > 0` is rejected rather than ignored.
 - **Plotting** — no `plot` or `plot_components`.
-- **An explicit `changepoints` list** — placement comes from `n_changepoints` and
-  `changepoint_range`; see [#15](https://github.com/adlyZaroui/analytic-prophet/issues/15).
 - **`scaling='minmax'`** — only `absmax`.
 
 Each of these is accepted as an argument and then rejected, where Prophet has an argument
 for it, rather than being absent.
+
+---
+
+## Layout
+
+```
+analytic_prophet/
+    __init__.py      re-exports the package's surface
+    forecaster.py    the model, mirroring prophet/forecaster.py
+    optimize.cpp     the compiled core, this project's answer to prophet/models.py
+tests/               626 tests, plus the Peyton Manning series under data/
+benchmark/           against the original: agreement, fit time, memory
+```
+
+`forecaster.py` takes its name from Prophet's own, where `prophet/forecaster.py` holds
+the `Prophet` class. The C++ source sits inside the package rather than beside it because
+it *is* the implementation, not a build input to it — where Prophet hands the problem to
+Stan, this hands it to a gradient written out by hand.
+
+Importing the package needs the repo root on `sys.path`; `tests/conftest.py` and
+`benchmark/_common.py` each put it there, so neither an install nor a `PYTHONPATH` is
+required to run either.
 
 ---
 
@@ -838,104 +845,19 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 543 tests
+pytest tests/                        # 626 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
-compiles `legacy/optimize.cpp` into a temporary directory on the fly, which is why no
-binary is checked in. Tests that need the toolchain **skip** rather than fail when it is
-absent.
+compiles `analytic_prophet/optimize.cpp` into a temporary directory on the fly, which is
+why no binary is checked in. Tests that need the toolchain **skip** rather than fail when
+it is absent.
 
 `prophet` itself is deliberately not a dependency — every comparison against the original
 needs it, and it pulls `cmdstanpy` plus a compiled Stan model. The agreement tests skip
 without it and the benchmarks print an install hint, so `pip install prophet` is only
 needed to run those. `holidays` is required for `add_country_holidays` and imported
 lazily, so nothing else needs it.
-
----
-
-## What changed in the last round
-
-The three issues that closed the outstanding list, each with the decision that settled it
-and the finding that was not expected going in. Full treatment is linked from each.
-
-### [#25](https://github.com/adlyZaroui/analytic-prophet/issues/25) — Prophet's algorithm rule, on both paths
-
-**Decided:** implement it, *against* the measurement. [fc] Newton below `T = 100`, L-BFGS
-at or above, one Newton retry when L-BFGS fails, `algorithm=` overriding the rule. The
-issue was filed expecting a Hessian to be the blocking work; the measurement showed this
-implementation's L-BFGS already beat Prophet's Newton at every size, so adopting Newton
-could only match that. It went in anyway, because the contract is *the same fit under the
-same data* and keeping a better-scoring algorithm because it scores better is the silent
-divergence the rest of this file is spent ruling out.
-→ [Prophet's rule for short series, and what it costs](#prophets-rule-for-short-series-and-what-it-costs)
-
-**Found, and it is the most useful result of the round:** Newton needs the split
-reformulation as much as L-BFGS does. On the natural parameterization — no bounds, the
-Laplace prior entering through its subgradient, which is what Stan's Newton does — it
-oscillates across the kink at `δ = 0` at about **1e-5 progress per step** and is still
-**66 nats** short after Prophet's entire 10,000-iteration budget. On the split
-reformulation the same code converges in 36–85 iterations. That is the
-[central claim](#prophets-optimizer-stops-short-on-this-objective) measured from the
-other side: a second-order method with an exact gradient cannot reach this optimum as
-written, and arrives in under a hundred steps once the single kink is gone.
-
-**Found:** the Hessian never needed deriving. Central differences of the *analytic*
-gradient give one at `2n` gradient evaluations and ~1e-8 accuracy.
-
-**Found:** keying the Levenberg damping to whether a step was *accepted* — the obvious
-reading — made Newton crawl and stop short: at T = 50, a median of 14 backtracks per
-step, an accepted step length of 6e-5, and 658 iterations. Keying it to whether the step
-had to be **backtracked** cut that to 44 and removed both places the rule cost accuracy.
-After that fix the rule costs no accuracy at all, only time.
-
-**Found:** running out of iterations is *not* a failure. CmdStan reports an exhausted
-`iter` budget as a warning and cmdstanpy raises only on a non-zero exit code, so Prophet
-keeps that fit. Treating it as one made a widened-prior fit measurably worse by retrying
-a run that had not failed.
-
-### [#24](https://github.com/adlyZaroui/analytic-prophet/issues/24) — `fit()`'s convergence tolerances
-
-**Decided:** adopt Stan's `tol_grad`, keep one tolerance tighter. Of the three overrides
-`fit()` carried, the gradient one had become a **bit-exact no-op** — enabling Stan's
-value leaves the run identical at every size from 30 to 2905 — and `maxfun` is Stan's cap
-expressed the other way round. Only `ftol` remains a real deviation.
-→ [What Stan's tolerance costs on the Python path](#what-stans-tolerance-costs-on-the-python-path)
-
-**Found:** the deciding number the issue was blocked on. Under Stan's `ftol`, `fit()`
-scores `lp__ = 8000.371` on the full series against Prophet's `8004.798` — matching
-Stan's number would put the reference path **4.43 nats below the model it reproduces**.
-The issue had recorded the cost as 1.1e-3; measured today it is **4.80 nats**, three
-orders larger, which is why it was worth re-measuring rather than trusting.
-
-**Found:** the cause is that scipy's iterate sequence has plateaus — a step with a
-relative decrease of 6.8e-16 while still 4.8 nats from the optimum, then 3800 more
-iterations of descent; 37% of its steps are below Stan's threshold. Ruled out as
-explanations: scipy's own stopping rule, the line-search budget, and the
-parameterization.
-
-**Found, separately:** `fit()`'s loss trace recorded the *canonical* objective while
-scipy minimized the *split* one. They agree exactly at the optimum, so the final value
-was always right and nothing caught it — but the recorded trajectory rose on a run that
-descends monotonically.
-
-### [#41](https://github.com/adlyZaroui/analytic-prophet/issues/41) — the refit contract
-
-**Decided:** keep refits, and give them the contract Prophet's refusal implies — *a refit
-is equivalent to a fresh instance carrying the same user configuration, fit on the new
-data*. This is a **divergence from Prophet**, which raises on a second call, and it is
-the one to notice when porting a script.
-→ [Refitting is allowed, and a refit means something specific](#refitting-is-allowed-and-a-refit-means-something-specific)
-
-**Found:** the issue said "no known incorrect behaviour today", and there was some. A
-model fit on twenty rows kept `n_changepoints` capped at 15 and fitted 15 rather than 25
-on every later history; a model fit across one date range kept that range's holiday names
-and forced them onto the next as all-zero columns. Neither raised.
-
-**Decided:** the safeguard is a whole-attribute sweep, not an enumeration —
-`tests/test_refit_contract.py` compares a fresh instance against a refit across eight
-configurations, two history pairs and both paths, on *every* attribute. #41 was filed
-because the trap is structural, and a list alone would have gone stale the same way.
 
 ---
 
@@ -956,7 +878,6 @@ numbers rather than errors.
 | | [#23](https://github.com/adlyZaroui/analytic-prophet/issues/23) | OWL-QN replaced by the split reformulation with L-BFGS-B: 5.4× faster and a better optimum |
 | | [#28](https://github.com/adlyZaroui/analytic-prophet/issues/28) | The changepoint and Fourier matrices, constant for a whole fit, were rebuilt on every objective evaluation — 57% of each. Built once: `fit_cpp` reached parity with Prophet |
 | | [#13](https://github.com/adlyZaroui/analytic-prophet/issues/13) | `fit_cpp` returned NaN while reporting `LBFGS_SUCCESS`. Resolved by the solver change |
-| | [#25](https://github.com/adlyZaroui/analytic-prophet/issues/25) | Neither path implemented Prophet's algorithm rule — Newton below `T = 100`, L-BFGS at or above, one Newton retry on failure — so short series were fitted by a different method from the original's. Implementing it turned up the sharper result: Newton does not converge on the natural parameterization either, ~1e-5 progress a step and 66 nats short after the whole iteration budget |
 | | [#24](https://github.com/adlyZaroui/analytic-prophet/issues/24) | `fit()`'s loss trace recorded the *canonical* objective while scipy minimized the *split* one. Equal at the optimum, so the final value was right and nothing caught it — but the recorded trajectory rose on a run that descends, and was not comparable with `fit_cpp`'s |
 | Refitting | [#41](https://github.com/adlyZaroui/analytic-prophet/issues/41) | A model fit once on twenty rows kept `n_changepoints` capped at 15 and fitted 15 rather than 25 on every later history; a model fit across one date range kept that range's holiday names and forced them onto the next as all-zero columns. Both silently fitted a different model. `Prophet.fit` raises on a second call, so neither can arise there |
 | Modelling | [#36](https://github.com/adlyZaroui/analytic-prophet/issues/36) | Fourier basis measured days from the series start, not the 1970 epoch, and emitted all `cos` then all `sin` rather than interleaving. A pure reparameterization — but until it was fixed, `beta` could not be compared with Prophet's at all |

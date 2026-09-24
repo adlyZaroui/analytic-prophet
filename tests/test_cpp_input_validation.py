@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-LEGACY = Path(__file__).parent.parent / "legacy"
+REPO = Path(__file__).parent.parent
 BENCHMARK = Path(__file__).parent.parent / "benchmark"
 
 # case -> a statement mutating `kw`, the otherwise-valid argument dict
@@ -56,16 +56,16 @@ ENTRY_POINTS = ("minus_log_posterior_and_gradient", "optimize")
 
 RUNNER = '''
 import json, sys, numpy as np, pandas as pd
-sys.path.insert(0, {legacy!r})
+sys.path.insert(0, {repo!r})
 sys.path.insert(0, {benchmark!r})
 import _common as common
-from customProphet import CustomProphet, load_cpp_module, seasonal_time, seasonality
+from analytic_prophet import AnalyticProphet, load_cpp_module, seasonal_time, seasonality
 
 CASES = json.loads({cases!r})
 cpp = load_cpp_module({lib!r})
 
 df = common.load_data(300)
-model = CustomProphet()
+model = AnalyticProphet()
 model.yearly_seasonality = model.weekly_seasonality = model.daily_seasonality = False
 model.seasonalities = {{"yearly": seasonality(365.25, 10)}}
 model.y = df["y"].values
@@ -111,7 +111,7 @@ def outcomes(compiled_optimizer_module):
     dominate the suite's runtime, and the abort-safety that matters comes from
     being out of process at all, not from being alone in it.
     """
-    script = RUNNER.format(legacy=str(LEGACY), benchmark=str(BENCHMARK),
+    script = RUNNER.format(repo=str(REPO), benchmark=str(BENCHMARK),
                            lib=compiled_optimizer_module,
                            cases=json.dumps(CASES), entries=list(ENTRY_POINTS))
     completed = subprocess.run([sys.executable, "-c", script],

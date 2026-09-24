@@ -6,7 +6,7 @@ the C++ layer, or anything else. This checks the calculus itself.
 import numpy as np
 import pytest
 
-from customProphet import SIGMA_OBS_IDX
+from analytic_prophet import SIGMA_OBS_IDX
 
 
 def numerical_gradient(f, x, eps=1e-6):

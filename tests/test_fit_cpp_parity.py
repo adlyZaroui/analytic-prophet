@@ -39,7 +39,7 @@ objective itself at any shared point (see test_cpp_optimizer_convergence.py).
 import numpy as np
 import pytest
 
-from customProphet import CustomProphet, N_CHANGE_POINTS, n_yearly
+from analytic_prophet import AnalyticProphet, N_CHANGE_POINTS, n_yearly
 from conftest import pin_yearly_only
 
 
@@ -51,7 +51,7 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
         "delta": np.zeros(N_CHANGE_POINTS),
         "beta": np.zeros(2 * n_yearly),
     }
-    python_model = pin_yearly_only(CustomProphet())
+    python_model = pin_yearly_only(AnalyticProphet())
     python_model.fit(small_df, analytic=True, initial_params=matched_init)
     # This configuration -- yearly forced at order 10 on 328 days, from an
     # all-zero start, neither of which the defaults would produce -- is the one
@@ -62,7 +62,7 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
     assert python_model.optimizer_used == "Newton"
     assert np.all(np.isfinite(python_model.get_parameters()))
 
-    cpp_model = pin_yearly_only(CustomProphet())
+    cpp_model = pin_yearly_only(AnalyticProphet())
     cpp_model.fit_cpp(small_df, initial_params=matched_init, lib_path=compiled_optimizer_module)
 
     # Both sides share the exact same (k, m, delta, beta) objective for a

@@ -17,7 +17,7 @@ implemented is the one the refusal implies:
 
 What the user set survives. What the previous history produced does not.
 
-`FIT_DERIVED_ATTRIBUTES` in customProphet.py is the list that makes it true, and
+`FIT_DERIVED_ATTRIBUTES` in analytic_prophet/forecaster.py is the list that makes it true, and
 this module is what keeps the list honest: it fits a fresh instance and a refit
 on the same data across a matrix of configurations and compares *every*
 attribute, so a stateful feature that forgets to reset shows up as a failing
@@ -40,7 +40,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import FIT_DERIVED_ATTRIBUTES, CustomProphet
+from analytic_prophet import FIT_DERIVED_ATTRIBUTES, AnalyticProphet
 
 # Two attributes the sweep cannot compare by value, for reasons that have
 # nothing to do with refitting:
@@ -88,14 +88,14 @@ def histories(peyton_manning_df):
 
 
 CONFIGURATIONS = {
-    "plain": lambda: CustomProphet(),
-    "custom seasonality": lambda: CustomProphet().add_seasonality("monthly", 30.5, 5),
-    "hand-written holidays": lambda: CustomProphet(holidays=HOLIDAYS),
-    "country holidays": lambda: CustomProphet().add_country_holidays("US"),
-    "extra regressor": lambda: CustomProphet().add_regressor("temp"),
-    "multiplicative": lambda: CustomProphet(seasonality_mode="multiplicative"),
-    "flat growth": lambda: CustomProphet(growth="flat"),
-    "explicit changepoints": lambda: CustomProphet(
+    "plain": lambda: AnalyticProphet(),
+    "custom seasonality": lambda: AnalyticProphet().add_seasonality("monthly", 30.5, 5),
+    "hand-written holidays": lambda: AnalyticProphet(holidays=HOLIDAYS),
+    "country holidays": lambda: AnalyticProphet().add_country_holidays("US"),
+    "extra regressor": lambda: AnalyticProphet().add_regressor("temp"),
+    "multiplicative": lambda: AnalyticProphet(seasonality_mode="multiplicative"),
+    "flat growth": lambda: AnalyticProphet(growth="flat"),
+    "explicit changepoints": lambda: AnalyticProphet(
         changepoints=pd.to_datetime(["2008-06-01", "2008-09-01"])),
 }
 
@@ -163,7 +163,7 @@ def test_this_implementation_allows_one(peyton_manning_df, compiled_optimizer_mo
     """The divergence itself, stated as a test so it is a decision on the record
     rather than something that fell out."""
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
-    model = CustomProphet()
+    model = AnalyticProphet()
 
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
@@ -231,7 +231,7 @@ def test_switching_paths_between_fits_leaves_no_stale_status(histories,
     """`opt_status` is written by fit_cpp and not by fit, so a fit() following a
     fit_cpp() would otherwise report the compiled run's status as its own."""
     df = histories["short"]
-    model = CustomProphet()
+    model = AnalyticProphet()
 
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
     assert model.opt_status_message == "converged"
@@ -289,7 +289,7 @@ def test_a_refit_agrees_with_prophet_exactly_as_a_fresh_fit_does(prophet_compari
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     def build():
-        model = CustomProphet(n_changepoints=len(changepoints_t))
+        model = AnalyticProphet(n_changepoints=len(changepoints_t))
         model.set_changepoints = lambda: setattr(
             model, "changepoints_t", changepoints_t.copy())
         return model
@@ -312,10 +312,10 @@ def test_a_short_first_fit_does_not_cap_the_changepoints_forever(histories,
     """[fc] `set_changepoints` caps `n_changepoints` at `floor(T * range) - 1`
     and overwrites the attribute, which Prophet can do because it never fits
     twice. Here the cap has to be undone."""
-    fresh = CustomProphet()
+    fresh = AnalyticProphet()
     fresh.fit_cpp(histories["long"], lib_path=compiled_optimizer_module)
 
-    refit = CustomProphet()
+    refit = AnalyticProphet()
     refit.fit_cpp(histories["tiny"], lib_path=compiled_optimizer_module)
     assert refit.n_changepoints == 15, "the cap should bite on twenty rows"
 
@@ -332,7 +332,7 @@ def test_setting_the_changepoint_count_between_fits_is_respected(histories,
     user can assign after construction, so the reset must not overwrite a value
     they set. Undoing the cap only while the capped value still stands is what
     tells the two apart."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(histories["tiny"], lib_path=compiled_optimizer_module)
     assert model.n_changepoints == 15
 
@@ -352,10 +352,10 @@ def test_holiday_names_come_from_the_history_being_fitted(histories,
     The two histories here are different *date ranges*, which is what makes the
     holiday sets differ: observed-day holidays land in some years and not others.
     """
-    fresh = CustomProphet().add_country_holidays("US")
+    fresh = AnalyticProphet().add_country_holidays("US")
     fresh.fit_cpp(histories["late"], lib_path=compiled_optimizer_module)
 
-    refit = CustomProphet().add_country_holidays("US")
+    refit = AnalyticProphet().add_country_holidays("US")
     refit.fit_cpp(histories["long"], lib_path=compiled_optimizer_module)
     stale = set(refit.train_holiday_names)
     refit.fit_cpp(histories["late"], lib_path=compiled_optimizer_module)
@@ -371,7 +371,7 @@ def test_holiday_names_come_from_the_history_being_fitted(histories,
 def test_user_configuration_survives_a_refit(histories, compiled_optimizer_module):
     """The other half of the contract. A refit resets what the data produced,
     not what the caller asked for."""
-    model = (CustomProphet(seasonality_mode="multiplicative",
+    model = (AnalyticProphet(seasonality_mode="multiplicative",
                            changepoint_prior_scale=0.123, interval_width=0.5)
              .add_seasonality("monthly", 30.5, 5)
              .add_country_holidays("US")
@@ -396,7 +396,7 @@ def test_an_explicit_changepoint_list_survives_a_refit(histories,
     list where one was given and clears the generated dates where one was not.
     One rule, both cases."""
     given = pd.to_datetime(["2008-06-01", "2008-09-01", "2009-02-01"])
-    model = CustomProphet(changepoints=given)
+    model = AnalyticProphet(changepoints=given)
 
     model.fit_cpp(histories["long"], lib_path=compiled_optimizer_module)
     model.fit_cpp(histories["long"], lib_path=compiled_optimizer_module)
@@ -411,7 +411,7 @@ def test_generated_changepoints_do_not_become_a_specified_list(histories,
                                                                compiled_optimizer_module):
     """The mirror case: dates this implementation generated must not be read
     back on the next fit as though the user had supplied them."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(histories["long"], lib_path=compiled_optimizer_module)
     first = np.asarray(model.changepoints_t)
 
@@ -426,7 +426,7 @@ def test_generated_changepoints_do_not_become_a_specified_list(histories,
 def test_every_listed_attribute_exists_on_a_constructed_model():
     """The list is written by hand, so a typo in it would silently reset
     nothing."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     missing = [name for name in FIT_DERIVED_ATTRIBUTES if not hasattr(model, name)]
     assert missing == []
 
@@ -434,11 +434,11 @@ def test_every_listed_attribute_exists_on_a_constructed_model():
 def test_the_reset_restores_the_constructed_values(histories,
                                                    compiled_optimizer_module):
     """`_reset_fit_state` on its own, without a second fit after it."""
-    constructed = CustomProphet()
+    constructed = AnalyticProphet()
     baseline = {name: copy.deepcopy(getattr(constructed, name))
                 for name in FIT_DERIVED_ATTRIBUTES}
 
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(histories["short"], lib_path=compiled_optimizer_module)
     model._reset_fit_state()
 

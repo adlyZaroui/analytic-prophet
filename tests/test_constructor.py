@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import CustomProphet, N_CHANGE_POINTS, SIGMA, TAU
+from analytic_prophet import AnalyticProphet, N_CHANGE_POINTS, SIGMA, TAU
 
 
 # -- the signature ------------------------------------------------------
@@ -36,7 +36,7 @@ def test_every_prophet_argument_is_accepted(prophet_comparison):
     upstream shows up as a failure here rather than as a TypeError for a user."""
     Prophet, _, _ = prophet_comparison
     theirs = set(inspect.signature(Prophet.__init__).parameters) - {"self"}
-    ours = set(inspect.signature(CustomProphet.__init__).parameters) - {"self"}
+    ours = set(inspect.signature(AnalyticProphet.__init__).parameters) - {"self"}
 
     assert theirs <= ours, f"missing from this constructor: {sorted(theirs - ours)}"
 
@@ -46,7 +46,7 @@ def test_the_defaults_match_prophets(prophet_comparison):
     model fits something else and nothing says so."""
     Prophet, _, _ = prophet_comparison
     theirs = inspect.signature(Prophet.__init__).parameters
-    ours = inspect.signature(CustomProphet.__init__).parameters
+    ours = inspect.signature(AnalyticProphet.__init__).parameters
 
     # changepoint_prior_scale is Prophet's name for changepoint_prior_scale; the default is the
     # same value, checked below with the rest
@@ -57,9 +57,9 @@ def test_the_defaults_match_prophets(prophet_comparison):
 
 
 def test_the_constants_are_the_defaults():
-    assert inspect.signature(CustomProphet.__init__).parameters["n_changepoints"].default == N_CHANGE_POINTS
-    assert inspect.signature(CustomProphet.__init__).parameters["seasonality_prior_scale"].default == SIGMA
-    assert inspect.signature(CustomProphet.__init__).parameters["changepoint_prior_scale"].default == TAU
+    assert inspect.signature(AnalyticProphet.__init__).parameters["n_changepoints"].default == N_CHANGE_POINTS
+    assert inspect.signature(AnalyticProphet.__init__).parameters["seasonality_prior_scale"].default == SIGMA
+    assert inspect.signature(AnalyticProphet.__init__).parameters["changepoint_prior_scale"].default == TAU
 
 
 # -- what the arguments set ---------------------------------------------
@@ -79,7 +79,7 @@ def test_the_constants_are_the_defaults():
     ("uncertainty_samples", 200, "uncertainty_samples"),
 ])
 def test_an_argument_reaches_its_attribute(argument, value, attribute):
-    assert getattr(CustomProphet(**{argument: value}), attribute) == value
+    assert getattr(AnalyticProphet(**{argument: value}), attribute) == value
 
 
 def test_changepoint_prior_scale_is_the_name_on_both_sides():
@@ -91,7 +91,7 @@ def test_changepoint_prior_scale_is_the_name_on_both_sides():
     Prophet's, meets the attribute far more often than the derivations do.
     `[stan] tau` is now a comment where the arithmetic needs it.
     """
-    model = CustomProphet(changepoint_prior_scale=0.01)
+    model = AnalyticProphet(changepoint_prior_scale=0.01)
 
     assert model.changepoint_prior_scale == 0.01
     assert not hasattr(model, "tau"), (
@@ -107,7 +107,7 @@ def test_holidays_can_be_given_to_the_constructor(peyton_manning_df,
                           "ds": [pd.Timestamp(f"{y}-03-15") for y in (2008, 2009)],
                           "lower_window": 0, "upper_window": 0})
 
-    model = CustomProphet(holidays=frame)
+    model = AnalyticProphet(holidays=frame)
     assert model.holidays is not None
 
     model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
@@ -120,7 +120,7 @@ def test_holidays_can_be_given_to_the_constructor(peyton_manning_df,
 def test_a_bad_holidays_frame_is_rejected_at_construction():
     """Validated where it is given, rather than at fit time."""
     with pytest.raises(ValueError, match='"ds" and "holiday" columns'):
-        CustomProphet(holidays=pd.DataFrame({"holiday": ["x"]}))
+        AnalyticProphet(holidays=pd.DataFrame({"holiday": ["x"]}))
 
 
 # -- what is accepted and then refused ----------------------------------
@@ -132,7 +132,7 @@ def test_a_bad_holidays_frame_is_rejected_at_construction():
 ])
 def test_unsupported_features_are_refused_not_ignored(kwargs, fragment):
     with pytest.raises(NotImplementedError, match=fragment):
-        CustomProphet(**kwargs)
+        AnalyticProphet(**kwargs)
 
 
 @pytest.mark.parametrize("kwargs", [
@@ -145,12 +145,12 @@ def test_unsupported_features_are_refused_not_ignored(kwargs, fragment):
 def test_the_supported_value_of_each_is_accepted(kwargs):
     """The refusals must not reject Prophet's own defaults, or every ported
     script fails immediately."""
-    assert CustomProphet(**kwargs) is not None
+    assert AnalyticProphet(**kwargs) is not None
 
 
 def test_an_unknown_argument_is_a_plain_type_error():
     with pytest.raises(TypeError, match="unexpected keyword"):
-        CustomProphet(not_a_setting=1)
+        AnalyticProphet(not_a_setting=1)
 
 
 # -- the interval ------------------------------------------------------
@@ -163,9 +163,9 @@ def test_interval_width_sets_the_quantiles(peyton_manning_df,
     user asked for."""
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
 
-    narrow = CustomProphet(interval_width=0.5, uncertainty_samples=400)
+    narrow = AnalyticProphet(interval_width=0.5, uncertainty_samples=400)
     narrow.fit_cpp(df, lib_path=compiled_optimizer_module)
-    wide = CustomProphet(interval_width=0.95, uncertainty_samples=400)
+    wide = AnalyticProphet(interval_width=0.95, uncertainty_samples=400)
     wide.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     future = narrow.make_future_dataframe(periods=60)
@@ -180,7 +180,7 @@ def test_interval_width_sets_the_quantiles(peyton_manning_df,
 def test_uncertainty_samples_is_the_draw_count(peyton_manning_df,
                                                compiled_optimizer_module):
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
-    model = CustomProphet(uncertainty_samples=7)
+    model = AnalyticProphet(uncertainty_samples=7)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     class CountingGenerator:
@@ -209,7 +209,7 @@ def test_the_draws_come_from_the_models_own_generator(peyton_manning_df,
     """One of the two draws used the global numpy generator, so seeding the
     model did not make its intervals reproducible."""
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
-    model = CustomProphet(uncertainty_samples=50)
+    model = AnalyticProphet(uncertainty_samples=50)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     state = model.rng.bit_generator.state
@@ -228,7 +228,7 @@ def test_the_uncertainty_trend_follows_the_fitted_growth_mode(
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
     df = df.assign(cap=df["y"].max() * 1.25)
 
-    model = CustomProphet(growth="logistic", uncertainty_samples=200)
+    model = AnalyticProphet(growth="logistic", uncertainty_samples=200)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     future = model.make_future_dataframe(periods=200).assign(cap=df["cap"].iloc[0])

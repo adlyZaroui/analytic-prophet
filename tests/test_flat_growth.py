@@ -25,12 +25,12 @@ land on the same point.
 import numpy as np
 import pytest
 
-from customProphet import (CustomProphet, canonical_to_cpp, predict_trend,
+from analytic_prophet import (AnalyticProphet, canonical_to_cpp, predict_trend,
                            flat_growth_init, TREND_INDICATORS)
 
 
 def flat_model():
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.growth = "flat"
     return model
 

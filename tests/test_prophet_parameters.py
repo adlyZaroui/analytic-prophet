@@ -15,8 +15,8 @@ parameter) into a FITTED value.
 import numpy as np
 import pytest
 
-import customProphet
-from customProphet import (CustomProphet, CHANGEPOINT_RANGE, N_CHANGE_POINTS, SIGMA,
+from analytic_prophet import forecaster
+from analytic_prophet import (AnalyticProphet, CHANGEPOINT_RANGE, N_CHANGE_POINTS, SIGMA,
                            SIGMA_OBS_INIT, SIGMA_OBS_PRIOR_SCALE, TAU, linear_growth_init,
                            n_yearly, sigma_k, sigma_m)
 
@@ -69,15 +69,15 @@ def test_fit_starts_from_prophets_deterministic_initialization(prepared_model, p
     beta zeros, sigma_obs 1.0 -- not Stan's random init, which Prophet never
     reaches because it always passes explicit values."""
     seen = {}
-    original = customProphet.from_dict_to_array
+    original = forecaster.from_dict_to_array
 
     def capture(params, layout=None):
         seen.update(params)
         return original(params) if layout is None else original(params, layout)
 
-    monkeypatch.setattr(customProphet, "from_dict_to_array", capture)
+    monkeypatch.setattr(forecaster, "from_dict_to_array", capture)
 
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit(peyton_manning_df.iloc[:200].reset_index(drop=True), analytic=True)
 
     expected_k, expected_m = linear_growth_init(model.t, model.y_scaled)
@@ -99,7 +99,7 @@ def test_fit_cpp_is_deterministic(peyton_manning_df, compiled_optimizer_module):
 
     runs = []
     for _ in range(2):
-        model = CustomProphet()
+        model = AnalyticProphet()
         model.fit_cpp(small_df, lib_path=compiled_optimizer_module)
         runs.append(model.get_parameters())
 
@@ -111,10 +111,10 @@ def test_both_fit_paths_start_from_the_same_point(peyton_manning_df, compiled_op
     only true asymptotically."""
     small_df = peyton_manning_df.iloc[:300].reset_index(drop=True)
 
-    python_model = CustomProphet()
+    python_model = AnalyticProphet()
     python_model.fit(small_df, analytic=True)
 
-    cpp_model = CustomProphet()
+    cpp_model = AnalyticProphet()
     cpp_model.fit_cpp(small_df, lib_path=compiled_optimizer_module)
 
     expected = linear_growth_init(python_model.t, python_model.y_scaled)
@@ -143,15 +143,15 @@ def test_trend_is_continuous_at_changepoints():
     delta = np.array([1.3, -0.7, 2.0])
     t_at_changepoints = changepoints_t.copy()
 
-    inclusive = customProphet.predict_trend(
+    inclusive = forecaster.predict_trend(
         k=0.4, m=0.1, delta=delta, changepoints_t=changepoints_t,
         t=t_at_changepoints, y_scale=1.0)
 
     # The same trend under the exclusive convention.
     A = (t_at_changepoints[:, None] > changepoints_t) * 1
     gamma = -changepoints_t * delta
-    exclusive = ((0.4 + customProphet.det_dot(A, delta)) * t_at_changepoints
-                 + (0.1 + customProphet.det_dot(A, gamma)))
+    exclusive = ((0.4 + forecaster.det_dot(A, delta)) * t_at_changepoints
+                 + (0.1 + forecaster.det_dot(A, gamma)))
 
     # Equal mathematically, but not bit-for-bit: including a changepoint makes
     # the arithmetic go (k + delta) * s_j - s_j * delta instead of k * s_j, and
@@ -161,7 +161,7 @@ def test_trend_is_continuous_at_changepoints():
 
     # and the trend really is continuous across a changepoint
     eps = 1e-9
-    around = customProphet.predict_trend(
+    around = forecaster.predict_trend(
         k=0.4, m=0.1, delta=delta, changepoints_t=changepoints_t,
         t=np.array([0.5 - eps, 0.5, 0.5 + eps]), y_scale=1.0)
     assert around[1] == pytest.approx(around[0], abs=1e-6)
@@ -174,10 +174,10 @@ def test_stan_convergence_constants_match_cmdstan_defaults():
     history_size, so CmdStan's defaults are what the original runs under.
     [stan] src/stan/optimization/bfgs.hpp, ConvergenceOptions.
     """
-    assert customProphet.STAN_EPS == np.finfo(float).eps   # Stan's machine epsilon
-    assert customProphet.STAN_TOL_REL_OBJ == 1e+4          # tol_rel_obj
-    assert customProphet.STAN_TOL_GRAD == 1e-8             # tol_grad
-    assert customProphet.STAN_MAX_ITERATIONS == 10000      # Prophet's iter=int(1e4)
+    assert forecaster.STAN_EPS == np.finfo(float).eps   # Stan's machine epsilon
+    assert forecaster.STAN_TOL_REL_OBJ == 1e+4          # tol_rel_obj
+    assert forecaster.STAN_TOL_GRAD == 1e-8             # tol_grad
+    assert forecaster.STAN_MAX_ITERATIONS == 10000      # Prophet's iter=int(1e4)
 
 
 def test_cpp_converges_within_prophets_iteration_cap(peyton_manning_df, compiled_optimizer_module):
@@ -191,14 +191,14 @@ def test_cpp_converges_within_prophets_iteration_cap(peyton_manning_df, compiled
     longer named: LBFGSpp reports an iteration count, not which of its tests
     stopped the run.
     """
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert model.opt_status == 0
     assert model.opt_status_message == "converged"
     # Prophet passes iter=int(1e4); a converged run lands well inside it
-    assert 0 < model.opt.n_iterations < customProphet.STAN_MAX_ITERATIONS
+    assert 0 < model.opt.n_iterations < forecaster.STAN_MAX_ITERATIONS
 
 
 @pytest.mark.parametrize("n_changepoints,fourier_order", [(25, 10), (5, 10), (25, 3), (40, 6)])
@@ -209,7 +209,7 @@ def test_cpp_core_accepts_any_dimensions(prepared_model, cpp_module, n_changepoi
     `fourier_series(..., 10)`, so any other shape either mis-sliced
     silently or aborted the process with an Eigen "invalid matrix product".
     """
-    from customProphet import SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD
+    from analytic_prophet import SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD
 
     model = prepared_model
     model.n_changepoints = n_changepoints
@@ -232,7 +232,7 @@ def test_cpp_core_accepts_any_dimensions(prepared_model, cpp_module, n_changepoi
 
 def test_mismatched_parameter_length_is_rejected(prepared_model, cpp_module):
     """A length inconsistent with S and K names both rather than aborting."""
-    from customProphet import SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD
+    from analytic_prophet import SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD
 
     with pytest.raises(ValueError, match="params has length"):
         cpp_module.minus_log_posterior_and_gradient(
@@ -254,7 +254,7 @@ def test_non_default_changepoint_count_fits(peyton_manning_df, compiled_optimize
     This used to raise NotImplementedError by design -- the parameter vector
     was sliced with compiled-in offsets, and anything else mis-sliced silently.
     """
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.n_changepoints = n_changepoints
     model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)

@@ -39,7 +39,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import CustomProphet
+from analytic_prophet import AnalyticProphet
 
 # Prophet's own threshold for yearly seasonality being identifiable, and the
 # point at which its auto rule switches yearly on. [fc] set_auto_seasonalities.
@@ -79,7 +79,7 @@ def seasonal_block(seasonalities, df):
     holiday and regressor registries too, so a test wanting only the seasonal
     part goes through a model configured with just that.
     """
-    model = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
+    model = AnalyticProphet(yearly_seasonality=False, weekly_seasonality=False,
                           daily_seasonality=False)
     model.seasonalities = seasonalities
     return np.ascontiguousarray(model.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
@@ -87,7 +87,7 @@ def seasonal_block(seasonalities, df):
 
 
 def fit_ours(df, lib_path, changepoints_t=None):
-    model = CustomProphet()
+    model = AnalyticProphet()
     if changepoints_t is not None:
         model.set_changepoints = lambda: setattr(model, "changepoints_t", changepoints_t.copy())
     model.fit_cpp(df, lib_path=lib_path)

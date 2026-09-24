@@ -2,8 +2,8 @@
 Shared fixtures for the analytic-prophet test suite.
 
 These currently exercise the pure-Python reference implementation in
-CustomProphet (legacy/customProphet.py). compiled_optimizer_module below
-builds the C++ core (legacy/optimize.cpp) as a pybind11 extension on the
+AnalyticProphet (analytic_prophet/forecaster.py). compiled_optimizer_module
+below builds the C++ core (analytic_prophet/optimize.cpp) as an extension on the
 fly, so the parity and convergence tests can import and call it directly
 without a built extension checked into the repo.
 """
@@ -19,8 +19,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "legacy"))
-from customProphet import (CustomProphet, N_CHANGE_POINTS, n_yearly,  # noqa: E402
+# the repo root, so `analytic_prophet` imports without an install
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from analytic_prophet import (AnalyticProphet, N_CHANGE_POINTS, n_yearly,  # noqa: E402
                            SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE, CPP_MODULE_NAME,
                            load_cpp_module, seasonal_time, seasonality,
                            condition_matrix, TREND_INDICATORS, YEARLY_PERIOD)
@@ -31,7 +32,7 @@ from customProphet import (CustomProphet, N_CHANGE_POINTS, n_yearly,  # noqa: E4
 sys.path.insert(0, str(Path(__file__).parent.parent / "benchmark"))
 
 DATA_PATH = Path(__file__).parent / "data" / "peyton_manning.csv"
-CPP_SOURCE = Path(__file__).parent.parent / "legacy" / "optimize.cpp"
+CPP_SOURCE = Path(__file__).parent.parent / "analytic_prophet" / "optimize.cpp"
 PARAM_SIZE = 2 + N_CHANGE_POINTS + 1 + 2 * n_yearly  # k, m, delta, sigma_obs, beta -> 48
 
 
@@ -57,7 +58,7 @@ def peyton_manning_df():
 
 @pytest.fixture
 def prepared_model(peyton_manning_df):
-    """A CustomProphet with data loaded and preprocessed but not yet fit --
+    """A AnalyticProphet with data loaded and preprocessed but not yet fit --
     gives direct access to t / changepoints_t / y_scaled without
     paying for a full optimize() run in every test.
 
@@ -66,7 +67,7 @@ def prepared_model(peyton_manning_df):
     fixture is about the objective and its gradient at a fixed shape, so pinning
     the 48-parameter layout (PARAM_SIZE) keeps those tests saying what they say.
     """
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.seasonalities = {"yearly": seasonality(YEARLY_PERIOD, n_yearly)}
     model.y = peyton_manning_df["y"].values
     model.ds = pd.to_datetime(peyton_manning_df["ds"])
@@ -109,7 +110,7 @@ def _find_eigen_include():
 
 
 def _build_cpp_extension(tmp_path_factory):
-    """Builds legacy/optimize.cpp into an importable pybind11 extension, using
+    """Builds analytic_prophet/optimize.cpp into an importable extension, using
     the compile command documented in that file's trailing comment. Skips
     (rather than fails) the tests that depend on it when the C++ toolchain,
     Eigen, pybind11 or LBFGSpp aren't available -- that's an environment gap,

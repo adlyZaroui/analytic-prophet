@@ -17,13 +17,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import (AUTO_SEASONALITY_RULES, CustomProphet, history_spacing,
+from analytic_prophet import (AUTO_SEASONALITY_RULES, AnalyticProphet, history_spacing,
                            parse_seasonality_args)
 
 
 def model_for(ds):
     """A model with just enough state for set_auto_seasonalities()."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.ds = pd.to_datetime(pd.Series(ds))
     model.y = np.arange(len(model.ds), dtype=float)
     return model
@@ -157,7 +157,7 @@ def test_a_registered_component_suppresses_its_built_in(caplog):
     """[fc] parse_seasonality_args: 'auto' yields 0 when a component of that
     name is already registered, which is how add_seasonality('weekly', ...)
     wins over the automatic one (#16 task 6)."""
-    from customProphet import seasonality
+    from analytic_prophet import seasonality
 
     model = model_for(daily(1000))
     model.seasonalities = {"weekly": seasonality(7.0, 8)}
@@ -177,14 +177,14 @@ def test_forcing_yearly_on_a_short_series_warns(caplog):
     """[fc] set_auto_seasonalities warns when yearly is enabled under 730 days.
     That regime is exactly what #30 measured diverging, so the warning is the
     user-facing half of this task."""
-    with caplog.at_level("WARNING", logger="customProphet"):
+    with caplog.at_level("WARNING", logger="analytic_prophet"):
         assert selected(daily(300), yearly_seasonality=True) == {"yearly": 10, "weekly": 3}
 
     assert any("less than 730 days" in r.message for r in caplog.records)
 
 
 def test_no_warning_when_the_history_supports_yearly(caplog):
-    with caplog.at_level("WARNING", logger="customProphet"):
+    with caplog.at_level("WARNING", logger="analytic_prophet"):
         selected(daily(1000))
     assert not [r for r in caplog.records if "730 days" in r.message]
 
@@ -195,11 +195,11 @@ def test_the_rule_decides_what_a_fit_estimates(peyton_manning_df,
                                                compiled_optimizer_module):
     """The selected components have to reach the parameter vector, or the rule
     is decoration. 328 days gives weekly only; the full series adds yearly."""
-    short = CustomProphet()
+    short = AnalyticProphet()
     short.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
-    long = CustomProphet()
+    long = AnalyticProphet()
     long.fit_cpp(peyton_manning_df, lib_path=compiled_optimizer_module)
 
     assert list(short.seasonalities) == ["weekly"]
@@ -217,10 +217,10 @@ def test_both_fit_paths_select_the_same_components(peyton_manning_df,
     on what that model is."""
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
 
-    python_model = CustomProphet()
+    python_model = AnalyticProphet()
     python_model.fit(df, analytic=True)
 
-    cpp_model = CustomProphet()
+    cpp_model = AnalyticProphet()
     cpp_model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert python_model.seasonalities == cpp_model.seasonalities
@@ -231,7 +231,7 @@ def test_selection_is_not_sticky_across_fits(peyton_manning_df, compiled_optimiz
     """Prophet adds built-ins to whatever is registered, so a model refitted on
     a shorter series must not keep a component the new history cannot support.
     """
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df, lib_path=compiled_optimizer_module)
     assert list(model.seasonalities) == ["yearly", "weekly"]
 

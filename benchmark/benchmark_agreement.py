@@ -34,7 +34,7 @@ logging.getLogger("cmdstanpy").setLevel(logging.ERROR)
 def posterior_comparison(df, lib_path):
     """Score both optima under Stan's log density, same model specification."""
     from prophet import Prophet
-    from customProphet import CustomProphet
+    from analytic_prophet import AnalyticProphet
 
     prophet_model = Prophet(**common.PROPHET_KWARGS)
     stan_model, stan_data, prophet_params = bridge.capture_stan_model(prophet_model, df)
@@ -45,7 +45,7 @@ def posterior_comparison(df, lib_path):
     X_stan = np.asarray(stan_data["X"], dtype=float)
 
     # our fit, on Prophet's changepoints so delta indexes the same breakpoints
-    ours = CustomProphet()
+    ours = AnalyticProphet()
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=lib_path)
 
@@ -63,13 +63,13 @@ def posterior_comparison(df, lib_path):
 def prediction_comparison(df, lib_path, horizon):
     """Compare forecasts, each implementation in its default configuration."""
     from prophet import Prophet
-    from customProphet import CustomProphet
+    from analytic_prophet import AnalyticProphet
 
     prophet_model = Prophet(**common.PROPHET_KWARGS)
     prophet_model.fit(df)
     prophet_forecast = prophet_model.predict(prophet_model.make_future_dataframe(periods=horizon))
 
-    ours = CustomProphet()
+    ours = AnalyticProphet()
     ours.fit_cpp(df, lib_path=lib_path)
     our_forecast = ours.predict(ours.make_future_dataframe(periods=horizon))
 
@@ -101,7 +101,7 @@ def short_series_comparison(df, lib_path):
     that cost measured rather than remembered.
     """
     from prophet import Prophet
-    from customProphet import CustomProphet
+    from analytic_prophet import AnalyticProphet
 
     scores = {}
     for algorithm in ("Newton", "LBFGS"):
@@ -116,7 +116,7 @@ def short_series_comparison(df, lib_path):
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     def ours(**fit_kwargs):
-        model = CustomProphet(n_changepoints=len(changepoints_t))
+        model = AnalyticProphet(n_changepoints=len(changepoints_t))
         model.set_changepoints = lambda: setattr(
             model, "changepoints_t", changepoints_t.copy())
         model.fit_cpp(df, lib_path=lib_path, **fit_kwargs)

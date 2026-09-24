@@ -25,8 +25,8 @@ import sys
 import numpy as np
 import pytest
 
-import customProphet
-from customProphet import (CustomProphet, CPP_MODULE_NAME, N_CHANGE_POINTS, n_yearly,
+from analytic_prophet import forecaster
+from analytic_prophet import (AnalyticProphet, CPP_MODULE_NAME, N_CHANGE_POINTS, n_yearly,
                            SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD, load_cpp_module)
 from conftest import pin_yearly_only
 
@@ -182,7 +182,7 @@ def test_missing_extension_raises_a_helpful_import_error(monkeypatch, tmp_path):
     source. Patching just the directory would leave the outcome depending on
     whether the developer happens to have an extension built in place.
     """
-    monkeypatch.setattr(customProphet, "CPP_MODULE_NAME", "analytic_prophet_cpp_not_built")
+    monkeypatch.setattr(forecaster, "CPP_MODULE_NAME", "analytic_prophet_cpp_not_built")
 
     with pytest.raises(ImportError, match="optimize.cpp"):
         load_cpp_module()
@@ -197,7 +197,7 @@ def test_loaded_module_is_cached(compiled_optimizer_module):
 def test_fit_cpp_reports_the_termination_status_in_words(peyton_manning_df, compiled_optimizer_module):
     """The old binding surfaced a bare integer; diagnosing issue #8 meant
     looking -1001 up in lbfgs.h by hand."""
-    model = pin_yearly_only(CustomProphet())
+    model = pin_yearly_only(AnalyticProphet())
     model.fit_cpp(
         peyton_manning_df.iloc[:300].reset_index(drop=True),
         initial_params={

@@ -14,10 +14,10 @@ import numpy as np
 import pandas as pd
 
 REPO = Path(__file__).resolve().parent.parent
-LEGACY = REPO / "legacy"
+PACKAGE = REPO / "analytic_prophet"
 DATA_PATH = REPO / "tests" / "data" / "peyton_manning.csv"
 
-sys.path.insert(0, str(LEGACY))
+sys.path.insert(0, str(REPO))
 
 # Sizes worth reporting. 50 is below the T < 100 cutoff, where both sides use
 # Newton rather than L-BFGS (see issue #25) -- kept in deliberately, since that
@@ -60,7 +60,7 @@ def load_data(n_rows=None):
 
 
 def build_cpp_extension(out_dir):
-    """Compile legacy/optimize.cpp into an importable extension.
+    """Compile analytic_prophet/optimize.cpp into an importable extension.
 
     Built once and reused: compilation is not part of what is being measured.
     Returns the path, or None with a reason printed if the toolchain is absent.
@@ -92,7 +92,7 @@ def build_cpp_extension(out_dir):
         return None
 
     cmd = [compiler, "-std=c++17", "-shared", "-fPIC", "-O3",
-           "-o", str(out_path), str(LEGACY / "optimize.cpp"),
+           "-o", str(out_path), str(PACKAGE / "optimize.cpp"),
            f"-I{eigen}", f"-I{pybind11.get_include()}",
            f"-I{sysconfig.get_paths()['include']}", f"-I{lbfgspp}"]
     if sys.platform == "darwin":
@@ -161,15 +161,15 @@ def fit_prophet(df):
 
 
 def fit_python(df, analytic=True):
-    from customProphet import CustomProphet
-    model = CustomProphet()
+    from analytic_prophet import AnalyticProphet
+    model = AnalyticProphet()
     model.fit(df, analytic=analytic)
     return model
 
 
 def fit_cpp(df, lib_path):
-    from customProphet import CustomProphet
-    model = CustomProphet()
+    from analytic_prophet import AnalyticProphet
+    model = AnalyticProphet()
     model.fit_cpp(df, lib_path=lib_path)
     return model
 
