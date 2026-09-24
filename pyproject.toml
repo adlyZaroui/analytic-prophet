@@ -1,0 +1,89 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "analytic-prophet"
+description = "Facebook Prophet's fitting engine with a hand-derived analytic gradient in place of Stan's automatic differentiation"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Adly Zaroui" }]
+keywords = ["forecasting", "time-series", "prophet", "optimization"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C++",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+# The floor the source actually implies -- old-style `typing.Tuple`, no walrus,
+# no match statement, no PEP 604 unions. Only 3.14 is exercised, so anything
+# older is plausible rather than tested; the installed numpy/pandas will impose
+# their own, higher floor in practice.
+requires-python = ">=3.9"
+
+dependencies = ["numpy", "pandas", "scipy"]
+
+# Version lives in analytic_prophet/__init__.py so there is one source of truth;
+# tests/test_packaging.py checks that this file and that one cannot drift.
+dynamic = ["version"]
+
+[project.optional-dependencies]
+# Country holidays (#16 task 9). Imported lazily and only by
+# add_country_holidays -- trend, seasonality and a hand-written holidays frame
+# all work without it, so a user who needs none of those needs none of this.
+holidays = ["holidays"]
+
+# `prophet` itself, deliberately not a runtime dependency. Every comparison
+# against the original needs it, and it pulls cmdstanpy plus a compiled Stan
+# model -- a toolchain heavier than everything else here combined. The suite is
+# built to do without: conftest.py's prophet_comparison fixture skips when it is
+# absent, and benchmark/_common.py prints an install hint rather than failing.
+compare = ["prophet"]
+
+# pybind11 is a *build*-time dependency of the C++ core, not a runtime one:
+# nothing imports it, but analytic_prophet/optimize.cpp cannot be compiled
+# without its headers. It is here rather than in [build-system] because the
+# extension is compiled on demand by conftest.py and the benchmarks, not at
+# install time -- see [tool.setuptools.package-data] below.
+#
+# Eigen and LBFGSpp are header-only and come from the system, not from pip:
+#     brew install eigen lbfgspp        # or equivalent
+dev = [
+    "analytic-prophet[holidays,compare]",
+    "pytest>=7",
+    "pybind11",
+]
+
+[project.urls]
+Repository = "https://github.com/adlyZaroui/analytic-prophet"
+Issues = "https://github.com/adlyZaroui/analytic-prophet/issues"
+
+[tool.setuptools]
+# Named rather than auto-discovered, so that adding a top-level directory --
+# the evaluation suite that is coming next -- does not silently become part of
+# the distribution. Splitting forecaster.py into submodules needs no change
+# here: a package ships whatever modules it contains.
+packages = ["analytic_prophet"]
+
+[tool.setuptools.package-data]
+# The C++ core ships as *source*. It is compiled on demand rather than at
+# install time, which is deliberate: `pip install` then needs no C++ toolchain,
+# no binary is checked in, and the tests that need one skip rather than fail.
+# Building it at install time would mean a build backend that handles
+# extensions and a compiler required of everyone -- worth revisiting if this is
+# ever distributed, and not before.
+analytic_prophet = ["optimize.cpp"]
+
+[tool.setuptools.dynamic]
+version = { attr = "analytic_prophet.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# So a fresh clone can run `pytest` with no install and no PYTHONPATH. An
+# editable install makes the first entry redundant but not wrong; the second is
+# the Prophet-comparison plumbing, which lives with the benchmarks because that
+# is also where it is exercised interactively.
+pythonpath = [".", "benchmark"]

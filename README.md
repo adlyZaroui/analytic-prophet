@@ -832,9 +832,11 @@ the `Prophet` class. The C++ source sits inside the package rather than beside i
 it *is* the implementation, not a build input to it — where Prophet hands the problem to
 Stan, this hands it to a gradient written out by hand.
 
-Importing the package needs the repo root on `sys.path`; `tests/conftest.py` and
-`benchmark/_common.py` each put it there, so neither an install nor a `PYTHONPATH` is
-required to run either.
+`pyproject.toml` declares the package, its dependencies and the test configuration.
+`optimize.cpp` ships as package *data*: it is compiled on demand rather than at install
+time, so `pip install` needs no C++ toolchain and no binary is checked in. Building it at
+install time would mean a build backend that handles extensions and a compiler required
+of everyone — worth revisiting if this is ever distributed, and not before.
 
 ---
 
@@ -844,9 +846,25 @@ Requires a C++17 compiler and two header-only libraries:
 
 ```bash
 brew install eigen lbfgspp          # or equivalent
-pip install -r requirements-dev.txt
-pytest tests/                        # 626 tests
+pip install -e '.[dev]'
+pytest                               # 629 tests
 ```
+
+`pytest` alone is enough — `pyproject.toml` puts the repo root and `benchmark/` on
+`pythonpath`, so a fresh clone runs the suite with **no install and no `PYTHONPATH`**.
+`pip install -e .` is for importing the package from elsewhere; nothing in the repo
+depends on it.
+
+> **`pip install -e .` on macOS with Python 3.13+ can install successfully and still not
+> import.** setuptools writes the editable `.pth` with macOS's `UF_HIDDEN` flag set, and
+> Python 3.13 hardened `site.addpackage` to **skip hidden `.pth` files**. The install
+> reports success, `pip show` is happy, the metadata resolves — and `import
+> analytic_prophet` raises `ModuleNotFoundError` from any directory but the repo root.
+> `chflags nohidden .venv/lib/python3.*/site-packages/__editable__*` clears it, though
+> something re-applies the flag here, so the fix does not stick.
+> `tests/test_packaging.py::test_an_editable_install_actually_imports` is what catches
+> this: it skips when the package is not installed and fails with the diagnosis when it
+> is installed and broken.
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
 compiles `analytic_prophet/optimize.cpp` into a temporary directory on the fly, which is
