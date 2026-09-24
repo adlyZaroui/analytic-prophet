@@ -106,3 +106,106 @@ def test_compiled_extension_exposes_its_entry_points(cpp_module):
     extension imports and exposes the entry points fit_cpp() calls."""
     assert callable(cpp_module.optimize)
     assert callable(cpp_module.minus_log_posterior_and_gradient)
+
+
+# -- the preprocessing both paths share -----------------------------------
+
+# Every attribute preprocess() is responsible for. Listed rather than derived,
+# because the point is to notice when one path stops setting something the
+# other does.
+PREPROCESSED = ("T", "t", "t_seasonality", "y", "y_scaled", "y_scale",
+                "changepoints_t", "layout", "sigmas", "s_a", "s_m",
+                "condition_masks", "_fit_design_matrix", "_data_columns",
+                "_data_column_count", "_holiday_columns",
+                "train_holiday_names", "train_holiday_column_names")
+
+
+def preprocessed_state(model):
+    return {name: getattr(model, name) for name in PREPROCESSED}
+
+
+def same(left, right):
+    if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
+        left, right = np.asarray(left), np.asarray(right)
+        return left.shape == right.shape and (left.size == 0 or np.array_equal(left, right))
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(same(left[k], right[k]) for k in left)
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        return len(left) == len(right) and all(same(a, b) for a, b in zip(left, right))
+    try:
+        return bool(left == right)
+    except ValueError:
+        return repr(left) == repr(right)
+
+
+@pytest.mark.parametrize("n_rows", [300, 1000])
+def test_both_paths_preprocess_the_history_identically(peyton_manning_df,
+                                                       compiled_optimizer_module, n_rows):
+    """The invariant `preprocess` exists to guarantee.
+
+    It used to hold by coincidence -- 45 lines copied into each of `fit` and
+    `fit_cpp`, which every change had to be made to twice. It now holds by
+    construction, and this is what notices if the two ever diverge again.
+    """
+    df = peyton_manning_df.iloc[:n_rows].reset_index(drop=True)
+
+    python_model = AnalyticProphet()
+    python_model.fit(df, analytic=True)
+    cpp_model = AnalyticProphet()
+    cpp_model.fit_cpp(df, lib_path=compiled_optimizer_module)
+
+    differing = [name for name in PREPROCESSED
+                 if not same(getattr(python_model, name), getattr(cpp_model, name))]
+    assert differing == []
+
+
+def test_preprocess_leaves_the_same_state_a_fit_would(peyton_manning_df):
+    """Called on its own, without optimizing. That it can be is the point: the
+    history and the design matrix do not depend on which optimizer runs next."""
+    df = peyton_manning_df.iloc[:300].reset_index(drop=True)
+
+    prepared = AnalyticProphet()
+    prepared.preprocess(df)
+
+    fitted = AnalyticProphet()
+    fitted.fit(df, analytic=True)
+
+    differing = [name for name in PREPROCESSED
+                 if not same(getattr(prepared, name), getattr(fitted, name))]
+    assert differing == []
+
+
+def test_both_paths_start_from_the_same_initial_params(peyton_manning_df):
+    """[fc] calculate_initial_params. Prophet passes these to Stan explicitly,
+    so Stan's random init is never reached; here they are what both optimizers
+    are handed, which is what makes the two paths comparable at all."""
+    df = peyton_manning_df.iloc[:300].reset_index(drop=True)
+    model = AnalyticProphet()
+    model.preprocess(df)
+
+    defaults = model.calculate_initial_params()
+
+    assert set(defaults) == {"k", "m", "delta", "sigma_obs", "beta"}
+    assert defaults["sigma_obs"] == 1.0          # [fc] Stan's init, not a draw
+    np.testing.assert_array_equal(defaults["delta"],
+                                  np.zeros(model.layout.n_changepoints))
+    np.testing.assert_array_equal(defaults["beta"],
+                                  np.zeros(model.layout.n_regressor_columns))
+    assert np.isfinite(defaults["k"]) and np.isfinite(defaults["m"])
+
+
+def test_caller_supplied_initial_params_override_the_defaults(peyton_manning_df):
+    """Including `sigma_obs`, which is the one key the two paths used to handle
+    differently: `fit` seeded it and `fit_cpp` did not, reading it back with a
+    `.get(..., SIGMA_OBS_INIT)` instead. The shared helper always sets it, so
+    both now read the same key -- equivalent in every case, and the one place
+    this refactor was not a literal move."""
+    df = peyton_manning_df.iloc[:300].reset_index(drop=True)
+    model = AnalyticProphet()
+    model.preprocess(df)
+
+    given = model.calculate_initial_params({"k": 0.5, "sigma_obs": 0.25})
+
+    assert given["k"] == 0.5
+    assert given["sigma_obs"] == 0.25
+    assert model.calculate_initial_params()["sigma_obs"] == 1.0   # not mutated
