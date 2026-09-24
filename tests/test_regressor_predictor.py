@@ -253,28 +253,51 @@ def test_the_forecast_agrees_with_prophets(prophet_comparison,
     assert difference < 0.02, f"forecasts differ by {difference * 100:.3f}% of scale"
 
 
-def test_uncertainty_is_not_propagated(peyton_manning_df, compiled_optimizer_module):
-    """Stated rather than left to be found.
+def test_the_regressors_own_uncertainty_widens_the_interval(peyton_manning_df,
+                                                            compiled_optimizer_module):
+    """The reverse of what this test asserted until #16 task 14a.
 
-    Prophet draws `predictive_samples` from the nested model and widens
-    `yhat`'s interval with them. There is no sampling path here, so the
-    regressor's forecast enters as a point estimate and the whole interval
-    comes from the trend.
+    It used to pin the gap structurally -- `yhat_upper - yhat` equalled
+    `trend_upper - trend` exactly, which held only while nothing but the trend
+    contributed width -- with a note that implementing the propagation would
+    break it on purpose. It did.
 
-    Asserted structurally rather than by comparing two fits: `yhat_upper - yhat`
-    equals `trend_upper - trend` exactly, which is only true if nothing but the
-    trend contributes width. Implementing the propagation later breaks this
-    test, which is the point of it.
+    A regressor the nested model is unsure about now widens the interval. The
+    comparison is against the same model given the regressor's values outright,
+    which removes that uncertainty and nothing else.
     """
     df = driven(peyton_manning_df.iloc[:400].reset_index(drop=True))
-    model = CustomProphet().add_regressor("driver", regressor_predictor=True)
+
+    uncertain = CustomProphet(uncertainty_samples=400)
+    uncertain.add_regressor("driver", regressor_predictor=True)
+    uncertain.fit_cpp(df, lib_path=compiled_optimizer_module)
+
+    supplied = CustomProphet(uncertainty_samples=400)
+    supplied.add_regressor("driver")
+    supplied.fit_cpp(df, lib_path=compiled_optimizer_module)
+
+    future = uncertain.make_future_dataframe(periods=90)
+    filled = uncertain._ensure_regressor_values(future)
+
+    from_model = uncertain.predict(future)
+    known = supplied.predict(filled)
+
+    horizon = slice(len(df), None)
+    uncertain_band = (from_model["yhat_upper"] - from_model["yhat_lower"]).values[horizon]
+    known_band = (known["yhat_upper"] - known["yhat_lower"]).values[horizon]
+
+    assert uncertain_band.mean() > known_band.mean(), (
+        "a forecast that has to guess the regressor cannot be as confident as "
+        "one that is told it")
+
+
+def test_a_regressor_without_a_predictor_adds_no_width(peyton_manning_df,
+                                                       compiled_optimizer_module):
+    """Only the regressors with a nested model vary across draws; one whose
+    values the caller supplies is fixed, as it was."""
+    df = driven(peyton_manning_df.iloc[:400].reset_index(drop=True))
+    model = CustomProphet(uncertainty_samples=200).add_regressor("driver")
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    forecast = model.predict(model.make_future_dataframe(periods=30))
-
-    np.testing.assert_allclose(
-        forecast["yhat_upper"].values - forecast["yhat"].values,
-        forecast["trend_upper"].values - forecast["trend"].values, rtol=1e-12)
-    np.testing.assert_allclose(
-        forecast["yhat"].values - forecast["yhat_lower"].values,
-        forecast["trend"].values - forecast["trend_lower"].values, rtol=1e-12)
+    assert model._regressor_draws(
+        model._ensure_regressor_values(model.make_future_dataframe(periods=30)), 5) == {}
