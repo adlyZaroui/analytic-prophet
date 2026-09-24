@@ -382,8 +382,24 @@ T = 1000:
 The remaining 1.2× is not the sampler: the Laplace scale it draws from is `mean|δ|`, the
 band is linear in it, and ours runs 1.171× Prophet's on this series because the two
 optimizers land on different rate adjustments — sparser here (6 active against 15) but
-larger in mean magnitude. Zero horizon gives zero width on both sides, since neither
-places changepoints inside the history.
+larger in mean magnitude.
+
+Two details of this are worth stating, because each looks wrong until you know why.
+
+**The history has a zero-width band.** New changepoints are drawn on `(1, T]` — strictly
+past the end of the history — so the sampled trend over the history is the same in every
+draw. A forecast therefore reports no trend uncertainty at all over the period it was
+fitted on. That is Prophet's behaviour too, verified rather than assumed, and it follows
+from what the interval means: it is the uncertainty in *where the trend goes next*, not
+in where it has been. (It is zero to about 1e-15 rather than exactly, since each draw
+appends its changepoints and `A·δ` then sums a different number of zero terms.)
+
+**The Laplace scale carries `+ 1e-8`.** [fc] `lambda_ = np.mean(np.abs(deltas)) + 1e-8`.
+A series straight enough that the fit leaves every changepoint inactive gives `mean|δ|`
+of exactly zero, and `Laplace(0, 0)` is degenerate — every draw returns the same trend
+and the band is *identically* zero rather than merely narrow. That is a forecast claiming
+certainty it does not have, and the epsilon is what prevents it. It is not a rounding
+guard: it is the difference between a narrow interval and no interval.
 
 **Peak memory added by fitting** (T = 2905):
 
