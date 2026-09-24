@@ -98,8 +98,9 @@ def main():
                     row.append(f"{got[0] / base[0]:>18.2f}x" if (got and base) else f"{'n/a':>19}")
                 print("  ".join(row))
             print()
-            print("Note: below T=100 Prophet uses Newton rather than L-BFGS, so those rows")
-            print("compare different algorithms -- see issue #25.")
+            print("Note: below T=100 both sides run Newton rather than L-BFGS (#25),")
+            print("which costs no accuracy here but pays 2n gradient evaluations per")
+            print("iteration for its Hessian -- those rows are slower for that reason.")
 
 
 if __name__ == "__main__":

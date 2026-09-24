@@ -19,9 +19,9 @@ DATA_PATH = REPO / "tests" / "data" / "peyton_manning.csv"
 
 sys.path.insert(0, str(LEGACY))
 
-# Sizes worth reporting. 50 is below Prophet's T < 100 cutoff, where it uses
-# Newton rather than L-BFGS (see issue #25) -- kept in deliberately, since a
-# mismatch there is a finding rather than noise.
+# Sizes worth reporting. 50 is below the T < 100 cutoff, where both sides use
+# Newton rather than L-BFGS (see issue #25) -- kept in deliberately, since that
+# regime has its own cost profile and a mismatch there is a finding, not noise.
 DEFAULT_SIZES = (50, 100, 300, 1000, 2905)
 
 # These used to pin Prophet's seasonality to yearly-only, because that was the

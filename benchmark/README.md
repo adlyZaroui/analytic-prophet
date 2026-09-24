@@ -123,16 +123,27 @@ Our posterior is the better one at every size measured, T = 100 through 2905,
 so this is the same "Prophet stops short" story the posterior criterion exists
 to detect — not either implementation being wrong.
 
-## An observation already worth recording
+## What the short-series regime costs now
 
-Short series behave badly in the Python path, which is the regime where Prophet
-switches algorithms:
+This section used to record the Python path behaving badly below T = 100 — 2056
+iterations at T = 50, and `ABNORMAL_TERMINATION_IN_LNSRCH` at T = 100. Stan's
+convergence criteria (#21) and Prophet's changepoint placement (#15) both
+removed that, and #25 then put Prophet's algorithm rule in: Newton below 100,
+L-BFGS at or above, one Newton retry when L-BFGS fails.
 
-| T | iterations | time | scipy message |
-|---|---|---|---|
-| 50 | 2056 | 0.355s | CONVERGENCE |
-| 100 | 3919 | 0.931s | **ABNORMAL** (line-search failure) |
-| 300 | 91 | 0.046s | CONVERGENCE |
+What is left is a time cost, not an accuracy one. Newton reaches the same
+optimum as L-BFGS at every size measured, but pays `2n` gradient evaluations per
+iteration for its finite-difference Hessian:
 
-Prophet uses Newton below T=100 and falls back to Newton when L-BFGS raises; we
-do neither. Tracked in issue #25.
+| T | rule picks | iterations | `fit()` | `fit_cpp()` |
+|---|---|---|---|---|
+| 50 | Newton | 44 | 0.247s | 0.016s |
+| 100 | L-BFGS | 149 | 0.026s | 0.005s |
+| 300 | L-BFGS | 546 | 0.112s | 0.017s |
+
+`fit_cpp` at T = 50 is 0.10x Prophet's 0.171s, so the Hessian is affordable
+where it matters. `fit()` is the readable reference rather than the deliverable,
+and Newton is where that shows most: at these sizes it is ~20x its own L-BFGS.
+`analytic=False` still selects finite differences under Newton as it does under
+L-BFGS, which is why the numeric-gradient column jumps to 52x at T = 50 --
+differencing the objective inside a method that then differences the gradient.
