@@ -1021,12 +1021,21 @@ class AnalyticProphet:
             gradient[self.layout.beta],
         ))
 
-    def fit(self, df: pd.DataFrame, analytic: bool=False, use_combined: bool=False, optimizer: str='L-BFGS-B',
-            initial_params: dict=None, fixed_sigma_obs: float=None,
-            algorithm: str=None) -> Tuple[float, float, np.array, np.array]:
-        if analytic and use_combined:
-            raise ValueError("Both 'analytic' and 'use_combined' cannot be True at the same time.")
+    def preprocess(self, df: pd.DataFrame) -> None:
+        """Everything both fit paths do to the history before optimizing it.
 
+        [fc] Prophet.preprocess, and at the same seam: it reformats the history,
+        normalizes y, fits the regressor standardizations, selects the
+        seasonalities, places the changepoints and builds the design matrix.
+        Prophet's also returns a `ModelInputData`; this one only saves to
+        `self`, because both callers read the attributes rather than a record.
+
+        It exists because `fit` and `fit_cpp` each carried this block verbatim
+        -- 45 identical lines, differing in one comment. Every change to
+        preprocessing had to be made twice, and #41 is what that costs: both
+        paths needed `_reset_fit_state()` added separately, and a miss would
+        have been silent in whichever one was forgotten.
+        """
         self._reset_fit_state()
         self.y = df['y'].values
 
@@ -1075,9 +1084,19 @@ class AnalyticProphet:
         self._fit_design_matrix = np.ascontiguousarray(
             self.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
 
-        # [fc] calculate_initial_params: k/m from linear_growth_init, delta and
-        # beta at zero, sigma_obs at 1.0. Prophet passes these to Stan
-        # explicitly, so Stan's random init is never used.
+    def calculate_initial_params(self, initial_params: dict=None) -> dict:
+        """The point both optimizers start from.
+
+        [fc] Prophet.calculate_initial_params, which takes `K` and returns a
+        `ModelParams`; this takes the caller's overrides and returns a dict in
+        the canonical (k, m, delta, sigma_obs, beta) order. k and m come from
+        the growth mode's initializer, delta and beta are zero, sigma_obs is 1.
+
+        Prophet passes these to Stan explicitly, so Stan's random init is never
+        reached. `fit_cpp` used to draw `init_r * N(0, 1)` here instead,
+        described as "STAN initialization" -- from an unseeded generator, which
+        made it non-reproducible run to run.
+        """
         if self.growth == 'logistic':
             k_init, m_init = logistic_growth_init(self.t, self.y_scaled,
                                                   self.cap_scaled)
@@ -1085,7 +1104,7 @@ class AnalyticProphet:
             k_init, m_init = flat_growth_init(self.y_scaled)
         else:
             k_init, m_init = linear_growth_init(self.t, self.y_scaled)
-        initial_params_dict = {
+        params = {
             'k': k_init,
             'm': m_init,
             'delta': np.zeros(self.layout.n_changepoints),
@@ -1093,7 +1112,18 @@ class AnalyticProphet:
             'beta': np.zeros(self.layout.n_regressor_columns),
         }
         if initial_params is not None:
-            initial_params_dict.update(initial_params)
+            params.update(initial_params)
+        return params
+
+    def fit(self, df: pd.DataFrame, analytic: bool=False, use_combined: bool=False, optimizer: str='L-BFGS-B',
+            initial_params: dict=None, fixed_sigma_obs: float=None,
+            algorithm: str=None) -> Tuple[float, float, np.array, np.array]:
+        if analytic and use_combined:
+            raise ValueError("Both 'analytic' and 'use_combined' cannot be True at the same time.")
+
+        self.preprocess(df)
+
+        initial_params_dict = self.calculate_initial_params(initial_params)
         if fixed_sigma_obs is not None:
             initial_params_dict['sigma_obs'] = fixed_sigma_obs
 
@@ -1251,80 +1281,15 @@ class AnalyticProphet:
     def fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None,
                 verbose: bool=False, algorithm: str=None) -> Tuple[float, float, np.array, np.array]:
         """Fit via the compiled C++ core (see load_cpp_module for how it's found)."""
-        self._reset_fit_state()
-        self.y = df['y'].values
+        self.preprocess(df)
 
-        if df['ds'].dtype != 'datetime64[ns]':
-            self.ds = pd.to_datetime(df['ds'])
-        else:
-            self.ds = df['ds']
-
-        self.t = np.array((self.ds - self.ds.min()) / (self.ds.max() - self.ds.min()))
-        self.T = df.shape[0]
-
-        self.t_seasonality = seasonal_time(self.ds)
-        self._normalize_y()
-        self._setup_growth(df)
-        self.set_auto_seasonalities()
-        # after selection, since a conditioned component may have been added by
-        # hand while an auto-selected one never carries a condition
-        self.condition_masks = condition_masks(self.seasonalities, df)
-        holidays_block, self._holiday_prior_scales = self._holiday_design(self.ds)
-        self._holiday_columns = 0 if holidays_block is None else holidays_block.shape[1]
-        # recorded after the features are built, so predict presents the same
-        # columns even for a holiday that never lands in the future frame
-        if self.train_holiday_names is None and self._holiday_columns:
-            self.train_holiday_names = list(make_holiday_features(
-                self.ds, self.construct_holiday_dataframe(self.ds), self.holidays_prior_scale)[2])
-
-        # standardization is fitted here, on the history, and reapplied
-        # unchanged at predict time. [fc] initialize_scales.
-        for name, props in self.extra_regressors.items():
-            if name not in df:
-                raise ValueError(f"Regressor {name!r} missing from dataframe")
-            props["mu"], props["std"] = regressor_standardization(
-                df[name], props["standardize"])
-        self._data_columns, self._data_prior_scales, self._data_modes = \
-            self._data_design(self.ds, df, holidays_block)
-        self._data_column_count = self._data_columns.shape[1]
-        if self._holiday_columns:
-            self.train_holiday_column_names = list(make_holiday_features(
-                self.ds, self.construct_holiday_dataframe(self.ds),
-                self.holidays_prior_scale)[0].columns)
-        self.set_changepoints()
-        self._build_layout()
-        # built once here, not per objective evaluation (#28)
-        self._fit_design_matrix = np.ascontiguousarray(
-            self.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
-
-        # Same deterministic initialization as fit(), so both fit paths start
-        # from the same point. [fc] calculate_initial_params.
-        #
-        # This used to draw init_r * N(0, 1) with init_r=2.0, described as
-        # "STAN initialization" -- but Prophet always passes explicit inits, so
-        # Stan's random default is never reached. The draw also came from an
-        # unseeded RNG, making fit_cpp() non-reproducible run to run.
-        if self.growth == 'logistic':
-            k_init, m_init = logistic_growth_init(self.t, self.y_scaled,
-                                                  self.cap_scaled)
-        elif self.growth == 'flat':
-            k_init, m_init = flat_growth_init(self.y_scaled)
-        else:
-            k_init, m_init = linear_growth_init(self.t, self.y_scaled)
-        defaults = {
-            'k': k_init,
-            'm': m_init,
-            'delta': np.zeros(self.layout.n_changepoints),
-            'beta': np.zeros(self.layout.n_regressor_columns),
-        }
-        if initial_params is not None:
-            defaults.update(initial_params)
+        defaults = self.calculate_initial_params(initial_params)
 
         # The compiled optimizer's layout is [k, m, delta(S), beta(K), zeta],
         # with zeta = log(sigma_obs) last -- see cpp_to_canonical. Estimating
         # the log keeps sigma_obs positive without box constraints, which
         # liblbfgs does not have.
-        zeta_init = np.log(defaults.get('sigma_obs', SIGMA_OBS_INIT))
+        zeta_init = np.log(defaults['sigma_obs'])
         params = np.concatenate(([defaults['k']], [defaults['m']],
                                  defaults['delta'], defaults['beta'], [zeta_init]))
 
