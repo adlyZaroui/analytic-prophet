@@ -25,7 +25,7 @@ import sys
 import numpy as np
 import pytest
 
-from analytic_prophet import forecaster
+from analytic_prophet import forecaster, models
 from analytic_prophet import (AnalyticProphet, CPP_MODULE_NAME, N_CHANGE_POINTS, n_yearly,
                            SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD, load_cpp_module)
 from conftest import pin_yearly_only
@@ -181,8 +181,13 @@ def test_missing_extension_raises_a_helpful_import_error(monkeypatch, tmp_path):
     miss for real -- the import and the glob for a build sitting next to the
     source. Patching just the directory would leave the outcome depending on
     whether the developer happens to have an extension built in place.
+
+    Patched on `models`, not on `forecaster`. `load_cpp_module` lives there and
+    reads the constant from that module's globals; rebinding the copy
+    forecaster imported would leave the loader reading the original and the
+    test would pass while proving nothing.
     """
-    monkeypatch.setattr(forecaster, "CPP_MODULE_NAME", "analytic_prophet_cpp_not_built")
+    monkeypatch.setattr(models, "CPP_MODULE_NAME", "analytic_prophet_cpp_not_built")
 
     with pytest.raises(ImportError, match="optimize.cpp"):
         load_cpp_module()

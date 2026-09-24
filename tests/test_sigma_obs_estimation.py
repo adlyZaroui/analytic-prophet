@@ -12,7 +12,7 @@ constant is T*log(sigma_obs) -- droppable when sigma_obs is a fixed constant,
 but not once it's a variable being optimized over.
 
 These tests target the fix: sigma_obs now lives in the parameter vector
-(layout: k, m, delta, sigma_obs, beta -- see SIGMA_OBS_IDX in analytic_prophet/forecaster.py,
+(layout: k, m, delta, sigma_obs, beta -- see SIGMA_OBS_IDX in analytic_prophet/layout.py,
 matching the order of Prophet's own Stan parameters block), the analytic
 posterior includes the T*log(sigma_obs) term and the sigma_obs prior, and the
 gradient has a matching dsigma_obs term. test_analytic_gradient_matches_numerical
