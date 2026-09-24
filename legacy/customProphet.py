@@ -1983,62 +1983,62 @@ class CustomProphet:
         """Quantiles of the trend under future changepoints drawn from the
         fitted rate distribution.
 
-        `t_scaled` is the grid to evaluate on. predict() passes the one it
-        already built, which is the frame it was given; without it the grid
-        comes from `make_future_dataframe(horizon)` as before.
+        [fc] sample_predictive_trend. New changepoints come from a Poisson
+        process on `(1, T]`, where `T` is the largest scaled time in the frame
+        being forecast -- so they land strictly past the end of the history,
+        and there are none at all when the frame does not extend past it.
 
-        Passing it is not a convenience. predict() called this with
-        `horizon=len(future_df)`, where that length already counted the
-        history, so the method built a second grid twice as long and truncated
-        it back -- landing on the right dates by arithmetic coincidence. Under
-        logistic growth the coincidence broke, because the capacity is
-        per-row and the two grids no longer had the same length.
+        This previously read a per-point probability of `n_changepoints / T`
+        and applied it across the whole grid, history included, so most of the
+        sampled changepoints rewrote the fitted history before anything was
+        extrapolated from it. The band came out ~170x Prophet's (#58).
 
-        `cap_scaled` and `floor` come from the caller for the same reason: the
-        capacity is data on the frame being forecast, and the frame this method
-        builds for itself carries only `ds`.
+        `t_scaled`, `cap_scaled` and `floor` come from the caller: predict()
+        passes the grid and capacities it already built, since the capacity is
+        per row and the frame this method builds for itself carries only `ds`.
         """
         k, m, delta, _sigma_obs, beta = extract_params(self.opt_params, self.layout)
         n_samples = self.uncertainty_samples if n_samples is None else n_samples
-        probability_changepoint = self.n_changepoints / self.T
         future_df = self.make_future_dataframe(horizon)
 
         if t_scaled is None:
             future_t_scaled = np.array(
                 (pd.to_datetime(future_df['ds']) - self.ds.min())
                 / (self.ds.max() - self.ds.min()))
-            horizon = len(future_t_scaled)
         else:
             future_t_scaled = np.asarray(t_scaled, dtype=float)
-            horizon = len(future_t_scaled)
 
         if self.growth == 'logistic' and cap_scaled is None:
             raise ValueError(
                 'Capacities must be supplied for logistic growth in column "cap"')
 
+        # [fc] the rate of the Poisson process is S per unit of scaled time,
+        # so a frame reaching T sees S * (T - 1) new changepoints on average.
+        horizon_scaled = float(future_t_scaled.max())
+        n_changepoints = len(self.change_points)
+        # [fc] `+ 1e-8`: a fit with no active changepoints gives mean|delta| = 0,
+        # and Laplace(0, 0) is undefined. Without it a perfectly straight series
+        # produced a zero-width band rather than a narrow one.
+        lambda_mle = float(np.abs(delta).mean()) + 1e-8
+
         forecast = []
-        lambda_mle = abs(delta).mean()  # MLE of laplace distribution's scale parameter
-
         for _ in range(n_samples):
-            # self.rng, not np.random: the global generator left this
-            # irreproducible even on a model with its own seeded one
-            sample = self.rng.random(future_t_scaled.shape)
-            new_changepoints = future_t_scaled[sample <= probability_changepoint]
+            if horizon_scaled > 1.0:
+                n_new = self.rng.poisson(n_changepoints * (horizon_scaled - 1.0))
+            else:
+                n_new = 0
+            new_change_points = np.sort(
+                1.0 + self.rng.random(n_new) * (horizon_scaled - 1.0))
+            new_delta = self.rng.laplace(0, lambda_mle, n_new)
 
-            new_delta = np.r_[delta, self.rng.laplace(0, lambda_mle, new_changepoints.shape[0])]
-            new_change_points = np.r_[self.change_points, new_changepoints]
-            # the growth mode has to be the fitted one: sampling a linear trend
-            # for a logistic fit reported an interval around a curve the model
-            # never produced
-            future_trend = compute_trend(k, m, new_delta, new_change_points,
-                                         future_t_scaled, self.y_absmax,
-                                         cap_scaled, floor, self.growth)
-            forecast.append(future_trend[:horizon])
+            forecast.append(compute_trend(
+                k, m, np.concatenate((delta, new_delta)),
+                np.concatenate((self.change_points, new_change_points)),
+                future_t_scaled, self.y_absmax, cap_scaled, floor, self.growth))
 
         forecast = np.array(forecast)
         # [fc] predict_uncertainty: the interval is centred, so its edges are
-        # (1 -+ interval_width) / 2. These were hardcoded at [2.5, 97.5] -- a
-        # 95% interval, where Prophet's default is 80%.
+        # (1 -+ interval_width) / 2.
         lower = 100 * (1.0 - self.interval_width) / 2
         upper = 100 * (1.0 + self.interval_width) / 2
         quantiles = np.percentile(forecast, [lower, upper], axis=0)
@@ -2046,7 +2046,9 @@ class CustomProphet:
         return future_df, quantiles
     
     def predict(self, future_df):
-        future_df = self._ensure_regressor_values(future_df)
+        # A copy up front: `t_scaled` is added below, and writing a column into
+        # the caller's frame is theirs to be surprised by (#35).
+        future_df = self._ensure_regressor_values(future_df).copy()
 
         # Extract optimal parameters
         k, m, delta, _sigma_obs, beta = extract_params(self.opt_params, self.layout)
