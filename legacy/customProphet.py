@@ -1,3 +1,4 @@
+import copy
 import glob
 import importlib
 import importlib.util
@@ -84,6 +85,53 @@ STAN_MAX_ITERATIONS = 10000        # Prophet passes iter=int(1e4)
 # the full series. The long form of the argument is in fit(), with the numbers.
 SCIPY_TOL_REL_OBJ = 1e-16
 
+# Every attribute a fit derives from the data, as opposed to the configuration
+# the user set. `_reset_fit_state` restores each of these to the value the
+# constructor gave it before a fit runs, which is what makes a refit equivalent
+# to a fresh instance with the same configuration (#41).
+#
+# [fc] Prophet has no equivalent, because `Prophet.fit` raises on a second call:
+#
+#     if self.history is not None:
+#         raise Exception('Prophet object can only be fit once. '
+#                         'Instantiate a new object.')
+#
+# This implementation allows the second call, so it needs the contract that
+# refusal stands in for. The names are listed rather than derived, and
+# tests/test_refit_contract.py is what keeps the list honest -- it fits a fresh
+# instance and a refit on the same data across a matrix of configurations and
+# compares every attribute, so a stateful feature that forgets to reset shows up
+# as a failure rather than as a wrong number.
+#
+# Not listed, because they are handled where they are set:
+#   seasonalities        set_auto_seasonalities clears what it previously
+#                        registered (self._auto_registered) and leaves
+#                        hand-registered components alone
+#   n_changepoints       set_changepoints caps the *configured* count each time
+#   extra_regressors     the fitted mu/std are overwritten on every fit
+FIT_DERIVED_ATTRIBUTES = (
+    # the history itself
+    "y", "ds", "t", "T", "t_seasonality", "y_scaled", "y_scale",
+    "cap_scaled", "floor",
+    # generated changepoints -- restoring the constructed value keeps a
+    # user-supplied list and clears a generated one, which is the right answer
+    # for both
+    "changepoints", "changepoints_t",
+    # the design matrix and everything describing its columns
+    "layout", "sigmas", "s_a", "s_m", "_multiplicative", "condition_masks",
+    "_fit_design_matrix", "_data_columns", "_data_prior_scales", "_data_modes",
+    "_data_column_count", "_holiday_columns", "_holiday_prior_scales",
+    "train_holiday_names", "train_holiday_column_names",
+    "_regressor_history",
+    # the result
+    "params", "_params_vector", "k", "m", "delta", "beta", "sigma_obs",
+    "opt", "loss_over_iterations", "_fitted_with_cpp", "_fit_lib_path",
+)
+
+# Set only by a fit, so there is no constructed value to go back to. A refit
+# through the other path would otherwise read a status its own run never wrote.
+FIT_ONLY_ATTRIBUTES = ("opt_status", "opt_status_message", "optimizer_used")
+
 # INIT -- Prophet overrides Stan's random init with explicit values, so Stan's
 # `init_r * N(0, 1)` default is never reached. [fc] calculate_initial_params
 # returns sigma_obs=1.0, delta=zeros(S), beta=zeros(K), and k/m from
@@ -146,6 +194,25 @@ class ParameterLayout:
     def seasonality_block(self):
         """The seasonal columns' slice of the design matrix and of `sigmas`."""
         return slice(0, self.n_seasonality_columns)
+
+    def __eq__(self, other):
+        """A value, so two layouts over the same counts are the same layout.
+
+        Every other field is derived from these three, so comparing them is
+        comparing the whole object. It exists so that a refit and a fresh fit
+        can be compared attribute by attribute (#41) without identity getting
+        in the way.
+        """
+        if not isinstance(other, ParameterLayout):
+            return NotImplemented
+        return (self.n_changepoints, self.n_seasonality_columns,
+                self.n_holiday_columns) == (other.n_changepoints,
+                                            other.n_seasonality_columns,
+                                            other.n_holiday_columns)
+
+    def __hash__(self):
+        return hash((self.n_changepoints, self.n_seasonality_columns,
+                     self.n_holiday_columns))
 
     def __repr__(self):
         return (f"ParameterLayout(S={self.n_changepoints}, "
@@ -1076,6 +1143,10 @@ class CustomProphet:
             self.changepoints = changepoints
             self.n_changepoints = n_changepoints
             self.specified_changepoints = False
+        # set_changepoints fills these in when it caps `n_changepoints`; see
+        # _reset_fit_state for why both halves are needed.
+        self._n_changepoints_before_cap = None
+        self._n_changepoints_after_cap = None
         self.changepoints_t = None
         self.changepoint_range = changepoint_range
 
@@ -1143,6 +1214,11 @@ class CustomProphet:
         self.t_seasonality = None
 
         self._reject_unsupported(mcmc_samples, stan_backend, scaling)
+        # Taken before add_holidays, which is configuration rather than fit
+        # state -- it sets `self.holidays`, which is not in the list.
+        self._constructed_fit_state = {
+            name: copy.deepcopy(getattr(self, name))
+            for name in FIT_DERIVED_ATTRIBUTES}
         if holidays is not None:
             self.add_holidays(holidays)
 
@@ -1207,6 +1283,38 @@ class CustomProphet:
         # [fc] Prophet carries Stan's log posterior here; ours is the negative
         # of the objective the optimizer minimised.
         self.params["lp__"] = np.array([[-self._minus_log_posterior(vector)]])
+
+    def _reset_fit_state(self):
+        """Forget everything the previous fit derived, keeping the configuration.
+
+        [fc] nothing -- `Prophet.fit` raises on a second call rather than
+        defining what one would mean. This implementation allows refits, so it
+        owes a contract instead, and this is it: **a refit is equivalent to a
+        fresh instance carrying the same user configuration, fit on the new
+        data.** What the user set survives; what the last history produced does
+        not.
+
+        It is not hypothetical tidiness. Without it, a model fit on twenty rows
+        kept `n_changepoints` capped at 15 and fitted 15 rather than 25 on the
+        next history, and a model fit across one date range kept that range's
+        holiday names and forced them as all-zero columns onto the next.
+        Neither raised; both silently fitted a different model (#41).
+        """
+        for name, value in self._constructed_fit_state.items():
+            setattr(self, name, copy.deepcopy(value))
+        for name in FIT_ONLY_ATTRIBUTES:
+            self.__dict__.pop(name, None)
+
+        # `n_changepoints` is configuration that set_changepoints overwrites, so
+        # it is neither purely one nor the other. Undoing the cap only while the
+        # capped value is still standing is what tells the two apart: a user who
+        # assigned `model.n_changepoints` between fits has theirs kept, and a
+        # user who did not gets the count they configured back.
+        if (self._n_changepoints_after_cap is not None
+                and self.n_changepoints == self._n_changepoints_after_cap):
+            self.n_changepoints = self._n_changepoints_before_cap
+        self._n_changepoints_before_cap = None
+        self._n_changepoints_after_cap = None
 
     def _fitted(self):
         """(k, m, delta, sigma_obs, beta) from `params`, in the shapes the
@@ -1615,7 +1723,16 @@ class CustomProphet:
         else:
             hist_size = int(np.floor(self.T * self.changepoint_range))
             if self.n_changepoints + 1 > hist_size:
+                # [fc] Prophet overwrites n_changepoints with the capped value,
+                # so a user reading it after a fit sees the cap. Prophet can do
+                # that unconditionally because it refuses a second fit; here the
+                # count before the cap is kept, and _reset_fit_state puts it
+                # back before the next fit. Without that a model fit once on
+                # twenty rows would fit 15 changepoints on every later history,
+                # however long (#41).
+                self._n_changepoints_before_cap = self.n_changepoints
                 self.n_changepoints = hist_size - 1
+                self._n_changepoints_after_cap = self.n_changepoints
                 logger.info("n_changepoints greater than number of observations. "
                             "Using %d.", self.n_changepoints)
             if self.n_changepoints > 0:
@@ -1890,6 +2007,7 @@ class CustomProphet:
         if analytic and use_combined:
             raise ValueError("Both 'analytic' and 'use_combined' cannot be True at the same time.")
 
+        self._reset_fit_state()
         self.y = df['y'].values
 
         if df['ds'].dtype != 'datetime64[ns]':
@@ -2113,6 +2231,7 @@ class CustomProphet:
     def fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None,
                 verbose: bool=False, algorithm: str=None) -> Tuple[float, float, np.array, np.array]:
         """Fit via the compiled C++ core (see load_cpp_module for how it's found)."""
+        self._reset_fit_state()
         self.y = df['y'].values
 
         if df['ds'].dtype != 'datetime64[ns]':

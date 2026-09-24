@@ -625,7 +625,7 @@ stale.
 
 ## Where this deviates on purpose
 
-Two deviations are decisions rather than outstanding gaps. Both were measured before
+Three deviations are decisions rather than outstanding gaps. Each was measured before
 being settled.
 
 ### Three names stay different
@@ -713,6 +713,69 @@ orders of magnitude below anything the model resolves, and the fits stay where t
 `tests/test_conditional_seasonalities.py` asserts the tolerance and explains it at the
 point of the check.
 
+### Refitting is allowed, and a refit means something specific
+
+[fc] `Prophet.fit` refuses a second call:
+
+```python
+if self.history is not None:
+    raise Exception('Prophet object can only be fit once. '
+                    'Instantiate a new object.')
+```
+
+So there is no original behaviour to copy — there is a *refusal*, and a
+reimplementation that allows the call owes a contract in its place. The one implemented
+is the one the refusal implies
+([#41](https://github.com/adlyZaroui/analytic-prophet/issues/41)):
+
+> **A refit is equivalent to a fresh instance carrying the same user configuration, fit
+> on the new data.**
+
+What the caller set survives. What the previous history produced does not.
+`FIT_DERIVED_ATTRIBUTES` in `customProphet.py` is the list that makes it true, and
+`_reset_fit_state` applies it at the top of both `fit()` and `fit_cpp()`.
+
+Keeping refits is the more useful behaviour and costs nothing measurable — the
+[posterior and prediction agreement](#benchmarks) are unchanged — but it is a divergence,
+so it is a decision on the record rather than something that fell out.
+
+**It was not free when it was written.** Two bugs of exactly this shape were live, and
+neither raised:
+
+- A model fit on twenty rows kept `n_changepoints` capped at 15 — [fc]
+  `set_changepoints` caps at `floor(T · changepoint_range) − 1` and *overwrites* the
+  attribute, which Prophet can do because it never fits twice — and then fitted 15 rather
+  than 25 changepoints on every later history, however long. A different model, silently.
+- A model fit across one date range kept that range's `train_holiday_names`. [fc]
+  `construct_holiday_dataframe` pins the training holiday set so predict produces the
+  same columns as fit; on a refit the stale set was forced onto the new history as
+  all-zero columns, while holidays the new history actually had were filtered out.
+
+`n_changepoints` is the interesting case, because it is neither purely configuration nor
+purely fit-derived: it is configuration that `set_changepoints` overwrites. Undoing the
+cap only while the capped value is still standing is what separates the two — a caller
+who assigned `model.n_changepoints` between fits keeps theirs, and one who did not gets
+the count they configured back.
+
+`changepoints` is the other one worth naming. It is in the reset list, which looks wrong
+for something the user can supply — until you see that restoring the *constructed* value
+hands back the given list where one was given and clears the generated dates where one
+was not. One rule, both cases.
+
+**What keeps the list honest** is `tests/test_refit_contract.py`, not the list itself.
+It fits a fresh instance and a refit on the same data across eight configurations, two
+history pairs and both paths, and compares **every** attribute rather than the ones known
+to have been wrong — so a stateful feature that forgets to reset shows up as a failing
+test rather than as a wrong number. That is the point: #41 was filed because the trap is
+structural, and an enumeration alone would have gone stale the same way.
+
+Two attributes are excluded, neither for a refit-related reason: `rng`, unseeded by
+design since the uncertainty sampling draws from it (two *fresh* instances differ in it
+too), and `opt`, the solver's own result object, which comes from pybind11 or from scipy
+depending on the path and defines equality in neither — its contents are compared
+field by field instead, and also reach the sweep through `params`, `_params_vector` and
+`loss_over_iterations`.
+
 ---
 
 ## Known differences from Prophet
@@ -726,13 +789,6 @@ Tracked, deliberate, and not yet closed:
   path 4.43 nats *below* Prophet on the full series — see
   [What Stan's tolerance costs on the Python path](#what-stans-tolerance-costs-on-the-python-path).
   `fit_cpp`, the deliverable, uses Stan's values unchanged.
-- **Refitting is allowed** ([#41](https://github.com/adlyZaroui/analytic-prophet/issues/41)).
-  `Prophet.fit` refuses a second call; this implementation accepts one. Neither the
-  divergence nor the contract is currently written down, and it has already produced one
-  bug — a component the previous history supported surviving into a history that cannot
-  identify it. Fixed for seasonality, but every remaining task in
-  [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) adds fit-time state
-  facing the same question.
 - **Overall fit**: on series past two years, predictions differ from Prophet's by
   0.17–0.59% of the series scale (history plus a 30-day horizon, measured at T = 730,
   800, 1000, 1500, 2000, 2500, 2905). On shorter series the trend decomposition is
@@ -799,6 +855,7 @@ numbers rather than errors.
 | | [#28](https://github.com/adlyZaroui/analytic-prophet/issues/28) | The changepoint and Fourier matrices, constant for a whole fit, were rebuilt on every objective evaluation — 57% of each. Built once: `fit_cpp` reached parity with Prophet |
 | | [#13](https://github.com/adlyZaroui/analytic-prophet/issues/13) | `fit_cpp` returned NaN while reporting `LBFGS_SUCCESS`. Resolved by the solver change |
 | | [#24](https://github.com/adlyZaroui/analytic-prophet/issues/24) | `fit()`'s loss trace recorded the *canonical* objective while scipy minimized the *split* one. Equal at the optimum, so the final value was right and nothing caught it — but the recorded trajectory rose on a run that descends, and was not comparable with `fit_cpp`'s |
+| Refitting | [#41](https://github.com/adlyZaroui/analytic-prophet/issues/41) | A model fit once on twenty rows kept `n_changepoints` capped at 15 and fitted 15 rather than 25 on every later history; a model fit across one date range kept that range's holiday names and forced them onto the next as all-zero columns. Both silently fitted a different model. `Prophet.fit` raises on a second call, so neither can arise there |
 | Modelling | [#36](https://github.com/adlyZaroui/analytic-prophet/issues/36) | Fourier basis measured days from the series start, not the 1970 epoch, and emitted all `cos` then all `sin` rather than interleaving. A pure reparameterization — but until it was fixed, `beta` could not be compared with Prophet's at all |
 | | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
