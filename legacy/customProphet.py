@@ -1978,6 +1978,124 @@ class CustomProphet:
 
         return future_df
     
+    def _regressor_draws(self, future_df, n_samples):
+        """{name: (n_samples, T)} of raw regressor values, for the regressors
+        that have a nested model.
+
+        [fc] _prepare_regressors_for_predict collects `predictive_samples` from
+        each nested model and the sampler swaps that column in per draw. The
+        draws are the nested model's own forecast distribution, so a regressor
+        this model is unsure about widens the interval rather than entering as
+        a point estimate (#16 task 14a).
+        """
+        drawn = {}
+        last_history_date = pd.to_datetime(self.ds).max()
+        is_future = (pd.to_datetime(future_df["ds"]) > last_history_date).to_numpy()
+        for name, props in self.extra_regressors.items():
+            predictor = props.get("predictor")
+            if predictor is None:
+                continue
+            # rows inside the history are observed, so only the future varies
+            columns = np.tile(future_df[name].to_numpy(dtype=float), (n_samples, 1))
+            if is_future.any():
+                future_frame = pd.DataFrame({"ds": future_df.loc[is_future, "ds"].to_numpy()})
+                columns[:, is_future] = predictor._sample_yhat(future_frame, n_samples)
+            drawn[name] = columns
+        return drawn
+
+    def _sample_yhat(self, future_df, n_samples):
+        """`n_samples` x T draws of this model's own yhat, for a nested model
+        to hand its parent."""
+        prepared = self._ensure_regressor_values(future_df).copy()
+        prepared['t_scaled'] = ((pd.to_datetime(prepared['ds']) - self.ds.min())
+                                / (self.ds.max() - self.ds.min()))
+        cap_scaled, floor = self._future_capacity(prepared)
+        _, _, _, yhat_draws = self._forecast_draws(prepared, cap_scaled, floor, n_samples)
+        return yhat_draws
+
+    def _forecast_draws(self, future_df, cap_scaled, floor, n_samples):
+        """(x, trend_draws, seasonality, yhat_draws) for a prepared frame.
+
+        `yhat` is drawn rather than derived from the trend band, which is what
+        lets two things enter that could not before: a regressor's own forecast
+        uncertainty (#16 task 14a) and the observation noise (#63), the latter
+        being the term that dominates the interval.
+        """
+        _k, _m, _delta, sigma_obs, beta = extract_params(self.opt_params, self.layout)
+        t_scaled = future_df['t_scaled'].values
+
+        x = seasonality_design_matrix(seasonal_time(future_df['ds']), self.seasonalities,
+                                      condition_masks(self.seasonalities, future_df))
+        if self._data_column_count:
+            x = np.concatenate([x, self._data_design(future_df['ds'], future_df)[0]], axis=1)
+
+        trend_draws = self._sample_trends(t_scaled, cap_scaled, floor, n_samples)
+        regressor_draws = self._regressor_draws(future_df, n_samples)
+
+        # the regressor columns are the last of the design matrix, in the order
+        # they were registered
+        positions = {name: x.shape[1] - len(self.extra_regressors) + i
+                     for i, name in enumerate(self.extra_regressors)}
+
+        yhat_draws = np.empty_like(trend_draws)
+        x_draw = x
+        for i in range(n_samples):
+            if regressor_draws:
+                x_draw = x.copy()
+                for name, values in regressor_draws.items():
+                    props = self.extra_regressors[name]
+                    x_draw[:, positions[name]] = (values[i] - props["mu"]) / props["std"]
+            multiplier = 1.0 + x_draw.dot(self.s_m * beta) if self._multiplicative else 1.0
+            seasonal = (x_draw.dot(self.s_a * beta) if self._multiplicative
+                        else x_draw.dot(beta))
+            # [fc] sample_model adds normal(0, sigma_obs) per draw; without it
+            # the interval is the trend's alone and ~18x too narrow (#63)
+            noise = self.rng.normal(0.0, sigma_obs * self.y_absmax, len(t_scaled))
+            yhat_draws[i] = trend_draws[i] * multiplier + seasonal * self.y_absmax + noise
+
+        multiplier = 1.0 + x.dot(self.s_m * beta) if self._multiplicative else 1.0
+        seasonality = x.dot(self.s_a * beta) if self._multiplicative else x.dot(beta)
+        return x, trend_draws, (multiplier, seasonality), yhat_draws
+
+    def _quantiles(self, draws):
+        """[fc] predict_uncertainty: a centred interval, so the edges are
+        (1 -+ interval_width) / 2."""
+        lower = 100 * (1.0 - self.interval_width) / 2
+        upper = 100 * (1.0 + self.interval_width) / 2
+        return np.percentile(draws, [lower, upper], axis=0)
+
+    def _sample_trends(self, t_scaled, cap_scaled, floor, n_samples):
+        """`n_samples` x T trend draws, in the series' own units.
+
+        [fc] sample_predictive_trend. New changepoints come from a Poisson
+        process on `(1, T]`, so they land strictly past the end of the history
+        and there are none when the frame does not reach past it (#58).
+        """
+        k, m, delta, _sigma_obs, _beta = extract_params(self.opt_params, self.layout)
+        horizon_scaled = float(np.max(t_scaled))
+        n_changepoints = len(self.change_points)
+        # [fc] `+ 1e-8`: a fit with no active changepoints gives mean|delta| of
+        # exactly zero, and Laplace(0, 0) is degenerate -- every draw would
+        # return the same trend and the band would be identically zero rather
+        # than narrow.
+        lambda_mle = float(np.abs(delta).mean()) + 1e-8
+
+        draws = []
+        for _ in range(n_samples):
+            if horizon_scaled > 1.0:
+                n_new = self.rng.poisson(n_changepoints * (horizon_scaled - 1.0))
+            else:
+                n_new = 0
+            new_change_points = np.sort(
+                1.0 + self.rng.random(n_new) * (horizon_scaled - 1.0))
+            new_delta = self.rng.laplace(0, lambda_mle, n_new)
+
+            draws.append(compute_trend(
+                k, m, np.concatenate((delta, new_delta)),
+                np.concatenate((self.change_points, new_change_points)),
+                t_scaled, self.y_absmax, cap_scaled, floor, self.growth))
+        return np.array(draws)
+
     def trend_forecast_uncertainty(self, horizon=30, n_samples=None,
                                    t_scaled=None, cap_scaled=None, floor=None):
         """Quantiles of the trend under future changepoints drawn from the
@@ -2021,27 +2139,8 @@ class CustomProphet:
         # produced a zero-width band rather than a narrow one.
         lambda_mle = float(np.abs(delta).mean()) + 1e-8
 
-        forecast = []
-        for _ in range(n_samples):
-            if horizon_scaled > 1.0:
-                n_new = self.rng.poisson(n_changepoints * (horizon_scaled - 1.0))
-            else:
-                n_new = 0
-            new_change_points = np.sort(
-                1.0 + self.rng.random(n_new) * (horizon_scaled - 1.0))
-            new_delta = self.rng.laplace(0, lambda_mle, n_new)
-
-            forecast.append(compute_trend(
-                k, m, np.concatenate((delta, new_delta)),
-                np.concatenate((self.change_points, new_change_points)),
-                future_t_scaled, self.y_absmax, cap_scaled, floor, self.growth))
-
-        forecast = np.array(forecast)
-        # [fc] predict_uncertainty: the interval is centred, so its edges are
-        # (1 -+ interval_width) / 2.
-        lower = 100 * (1.0 - self.interval_width) / 2
-        upper = 100 * (1.0 + self.interval_width) / 2
-        quantiles = np.percentile(forecast, [lower, upper], axis=0)
+        forecast = self._sample_trends(future_t_scaled, cap_scaled, floor, n_samples)
+        quantiles = self._quantiles(forecast)
 
         return future_df, quantiles
     
@@ -2064,46 +2163,33 @@ class CustomProphet:
                               future_df['t_scaled'].values, self.y_absmax,
                               cap_scaled, floor, self.growth)
 
-        # Seasonality component calculation. The masks come from `future_df`,
-        # not from the fit: a conditioned component applies on whichever future
-        # rows the caller says it does. [fc] predict() re-runs setup_dataframe,
-        # so the same column is required there as at fit time.
-        x = seasonality_design_matrix(seasonal_time(future_df['ds']), self.seasonalities,
-                                      condition_masks(self.seasonalities, future_df))
-        if self._data_column_count:
-            x = np.concatenate([x, self._data_design(future_df['ds'], future_df)[0]], axis=1)
+        # Seasonality, the regressor draws and the yhat draws, all from one
+        # pass: yhat's interval is the spread of its own draws rather than the
+        # trend's band shifted, which is what lets the observation noise (#63)
+        # and a regressor's own forecast uncertainty (#16 task 14a) enter it.
+        _, trend_draws, (multiplier, seasonality), yhat_draws = self._forecast_draws(
+            future_df, cap_scaled, floor, self.uncertainty_samples)
+
         # [stan] trend .* (1 + X_sm * beta) + X_sa * beta. `trend` is already in
         # the series' own units, and the multiplier is unitless, so only the
         # additive part needs de-normalizing.
-        if self._multiplicative:
-            multiplier = 1.0 + x.dot(self.s_m * beta)
-            seasonality = x.dot(self.s_a * beta)
-        else:
-            multiplier = 1.0
-            seasonality = x.dot(beta)
-
-        # Combine trend and seasonality for the forecast
         yhat = trend * multiplier + seasonality * self.y_absmax
 
-        # Create forecast DataFrame
         forecast = future_df[['ds']].copy()
         forecast['trend'] = trend
-        
-        # Add uncertainty intervals for trend
-        _, quantiles = self.trend_forecast_uncertainty(
-            t_scaled=future_df['t_scaled'].values,
-            cap_scaled=cap_scaled, floor=floor)
-        forecast['trend_lower'] = quantiles[0, :]
-        forecast['trend_upper'] = quantiles[1, :]
-        
-        # Now that 'trend_lower' and 'trend_upper' are defined, calculate 'yhat_lower' and 'yhat_upper'
-        forecast['yhat_lower'] = forecast['trend_lower'] * multiplier + seasonality * self.y_absmax
-        forecast['yhat_upper'] = forecast['trend_upper'] * multiplier + seasonality * self.y_absmax
-        
+
+        trend_quantiles = self._quantiles(trend_draws)
+        forecast['trend_lower'] = trend_quantiles[0, :]
+        forecast['trend_upper'] = trend_quantiles[1, :]
+
+        yhat_quantiles = self._quantiles(yhat_draws)
+        forecast['yhat_lower'] = yhat_quantiles[0, :]
+        forecast['yhat_upper'] = yhat_quantiles[1, :]
+
         # the additive part in the series' units, plus what the multiplicative
         # part contributes at the fitted trend -- together, yhat - trend
         forecast['seasonality'] = seasonality * self.y_absmax + trend * (multiplier - 1.0)
-        
+
         forecast['yhat'] = yhat
-        
+
         return forecast
