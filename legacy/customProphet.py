@@ -5,7 +5,7 @@ import logging
 import os
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+from scipy.optimize import OptimizeResult, approx_fprime, minimize
 from scipy.stats import halfcauchy
 from typing import Tuple
 
@@ -70,8 +70,10 @@ sigma_m = 5
 # of the five directly (see optimize.cpp). Matching them is what stops both
 # paths running tens of thousands of iterations past convergence.
 STAN_EPS = 2.220446049250313e-16   # machine epsilon, as Stan uses it
+STAN_TOL_OBJ = 1e-12               # tol_obj
 STAN_TOL_REL_OBJ = 1e+4            # tol_rel_obj, scaled by STAN_EPS
 STAN_TOL_GRAD = 1e-8               # tol_grad
+STAN_TOL_PARAM = 1e-8              # tol_param
 STAN_MAX_ITERATIONS = 10000        # Prophet passes iter=int(1e4)
 
 # INIT -- Prophet overrides Stan's random init with explicit values, so Stan's
@@ -250,6 +252,22 @@ AUTO_SEASONALITY_RULES = (
     ("weekly", "weekly_seasonality", 7.0, 3, pd.Timedelta(weeks=2), pd.Timedelta(weeks=1)),
     ("daily", "daily_seasonality", 1.0, 4, pd.Timedelta(days=2), pd.Timedelta(days=1)),
 )
+
+# [fc] CmdStanPyBackend.fit: `'Newton' if T < 100 else 'LBFGS'`, with one retry
+# on Newton when the first attempt raises. Strictly fewer than 100.
+NEWTON_BELOW = 100
+
+# Which terminal status means "Stan would have raised here", and so triggers the
+# Newton retry. The two solvers number theirs differently, and the numbering
+# collides, so each path names its own rather than sharing a test: scipy's 2 is
+# ABNORMAL_TERMINATION_IN_LNSRCH while its 1 is the iteration cap; the C++
+# core's 1 is an exception out of LBFGSpp while its 2 is the cap. Only the
+# first of each pair is a failure. Running out of `iter` is not one: CmdStan
+# returns the result with a warning, and cmdstanpy raises only on a non-zero
+# exit code, so Prophet keeps that fit rather than retrying it.
+SCIPY_LINE_SEARCH_FAILURE = 2
+CPP_SOLVER_RAISED = 1
+
 
 # [fc] set_auto_seasonalities, verbatim. This regime is not hypothetical: with
 # yearly forced on a 328-day slice, this implementation and Prophet diverged
@@ -857,6 +875,135 @@ def split_to_canonical(z, n_delta=N_CHANGE_POINTS):
     beta = z[3 + 2 * n_delta:]
     return np.concatenate(([k], [m], delta_pos - delta_neg, [sigma_obs], beta))
 
+def finite_difference_hessian(gradient_fn, x):
+    """Central differences of an *analytic* gradient, symmetrized.
+
+    2n gradient evaluations, accurate to about 1e-8 -- an order better than
+    differencing the objective twice, and the reason a Newton step is available
+    here at all without autodiff. Stan gets its Hessian from autodiff; this
+    project's claim is about the gradient, and differencing an exact gradient
+    is a different thing from differencing an objective.
+
+    Mirrors finite_difference_hessian() in optimize.cpp, so the two Newton
+    paths take the same steps.
+    """
+    x = np.asarray(x, dtype=float)
+    n = x.size
+    hessian = np.empty((n, n))
+    point = x.copy()
+    for i in range(n):
+        step = np.sqrt(STAN_EPS) * max(1.0, abs(x[i]))
+        point[i] = x[i] + step
+        forward = gradient_fn(point)
+        point[i] = x[i] - step
+        backward = gradient_fn(point)
+        point[i] = x[i]
+        hessian[:, i] = (forward - backward) / (2.0 * step)
+    # the two triangles differ by the differencing error alone
+    return 0.5 * (hessian + hessian.T)
+
+
+def projected_newton(objective, gradient_fn, z0, lower, upper):
+    """Bound-constrained Newton, as the Newton branch of Prophet's rule.
+
+    Prophet runs Stan's Newton below 100 observations and L-BFGS at or above
+    ([fc] CmdStanPyBackend.fit), so this path needs a Newton of its own. It is
+    the Python twin of newton() in optimize.cpp -- same split space, same
+    Levenberg damping, same stopping tests -- so that the two fit paths stay
+    comparable under the rule the way they are under L-BFGS.
+
+    It runs on the split reformulation for the same reason L-BFGS-B does. On
+    the natural parameterization the Laplace prior leaves a kink exactly where
+    the optimum sits, and Newton has no mechanism to land on one: measured, it
+    oscillates across the kink making about 1e-5 progress a step, still ~66
+    nats short after Prophet's whole 10,000-iteration budget. Split, the L1
+    term is linear, so its curvature is zero rather than undefined, and what is
+    left is a smooth problem with bounds.
+
+    Active set: a coordinate sitting at a bound while the gradient pushes it
+    further into that bound is already as good as it gets. It does not count
+    toward stationarity and is held out of the Newton system, which also keeps
+    the system non-singular when a whole block of delta is pinned at zero.
+    """
+    z = np.clip(np.asarray(z0, dtype=float), lower, upper)
+    n = z.size
+    value = objective(z)
+    gradient = gradient_fn(z)
+    loss_trace = [value]
+
+    damping = 1e-6
+    iteration = 0
+    message = "converged"
+    status = 0
+
+    while iteration < STAN_MAX_ITERATIONS:
+        pinned = ((z <= lower) & (gradient > 0)) | ((z >= upper) & (gradient < 0))
+        projected = np.where(pinned, 0.0, gradient)
+        if np.max(np.abs(projected)) < STAN_TOL_GRAD:
+            break
+
+        free = np.flatnonzero(~pinned)
+        hessian = finite_difference_hessian(gradient_fn, z)[np.ix_(free, free)]
+        free_gradient = gradient[free]
+
+        trial_point, trial_value = z, value
+        improved = False
+        alpha = 1.0
+        for _ in range(40):
+            damped = hessian + damping * np.eye(free.size)
+            try:
+                free_step = np.linalg.solve(damped, -free_gradient)
+            except np.linalg.LinAlgError:
+                free_step = None
+            if free_step is not None and np.all(np.isfinite(free_step)):
+                step = np.zeros(n)
+                step[free] = free_step
+                alpha = 1.0
+                for _ in range(30):
+                    trial_point = np.clip(z + alpha * step, lower, upper)
+                    trial_value = objective(trial_point)
+                    if np.isfinite(trial_value) and trial_value < value:
+                        improved = True
+                        break
+                    alpha *= 0.5
+            if improved:
+                break
+            damping *= 10.0
+        if not improved:
+            message = "no further progress"
+            break
+        # Levenberg, coupled to the line search rather than to success alone: a
+        # step that had to be backtracked is a step the quadratic model was
+        # trusted too far on, so the damping goes up even though the step was
+        # accepted. Without this the full step is rejected almost every
+        # iteration -- measured at T=50, a median of 14 backtracks, alpha 6e-5 --
+        # and the run crawls: 658 iterations instead of 44, and on one series it
+        # stops 0.05 nats short of where it otherwise lands.
+        damping = damping * 10.0 if alpha < 1.0 else max(damping * 0.2, 1e-14)
+        trial_gradient = gradient_fn(trial_point)
+
+        # [fc] Stan stops as soon as ANY of its tests holds.
+        scale = max(abs(value), abs(trial_value), 1.0)
+        objective_change = value - trial_value
+        parameter_change = np.max(np.abs(trial_point - z))
+        converged = (objective_change < STAN_TOL_OBJ
+                     or objective_change / scale < STAN_TOL_REL_OBJ * STAN_EPS
+                     or parameter_change < STAN_TOL_PARAM)
+
+        z, value, gradient = trial_point, trial_value, trial_gradient
+        loss_trace.append(value)
+        iteration += 1
+        if converged:
+            break
+    else:
+        status = -2
+        message = "reached the iteration cap without converging"
+
+    return OptimizeResult(x=z, fun=value, jac=gradient, nit=iteration,
+                          status=status, success=status == 0, message=message,
+                          loss_trace=loss_trace)
+
+
 def predict_trend(k, m, delta, changepoints_t, t, y_scale,
                   cap_scaled=None, floor=None, growth='linear'):
     """The trend in normalized-y space, de-normalized once at the end.
@@ -964,6 +1111,9 @@ class CustomProphet:
 
         self.interval_width = interval_width
         self.uncertainty_samples = uncertainty_samples
+        # [fc] IStanBackend.__init__ sets newton_fallback = True. One retry with
+        # Newton when L-BFGS fails, at any series length.
+        self.newton_fallback = True
 
         self.m = None
         self.k = None
@@ -1011,6 +1161,20 @@ class CustomProphet:
 
     def get_parameters(self) -> np.array:
         return self._params_vector
+
+    def _needs_newton_fallback(self, failed, params) -> bool:
+        """Whether an L-BFGS run should be retried with Newton.
+
+        [fc] the retry is triggered by a `RuntimeError` out of cmdstanpy, which
+        is what Stan raises when the optimizer exits non-zero. Nothing raises on
+        either path here -- both solvers report a status instead -- so each
+        caller translates its own status into `failed` (see
+        SCIPY_LINE_SEARCH_FAILURE and CPP_SOLVER_RAISED) and a non-finite result
+        counts regardless of what the status says, which is #13's failure mode.
+        """
+        if not self.newton_fallback:
+            return False
+        return failed or not np.all(np.isfinite(params))
 
     def _store_params(self, vector):
         """Unpack the optimizer's flat vector into Prophet's `params` dict.
@@ -1713,7 +1877,8 @@ class CustomProphet:
         ))
 
     def fit(self, df: pd.DataFrame, analytic: bool=False, use_combined: bool=False, optimizer: str='L-BFGS-B',
-            initial_params: dict=None, fixed_sigma_obs: float=None) -> Tuple[float, float, np.array, np.array]:
+            initial_params: dict=None, fixed_sigma_obs: float=None,
+            algorithm: str=None) -> Tuple[float, float, np.array, np.array]:
         if analytic and use_combined:
             raise ValueError("Both 'analytic' and 'use_combined' cannot be True at the same time.")
 
@@ -1846,13 +2011,59 @@ class CustomProphet:
                 'maxfun': STAN_MAX_ITERATIONS * 10,
             })
 
-        result = minimize(objective,
-                        z0,
-                        method=optimizer,
-                        bounds=bounds,
-                        options=options,
-                        callback=callback,
-                        jac=jac)
+        def run_newton():
+            """The Newton branch, on the same split space and the same bounds.
+
+            It takes its gradient from the same selection the L-BFGS branch
+            does, so `analytic=False` stays the control it is meant to be: the
+            same optimizer on the same problem with the gradient obtained the
+            expensive way, rather than the flag silently ceasing to apply.
+            """
+            lower = np.array([-np.inf if low is None else low for low, _ in bounds])
+            upper = np.array([np.inf if high is None else high for _, high in bounds])
+            if use_combined:
+                value = lambda z: objective(z)[0]
+                gradient = lambda z: objective(z)[1]
+            elif analytic:
+                value, gradient = objective, jac
+            else:
+                value = objective
+                gradient = lambda z: approx_fprime(z, objective)
+            outcome = projected_newton(value, gradient, z0, lower, upper)
+            loss_over_iterations[:] = outcome.loss_trace
+            return outcome
+
+        # [fc] CmdStanPyBackend.fit: Newton below 100 observations, L-BFGS at or
+        # above, and one Newton retry when L-BFGS exits abnormally -- at any
+        # length. An explicit `algorithm` overrides the rule, as `args.update(
+        # kwargs)` does there. It is Prophet's behaviour being reproduced rather
+        # than this project's preference, and measured it costs no accuracy:
+        # Newton lands where L-BFGS lands at every size tested. It does cost
+        # time -- 2n gradient evaluations an iteration for the Hessian. See the
+        # README, "Prophet's rule for short series, and what it costs".
+        #
+        # `optimizer` names the scipy method behind the L-BFGS branch; naming a
+        # different one is a request for that method, not for Newton.
+        if algorithm is None and optimizer == 'L-BFGS-B':
+            algorithm = "Newton" if self.T < NEWTON_BELOW else "LBFGS"
+        self.optimizer_used = algorithm or "LBFGS"
+        if self.optimizer_used == "Newton":
+            result = run_newton()
+        else:
+            result = minimize(objective,
+                            z0,
+                            method=optimizer,
+                            bounds=bounds,
+                            options=options,
+                            callback=callback,
+                            jac=jac)
+            if self._needs_newton_fallback(
+                    result.status == SCIPY_LINE_SEARCH_FAILURE, result.x):
+                logger.warning("Optimization terminated abnormally. "
+                               "Falling back to Newton.")
+                self.optimizer_used = "Newton"
+                del loss_over_iterations[:]
+                result = run_newton()
 
         self.opt = result
         vector = split_to_canonical(result.x, self.layout.n_changepoints)
@@ -1862,7 +2073,8 @@ class CustomProphet:
         self._fit_regressor_models(df)
         self.loss_over_iterations = loss_over_iterations
     
-    def fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None, verbose: bool=False) -> Tuple[float, float, np.array, np.array]:
+    def fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None,
+                verbose: bool=False, algorithm: str=None) -> Tuple[float, float, np.array, np.array]:
         """Fit via the compiled C++ core (see load_cpp_module for how it's found)."""
         self.y = df['y'].values
 
@@ -1941,7 +2153,7 @@ class CustomProphet:
                                  defaults['delta'], defaults['beta'], [zeta_init]))
 
         cpp = load_cpp_module(lib_path)
-        result = cpp.optimize(
+        arguments = dict(
             params=params,
             t=self.t,
             changepoints_t=self.changepoints_t,
@@ -1964,6 +2176,28 @@ class CustomProphet:
                               else np.empty((self.T, 0))),
             verbose=verbose,
         )
+
+        # [fc] CmdStanPyBackend.fit: Newton below 100 observations, L-BFGS at or
+        # above, and one Newton retry when L-BFGS exits abnormally -- at any
+        # length. An explicit `algorithm` overrides the rule, as `args.update(
+        # kwargs)` does there. It is Prophet's behaviour being reproduced rather
+        # than this project's preference, and measured it costs no accuracy:
+        # Newton lands where L-BFGS lands at every size tested. It does cost
+        # time -- 2n gradient evaluations an iteration for the Hessian, which
+        # makes a short fit about 6x slower. See the README, "Prophet's rule
+        # for short series, and what it costs".
+        self.optimizer_used = algorithm or ("Newton" if self.T < NEWTON_BELOW
+                                            else "LBFGS")
+        if self.optimizer_used == "Newton":
+            result = cpp.newton(**arguments)
+        else:
+            result = cpp.optimize(**arguments)
+            if self._needs_newton_fallback(result.status == CPP_SOLVER_RAISED,
+                                            result.params):
+                logger.warning("Optimization terminated abnormally. "
+                               "Falling back to Newton.")
+                self.optimizer_used = "Newton"
+                result = cpp.newton(**arguments)
 
         # Mirrors fit(), so both paths expose a comparable loss trajectory --
         # with one caveat: fit()'s is per iteration, while the C++ core's is a

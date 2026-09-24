@@ -53,12 +53,13 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
     }
     python_model = pin_yearly_only(CustomProphet())
     python_model.fit(small_df, analytic=True, initial_params=matched_init)
-    # Not opt.success: scipy reports ABNORMAL in this one configuration --
-    # yearly forced at order 10 on 328 days, which the auto rule would not
-    # select -- while reaching the same objective value it reaches when it
-    # reports convergence. That is #24, the Python path's tolerances, and it
-    # is checked as a result rather than a status so this test keeps measuring
-    # what it is about. The default configuration converges at every size.
+    # This configuration -- yearly forced at order 10 on 328 days, from an
+    # all-zero start, neither of which the defaults would produce -- is the one
+    # place scipy reports ABNORMAL, which is #24. Since #25 the Newton fallback
+    # catches it: the retry converges on the same objective to 1e-13, so the run
+    # now reports success and the fitted point is unchanged. Still checked as a
+    # result rather than a status, so this test keeps measuring what it is about.
+    assert python_model.optimizer_used == "Newton"
     assert np.all(np.isfinite(python_model.get_parameters()))
 
     cpp_model = pin_yearly_only(CustomProphet())
@@ -87,16 +88,15 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
         np.asarray(cpp_model.loss_over_iterations),
     )
     for name, trajectory in zip(("python", "cpp"), trajectories):
-        # The C++ trace is a monotone envelope by construction -- it records a
-        # value only when one improves -- so it cannot rise. scipy's is a
-        # per-iteration trace and does rise once, by 8e-5 at step 12 of 170, in
-        # this configuration: yearly forced at order 10 on 328 days, which the
-        # auto rule would not select, and the same run that reports ABNORMAL.
-        # Both are the Python path's convergence tolerances (#24). The bound
-        # keeps the claim -- the trajectory descends -- without asserting a
-        # monotonicity a non-converged L-BFGS-B run does not promise.
+        # Both traces are monotone by construction here: each records a value
+        # only when one improves. The Python side reached this configuration
+        # through the Newton fallback, whose line search accepts a step only on
+        # a decrease; before #25 it was scipy's per-iteration trace, which rose
+        # once by 8e-5 at step 12 of 170 on the run that reported ABNORMAL. The
+        # bound keeps the claim the test is about -- the trajectory descends --
+        # rather than pinning which optimizer produced it.
         rises = np.diff(trajectory)
-        assert rises.max() <= (1e-9 if name == "cpp" else 1e-3), name
+        assert rises.max() <= 1e-9, name
         assert trajectory[-1] == pytest.approx(cpp_loss, rel=1e-6)
         assert trajectory[-1] < trajectory[0]
 

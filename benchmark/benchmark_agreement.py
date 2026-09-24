@@ -92,11 +92,13 @@ def prediction_comparison(df, lib_path, horizon):
 
 
 def short_series_comparison(df, lib_path):
-    """Our optimum against *both* of Prophet's algorithms.
+    """Both of Prophet's algorithms against both of ours.
 
-    [fc] the backend runs Newton below 100 observations and L-BFGS at or above
-    it, so a short series is not being fitted by the same method at all. #25
-    asked which of them we should match; this is the answer.
+    [fc] the backend runs Newton below 100 observations and L-BFGS at or above.
+    Both paths here follow that rule (#25), so the column that matters for a
+    user is `rule` -- what a default fit actually produces. `lbfgs` is what the
+    rule gives up at these sizes, and printing the two together is what keeps
+    that cost measured rather than remembered.
     """
     from prophet import Prophet
     from customProphet import CustomProphet
@@ -113,14 +115,18 @@ def short_series_comparison(df, lib_path):
     stan_model, stan_data, lp_newton = scores["Newton"]
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
-    ours = CustomProphet(n_changepoints=len(changepoints_t))
-    ours.set_changepoints = lambda: setattr(
-        ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=lib_path)
-    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
-                                   ours.params["m"][0][0], ours.params["delta"][0],
-                                   ours.sigma_obs, ours.params["beta"][0])
-    return lp_newton, scores["LBFGS"][2], lp_ours
+    def ours(**fit_kwargs):
+        model = CustomProphet(n_changepoints=len(changepoints_t))
+        model.set_changepoints = lambda: setattr(
+            model, "changepoints_t", changepoints_t.copy())
+        model.fit_cpp(df, lib_path=lib_path, **fit_kwargs)
+        return model.optimizer_used, bridge.stan_log_prob(
+            stan_model, stan_data, model.params["k"][0][0], model.params["m"][0][0],
+            model.params["delta"][0], model.sigma_obs, model.params["beta"][0])
+
+    picked, lp_rule = ours()
+    _, lp_lbfgs = ours(algorithm="LBFGS")
+    return lp_newton, scores["LBFGS"][2], picked, lp_rule, lp_lbfgs
 
 
 def main():
@@ -165,16 +171,20 @@ def main():
                             (r["yhat"], r["trend"], r["seasonality"]))
             print(f"{size:>6} {cells}")
         print()
-        print("3. SHORT SERIES -- against both of Prophet's algorithms")
-        print("   it runs Newton below 100 observations, L-BFGS at or above (#25)")
+        print("3. SHORT SERIES -- Prophet's algorithm rule, and what following it costs")
+        print("   Newton below 100 observations, L-BFGS at or above (#25).")
+        print("   `rule` is the default fit; `lbfgs` is what the rule gives up.")
         print()
-        print(f"{'T':>6} {'newton':>13} {'lbfgs':>13} {'ours':>13} {'ours - newton':>15}")
-        print("-" * 64)
+        print(f"{'T':>6} {'picks':>7} {'p.newton':>12} {'p.lbfgs':>12} "
+              f"{'rule':>12} {'lbfgs':>12} {'rule-newton':>13} {'rule-lbfgs':>12}")
+        print("-" * 92)
         for size in (20, 30, 50, 75, 99, 150):
             df = common.load_data(size)
-            lp_newton, lp_lbfgs, lp_ours = short_series_comparison(df, lib_path)
-            print(f"{size:>6} {lp_newton:13.5f} {lp_lbfgs:13.5f} {lp_ours:13.5f} "
-                  f"{lp_ours - lp_newton:+15.5f}")
+            lp_newton, lp_lbfgs, picked, lp_rule, lp_ours = short_series_comparison(
+                df, lib_path)
+            print(f"{size:>6} {picked:>7} {lp_newton:12.5f} {lp_lbfgs:12.5f} "
+                  f"{lp_rule:12.5f} {lp_ours:12.5f} {lp_rule - lp_newton:+13.5f} "
+                  f"{lp_rule - lp_ours:+12.5f}")
     return 0
 
 

@@ -8,6 +8,8 @@
 #include <iostream>
 #include <LBFGSB.h>
 #include <cstring>
+#include <functional>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -675,6 +677,216 @@ struct OptimizeResult {
     std::string status_message;
 };
 
+// Central differences of the *analytic* gradient, symmetrized: accurate to
+// about 1e-8 and costing 2n gradient evaluations. Stan gets its Hessian by
+// autodiff; this project's claim is about the gradient, and differencing an
+// exact gradient is not the same thing as differencing an objective.
+//
+// No special handling is needed for the Laplace prior because newton() below
+// runs on the split reformulation, where that term is linear: its second
+// derivative is exactly zero rather than undefined. Differencing it on the
+// natural parameterization would instead report 1/(tau*h) -- about 1e9 --
+// across the kink at delta = 0, and pin the coordinate.
+Eigen::MatrixXd finite_difference_hessian(
+        const Eigen::VectorXd& x,
+        const std::function<void(const Eigen::VectorXd&, double&, Eigen::VectorXd&)>& smooth) {
+    const int n = static_cast<int>(x.size());
+    Eigen::MatrixXd hessian(n, n);
+    Eigen::VectorXd forward(n), backward(n), point = x;
+    double value = 0.0;
+
+    for (int i = 0; i < n; ++i) {
+        const double step = std::sqrt(std::numeric_limits<double>::epsilon())
+                            * std::max(1.0, std::abs(x(i)));
+        point(i) = x(i) + step;
+        smooth(point, value, forward);
+        point(i) = x(i) - step;
+        smooth(point, value, backward);
+        point(i) = x(i);
+        hessian.col(i) = (forward - backward) / (2.0 * step);
+    }
+    // symmetrize: the two triangles differ by the differencing error alone
+    return 0.5 * (hessian + hessian.transpose());
+}
+
+// [fc] CmdStanPyBackend.fit runs Stan's Newton below 100 observations and
+// L-BFGS at or above, retrying with Newton if the first attempt raises. This
+// is that Newton. Its Python twin is projected_newton() in customProphet.py.
+OptimizeResult newton(Eigen::VectorXd params,
+                      const Eigen::Ref<const Eigen::VectorXd>& t,
+                      const Eigen::Ref<const Eigen::VectorXd>& changepoints_t,
+                      const Eigen::Ref<const Eigen::VectorXd>& t_seasonality,
+                      const Eigen::Ref<const Eigen::VectorXd>& y_scaled,
+                      double sigma_obs_prior_scale,
+                      double sigma_k,
+                      double sigma_m,
+                      const Eigen::Ref<const Eigen::VectorXd>& sigmas,
+                      const Eigen::Ref<const Eigen::VectorXd>& s_m,
+                      const Eigen::Ref<const Eigen::VectorXd>& cap_scaled,
+                      int trend_indicator,
+                      double changepoint_prior_scale,
+                      const std::vector<int>& fourier_orders,
+                      const std::vector<double>& seasonality_periods,
+                      const Eigen::Ref<const Eigen::MatrixXd>& seasonality_conditions,
+                      const Eigen::Ref<const Eigen::MatrixXd>& data_columns,
+                      bool verbose) {
+    const int params_size = static_cast<int>(params.size());
+    const int S = static_cast<int>(changepoints_t.size());
+    const int K = params_size - 3 - S;
+
+    const Eigen::MatrixXd A = changepoint_matrix(t, changepoints_t);
+    const Eigen::MatrixXd x_design = seasonality_matrix(
+        t_seasonality, fourier_orders, seasonality_periods,
+        seasonality_conditions, data_columns);
+    validate_inputs(t, changepoints_t, A, x_design, y_scaled, sigma_obs_prior_scale,
+                    sigma_k, sigma_m, sigmas, s_m, changepoint_prior_scale);
+
+    // The SAME split reformulation optimize() uses, and for the same reason.
+    // On the natural parameterization the Laplace prior leaves a kink exactly
+    // where the optimum sits; Newton has no mechanism to land on one, and
+    // measured, it oscillates across it making ~1e-5 progress a step -- still
+    // 66 nats short of the optimum after Prophet's whole 10,000-iteration
+    // budget. Split, the L1 becomes linear, its curvature is zero rather than
+    // undefined, and what is left is a smooth problem with bounds.
+    SplitObjective objective{t, changepoints_t, A, x_design, y_scaled,
+                             sigma_obs_prior_scale, sigma_k, sigma_m,
+                             Eigen::VectorXd(sigmas), Eigen::VectorXd(s_m),
+                             Eigen::VectorXd(cap_scaled), trend_indicator,
+                             changepoint_prior_scale, S, K, {}};
+
+    const int n = 2 + 2 * S + K + 1;
+    Eigen::VectorXd z = Eigen::VectorXd::Zero(n);
+    z(0) = params(0);
+    z(1) = params(1);
+    for (int j = 0; j < S; ++j) {
+        z(2 + j) = std::max(params(2 + j), 0.0);
+        z(2 + S + j) = std::max(-params(2 + j), 0.0);
+    }
+    z.segment(2 + 2 * S, K) = params.segment(2 + S, K);
+    z(n - 1) = params(params_size - 1);
+
+    // delta_pos and delta_neg are the only bounded coordinates, at zero below.
+    const auto at_lower_bound = [&](int i) { return i >= 2 && i < 2 + 2 * S; };
+
+    Eigen::VectorXd gradient(n);
+    double value = objective(z, gradient);
+    std::vector<double> loss_trace{value};
+
+    auto smooth = [&](const Eigen::VectorXd& point, double&, Eigen::VectorXd& grad) {
+        grad.resize(point.size());
+        Eigen::VectorXd local = point;
+        objective(local, grad);
+    };
+
+    double lambda = 1e-6;
+    int iteration = 0;
+    std::string message = "converged";
+    int status = 0;
+
+    for (; iteration < stan_convergence::MAX_ITERATIONS; ++iteration) {
+        // Projected gradient: a bounded coordinate sitting at its bound and
+        // pushed further into it is already as good as it gets, so it does not
+        // count toward stationarity and is held out of the Newton system.
+        Eigen::VectorXd projected = gradient;
+        std::vector<int> free_indices;
+        for (int i = 0; i < n; ++i) {
+            const bool pinned = at_lower_bound(i) && z(i) <= 0.0 && gradient(i) > 0.0;
+            if (pinned) {
+                projected(i) = 0.0;
+            } else {
+                free_indices.push_back(i);
+            }
+        }
+        if (projected.cwiseAbs().maxCoeff() < stan_convergence::TOL_ABS_GRAD) {
+            break;
+        }
+
+        const Eigen::MatrixXd hessian = finite_difference_hessian(z, smooth);
+        const int free_count = static_cast<int>(free_indices.size());
+        Eigen::MatrixXd free_hessian(free_count, free_count);
+        Eigen::VectorXd free_gradient(free_count);
+        for (int a = 0; a < free_count; ++a) {
+            free_gradient(a) = gradient(free_indices[a]);
+            for (int b = 0; b < free_count; ++b) {
+                free_hessian(a, b) = hessian(free_indices[a], free_indices[b]);
+            }
+        }
+
+        double trial_value = value;
+        Eigen::VectorXd trial_point = z, trial_gradient(n);
+        bool improved = false;
+        double alpha = 1.0;
+        for (int attempt = 0; attempt < 40 && !improved; ++attempt) {
+            Eigen::MatrixXd damped = free_hessian;
+            damped.diagonal().array() += lambda;
+            const Eigen::VectorXd free_step = damped.ldlt().solve(-free_gradient);
+
+            Eigen::VectorXd step = Eigen::VectorXd::Zero(n);
+            for (int a = 0; a < free_count; ++a) {
+                step(free_indices[a]) = free_step(a);
+            }
+            if (step.allFinite()) {
+                alpha = 1.0;
+                for (int backtrack = 0; backtrack < 30; ++backtrack) {
+                    trial_point = z + alpha * step;
+                    for (int i = 0; i < n; ++i) {
+                        if (at_lower_bound(i)) {
+                            trial_point(i) = std::max(trial_point(i), 0.0);
+                        }
+                    }
+                    trial_value = objective(trial_point, trial_gradient);
+                    if (std::isfinite(trial_value) && trial_value < value) {
+                        improved = true;
+                        break;
+                    }
+                    alpha *= 0.5;
+                }
+            }
+            if (!improved) {
+                lambda *= 10.0;
+            }
+        }
+        if (!improved) {
+            message = "no further progress";
+            break;
+        }
+        // Levenberg, coupled to the line search rather than to success alone: a
+        // step that had to be backtracked is a step the quadratic model was
+        // trusted too far on, so the damping goes up even though the step was
+        // accepted. Without it the full step is rejected almost every iteration
+        // and the run crawls -- measured on the Python twin at T=50, a median
+        // of 14 backtracks and 658 iterations against 44 with this rule.
+        lambda = alpha < 1.0 ? lambda * 10.0 : std::max(lambda * 0.2, 1e-14);
+
+        // [fc] Stan stops as soon as ANY of its tests holds.
+        const double scale = std::max({std::abs(value), std::abs(trial_value), 1.0});
+        const double objective_change = value - trial_value;
+        const double parameter_change = (trial_point - z).cwiseAbs().maxCoeff();
+        const bool converged =
+            objective_change < stan_convergence::TOL_ABS_F ||
+            objective_change / scale < stan_convergence::TOL_REL_F * stan_convergence::EPS ||
+            parameter_change < stan_convergence::TOL_ABS_X;
+
+        z = trial_point;
+        value = trial_value;
+        gradient = trial_gradient;
+        loss_trace.push_back(value);
+        if (converged) {
+            break;
+        }
+    }
+
+    if (iteration >= stan_convergence::MAX_ITERATIONS) {
+        status = -2;
+        message = "reached the iteration cap without converging";
+    }
+    if (verbose) {
+        std::cout << "newton: " << message << " after " << iteration
+                  << " iterations, f = " << value << std::endl;
+    }
+    return {objective.to_natural(z), loss_trace, iteration, status, message};
+}
+
 OptimizeResult optimize(Eigen::VectorXd params,
                         const Eigen::Ref<const Eigen::VectorXd>& t,
                         const Eigen::Ref<const Eigen::VectorXd>& changepoints_t,
@@ -889,6 +1101,33 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           "Run L-BFGS (OWL-QN) on the Prophet minus-log-posterior and return an "
           "OptimizeResult. `params` is not modified in place; the optimized vector "
           "comes back on the result.");
+
+    m.def("newton", &newton,
+          py::arg("params"),
+          py::arg("t"),
+          py::arg("changepoints_t"),
+          py::arg("t_seasonality"),
+          py::arg("y_scaled"),
+          py::arg("sigma_obs_prior_scale"),
+          py::arg("sigma_k"),
+          py::arg("sigma_m"),
+          py::arg("sigmas"),
+          py::arg("s_m") = Eigen::VectorXd(),
+          py::arg("cap_scaled") = Eigen::VectorXd(),
+          py::arg("trend_indicator") = 0,
+          py::arg("changepoint_prior_scale"),
+          py::arg("fourier_orders"),
+          py::arg("seasonality_periods"),
+          py::arg("seasonality_conditions") = Eigen::MatrixXd(),
+          py::arg("data_columns") = Eigen::MatrixXd(),
+          py::arg("verbose") = false,
+          // The optimizer touches no Python objects, so let other threads run.
+          py::call_guard<py::gil_scoped_release>(),
+          "Run a projected, Levenberg-damped Newton method on the Prophet "
+          "minus-log-posterior, [fc] the algorithm Stan uses below 100 "
+          "observations. Same arguments and same OptimizeResult as optimize(), and "
+          "the same split reformulation underneath; the Hessian comes from central "
+          "differences of the analytic gradient.");
 
     m.def("minus_log_posterior_and_gradient", &minus_log_posterior_and_gradient_py,
           py::arg("params"),
