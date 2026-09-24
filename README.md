@@ -16,9 +16,7 @@ it would there. Arguments for what is *not* implemented — `mcmc_samples`,
 then **rejected**, so a ported script fails where it is wrong rather than at the first
 `AttributeError`.
 
-It is still not a drop-in replacement: uncertainty intervals are not usable
-([#58](https://github.com/adlyZaroui/analytic-prophet/issues/58)), there is no MCMC or
-plotting, and several names differ from Prophet's
+It is still not a drop-in replacement: there is no MCMC or plotting, and several names differ from Prophet's
 ([#54](https://github.com/adlyZaroui/analytic-prophet/issues/54)). See
 [Not implemented](#not-implemented) and
 [Known differences](#known-differences-from-prophet).
@@ -371,6 +369,22 @@ length; `fit_cpp` is the compiled path, `fit` the Python reference.
 | 1000 | 0.157 | 0.422 (2.69×) | **0.132 (0.84×)** |
 | 2905 | 0.580 | 1.514 (2.61×) | **0.348 (0.60×)** |
 
+**Forecast intervals** — the trend band, mean width over the horizon, Peyton Manning at
+T = 1000:
+
+| horizon | prophet | `fit_cpp` |
+|---|---|---|
+| 0 days | 0.00000 | 0.00000 |
+| 30 | 0.00505 | 0.00731 |
+| 90 | 0.04811 | 0.06043 |
+| 365 | 0.50358 | 0.59661 |
+
+The remaining 1.2× is not the sampler: the Laplace scale it draws from is `mean|δ|`, the
+band is linear in it, and ours runs 1.171× Prophet's on this series because the two
+optimizers land on different rate adjustments — sparser here (6 active against 15) but
+larger in mean magnitude. Zero horizon gives zero width on both sides, since neither
+places changepoints inside the history.
+
 **Peak memory added by fitting** (T = 2905):
 
 | | added |
@@ -478,12 +492,6 @@ Tracked, deliberate, and not yet closed:
 - **The Python path's convergence tolerances**
   ([#24](https://github.com/adlyZaroui/analytic-prophet/issues/24)) deviate from Stan's,
   because Stan's values make scipy stall on the split reformulation.
-- **Trend intervals are far too wide**
-  ([#58](https://github.com/adlyZaroui/analytic-prophet/issues/58)). The sampler that
-  widens `trend_lower`/`trend_upper` places new changepoints across the whole frame
-  rather than past the end of the history, so most of them land *inside* the fitted
-  history. Measured at ~170× Prophet's band. `yhat` is unaffected — it comes from the
-  fitted parameters, not these draws — but the intervals are not usable yet.
 - **Names differ from Prophet's for the same objects**
   ([#54](https://github.com/adlyZaroui/analytic-prophet/issues/54)). `t_scaled` against
   `history['t']`, `y_absmax` against `y_scale`, `fourier_components` against
@@ -513,10 +521,6 @@ The model itself is complete against Prophet's — [#16](https://github.com/adly
 fourteen tasks are done. What is missing is around it:
 
 - **MCMC sampling** — MAP only. `mcmc_samples > 0` is rejected rather than ignored.
-- **Usable uncertainty intervals**
-  ([#58](https://github.com/adlyZaroui/analytic-prophet/issues/58)) — `yhat` is right,
-  the band around it is not. This is the one gap that would mislead a user rather than
-  merely stop them.
 - **Uncertainty from a regressor's own forecast**
   ([#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14a) —
   `regressor_predictor` supplies a point estimate; Prophet widens the interval with draws
@@ -538,7 +542,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 441 tests
+pytest tests/                        # 451 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
@@ -575,6 +579,7 @@ numbers rather than errors.
 | | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
+| | [#58](https://github.com/adlyZaroui/analytic-prophet/issues/58), [#35](https://github.com/adlyZaroui/analytic-prophet/issues/35) | The trend interval drew its new changepoints across the whole frame at a per-point rate, so most landed *inside* the fitted history and every draw rewrote the past before extrapolating from it — a band ~170× Prophet's, wider than the data. Placed as Prophet's Poisson process on `(1, T]` instead, which brings it to 1.2×, the residual being our own `mean\|delta\|`. `predict` also stopped writing a `t_scaled` column into the caller's frame |
 | | [#52](https://github.com/adlyZaroui/analytic-prophet/issues/52) | The constructor took no arguments, so every setting was an attribute assigned afterwards and a ported Prophet script had to be rewritten line by line. Wiring `interval_width` and `uncertainty_samples` into it exposed three defects in the method they feed: quantiles hardcoded at 95% where Prophet's default is 80%, one draw taken from the global numpy generator so seeding a model did nothing, and `compute_trend` called without the growth mode — a linear band around a logistic fit |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14 | A model with every seasonality disabled could not fit: the C++ length guard read `params_size < 2 + S + 2`, assuming at least one seasonality column. `K = 0` is trend plus noise, and a model. Found through a nested regressor model on 400 days with weekly turned off, which puts yearly below its threshold too |
 | | [#33](https://github.com/adlyZaroui/analytic-prophet/issues/33), [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 10 | `add_regressor` accepted a `pd.Series` and discarded it, so a caller's regressor was simply absent with no error. The signature could not have worked either: a series carries the history's values and no way to produce the future ones `predict` needs |
