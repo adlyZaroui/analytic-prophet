@@ -18,13 +18,13 @@ The issue proposed two directions. Both were investigated:
 
 The actual root cause is neither: the Laplace (double-exponential) prior on
 delta, which vanilla Prophet uses to keep changepoint rates sparse, puts a
-|delta|/tau term in the posterior. That makes the objective non-differentiable
+|delta|/changepoint_prior_scale term in the posterior. That makes the objective non-differentiable
 at delta = 0 -- and the optimum sits exactly on those kinks, since the prior is
 what drives most changepoint rates to zero. More-Thuente, liblbfgs's default
 line search, assumes a smooth objective and cannot bracket a step across a
-kink, so it gave up almost immediately. Sweeping tau showed the failure
-tracking the L1 strength exactly: 1/tau = 20 died at 2 iterations, while
-1/tau = 1e-6 (an effectively smooth objective) ran 3528.
+kink, so it gave up almost immediately. Sweeping changepoint_prior_scale showed the failure
+tracking the L1 strength exactly: 1/changepoint_prior_scale = 20 died at 2 iterations, while
+1/changepoint_prior_scale = 1e-6 (an effectively smooth objective) ran 3528.
 
 The fix is OWL-QN, liblbfgs's built-in support for exactly this class of
 objective, which takes the L1 coefficient itself and handles the kink by
@@ -64,11 +64,11 @@ def fit_both(df):
 
 
 def first_order_residuals(model, params):
-    """Subgradient optimality residuals for  f_smooth(x) + sum_j|delta_j|/tau.
+    """Subgradient optimality residuals for  f_smooth(x) + sum_j|delta_j|/changepoint_prior_scale.
 
     At a minimum of a convex objective of that form:
-        delta_j != 0  ->  d f_smooth/d delta_j + sign(delta_j)/tau == 0
-        delta_j == 0  ->  |d f_smooth/d delta_j| <= 1/tau
+        delta_j != 0  ->  d f_smooth/d delta_j + sign(delta_j)/changepoint_prior_scale == 0
+        delta_j == 0  ->  |d f_smooth/d delta_j| <= 1/changepoint_prior_scale
     and every smooth coordinate (k, m, beta) has a vanishing derivative.
 
     Returns (max |grad| over smooth coords, max violation over delta). This
@@ -81,7 +81,7 @@ def first_order_residuals(model, params):
     gradient = model._gradient(params, include_l1_prior=False)
     delta = np.asarray(params)[DELTA_SLICE]
     ddelta = gradient[DELTA_SLICE]
-    threshold = 1.0 / model.tau
+    threshold = 1.0 / model.changepoint_prior_scale
 
     smooth = np.concatenate(([gradient[K_IDX], gradient[M_IDX]], gradient[BETA_SLICE]))
 
@@ -160,7 +160,7 @@ def test_cpp_optimizer_reaches_first_order_optimum(small_df, compiled_optimizer_
     reference, model = fit_both(small_df)
     model.fit_cpp(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_module)
 
-    smooth_residual, delta_violation = first_order_residuals(reference, model.opt_params)
+    smooth_residual, delta_violation = first_order_residuals(reference, model.get_parameters())
 
     # The bound is 5e-2, not the 1e-3 this asserted before #21. That is a real
     # weakening and worth stating plainly: Stan stops on objective *progress*
@@ -170,7 +170,7 @@ def test_cpp_optimizer_reaches_first_order_optimum(small_df, compiled_optimizer_
     # against ~1.7e-4 when the optimizer was allowed to grind 33k further
     # iterations for 4e-5 of relative loss.
     #
-    # It still discriminates: the L1 subdifferential is [-1/tau, 1/tau] =
+    # It still discriminates: the L1 subdifferential is [-1/changepoint_prior_scale, 1/changepoint_prior_scale] =
     # [-20, 20], and perturbing k by 0.05 drives the residual to ~7 (see
     # test_first_order_residuals_reject_a_near_miss), so this keeps two orders
     # of headroom over a near-miss.
@@ -184,7 +184,7 @@ def test_fit_reaches_first_order_optimum(small_df):
     model = pin_yearly_only(CustomProphet())
     model.fit(small_df, analytic=True, initial_params=MATCHED_INIT, fixed_sigma_obs=SIGMA_OBS)
 
-    smooth_residual, delta_violation = first_order_residuals(model, model.opt_params)
+    smooth_residual, delta_violation = first_order_residuals(model, model.get_parameters())
 
     assert smooth_residual < 1e-3
     assert delta_violation < 1e-6
@@ -196,7 +196,7 @@ def test_first_order_residuals_reject_a_near_miss(small_df):
     model = pin_yearly_only(CustomProphet())
     model.fit(small_df, analytic=True, initial_params=MATCHED_INIT, fixed_sigma_obs=SIGMA_OBS)
 
-    perturbed = model.opt_params.copy()
+    perturbed = model.get_parameters().copy()
     perturbed[K_IDX] += 0.05
 
     smooth_residual, _ = first_order_residuals(model, perturbed)

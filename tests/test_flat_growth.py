@@ -25,7 +25,7 @@ land on the same point.
 import numpy as np
 import pytest
 
-from customProphet import (CustomProphet, canonical_to_cpp, compute_trend,
+from customProphet import (CustomProphet, canonical_to_cpp, predict_trend,
                            flat_growth_init, TREND_INDICATORS)
 
 
@@ -46,7 +46,7 @@ def test_the_trend_is_constant(peyton_manning_df, compiled_optimizer_module):
     trend = forecast["trend"].values
 
     assert np.ptp(trend) < 1e-9, "a flat trend must not vary"
-    assert trend[0] == pytest.approx(model.opt_params[1] * model.y_absmax)
+    assert trend[0] == pytest.approx(model.params["m"][0][0] * model.y_scale)
 
 
 def test_k_and_delta_are_driven_to_zero(peyton_manning_df, compiled_optimizer_module):
@@ -57,14 +57,14 @@ def test_k_and_delta_are_driven_to_zero(peyton_manning_df, compiled_optimizer_mo
     model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
-    assert model.opt_params[0] == pytest.approx(0.0, abs=1e-8)
-    np.testing.assert_allclose(model.opt_params[model.layout.delta], 0.0, atol=1e-8)
+    assert model.params["k"][0][0] == pytest.approx(0.0, abs=1e-8)
+    np.testing.assert_allclose(model.params["delta"][0], 0.0, atol=1e-8)
 
 
 def test_the_gradient_carries_only_the_priors_on_k_and_delta(
         peyton_manning_df, compiled_optimizer_module):
     """d(trend)/dk and d(trend)/d(delta) are zero, so those blocks reduce to
-    k/sigma_k^2 and (with the L1 prior) sign(delta)/tau."""
+    k/sigma_k^2 and (with the L1 prior) sign(delta)/changepoint_prior_scale."""
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
     model = flat_model()
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
@@ -86,11 +86,11 @@ def test_the_l1_prior_still_reaches_delta(peyton_manning_df, compiled_optimizer_
     model = flat_model()
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    params = model.opt_params.copy()
+    params = model.get_parameters().copy()
     params[model.layout.delta] = 0.5
 
     gradient = model._gradient(params, include_l1_prior=True)
-    np.testing.assert_allclose(gradient[model.layout.delta], 1.0 / model.tau)
+    np.testing.assert_allclose(gradient[model.layout.delta], 1.0 / model.changepoint_prior_scale)
 
 
 @pytest.mark.parametrize("multiplicative", [False, True])
@@ -165,11 +165,11 @@ def test_compute_trend_agrees_with_the_fitted_trend(peyton_manning_df,
     model = flat_model()
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    shared = compute_trend(model.opt_params[0], model.opt_params[1],
-                           model.opt_params[model.layout.delta], model.change_points,
-                           model.t_scaled, model.y_absmax, growth="flat")
+    shared = predict_trend(model.params["k"][0][0], model.params["m"][0][0],
+                           model.params["delta"][0], model.changepoints_t,
+                           model.t, model.y_scale, growth="flat")
 
-    np.testing.assert_allclose(shared, model.opt_params[1] * model.y_absmax, rtol=1e-12)
+    np.testing.assert_allclose(shared, model.params["m"][0][0] * model.y_scale, rtol=1e-12)
 
 
 def test_flat_growth_needs_no_cap(peyton_manning_df, compiled_optimizer_module):
@@ -211,20 +211,20 @@ def test_the_fit_is_prophets_fit_exactly(prophet_comparison, compiled_optimizer_
     lp_prophet = bridge.validate_bridge(
         stan_model, stan_data, prophet_params,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = flat_model()
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.opt_params[0],
-                                   ours.opt_params[1], ours.opt_params[ours.layout.delta],
-                                   ours.sigma_obs, ours.opt_params[ours.layout.beta])
+    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
+                                   ours.params["m"][0][0], ours.params["delta"][0],
+                                   ours.sigma_obs, ours.params["beta"][0])
 
     assert lp_ours == pytest.approx(lp_prophet, abs=1e-6)
-    np.testing.assert_allclose(ours.opt_params[ours.layout.beta],
+    np.testing.assert_allclose(ours.params["beta"][0],
                                np.asarray(prophet_params["beta"]).ravel(), atol=1e-5)
-    assert ours.opt_params[1] == pytest.approx(
+    assert ours.params["m"][0][0] == pytest.approx(
         float(np.asarray(prophet_params["m"]).ravel()[0]), abs=1e-5)
 
 
@@ -239,16 +239,16 @@ def test_our_objective_is_stans_under_flat_growth(prophet_comparison,
     stan_model, stan_data, prophet_params = bridge.capture_stan_model(prophet_model, df)
     bridge.validate_bridge(stan_model, stan_data, prophet_params,
                            float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = flat_model()
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)
     sums = []
     for scale in (0.0, 0.05, 0.3):
-        point = ours.opt_params.copy()
+        point = ours.get_parameters().copy()
         if scale:
             point[:2] += rng.normal(scale=scale, size=2)
             point[ours.layout.delta] += rng.normal(scale=scale * 0.1, size=25)

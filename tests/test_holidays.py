@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import (CustomProphet, holiday_features, validate_holidays_frame)
+from customProphet import (CustomProphet, make_holiday_features, validate_holidays_frame)
 
 YEARS = range(2008, 2017)
 
@@ -144,7 +144,7 @@ def test_columns_match_prophets_exactly(prophet_comparison, frame_factory, label
     prophet_model = Prophet(holidays=frame)
     theirs, their_scales, _ = prophet_model.make_holiday_features(
         dates, prophet_model.construct_holiday_dataframe(dates))
-    ours, our_scales, _ = holiday_features(dates, frame, 10.0)
+    ours, our_scales, _ = make_holiday_features(dates, frame, 10.0)
 
     assert ours.shape == theirs.shape, label
     np.testing.assert_array_equal(ours, theirs.values)
@@ -154,7 +154,7 @@ def test_columns_match_prophets_exactly(prophet_comparison, frame_factory, label
 def test_a_window_becomes_one_column_per_offset():
     """[fc] `{holiday}_delim_{+/-}{n}`, one per offset in [lower, upper]."""
     dates = pd.Series(pd.date_range("2010-02-01", "2010-02-15"))
-    features, scales, names = holiday_features(dates, superbowls(-2, 1), 10.0)
+    features, scales, names = make_holiday_features(dates, superbowls(-2, 1), 10.0)
 
     assert features.shape == (15, 4)          # offsets -2, -1, 0, +1
     assert names == ["superbowl"]
@@ -168,7 +168,7 @@ def test_a_holiday_outside_the_dates_still_gets_its_columns():
     """Fit and predict must present the same columns; an occurrence that misses
     the frame gives an all-zero column rather than no column."""
     dates = pd.Series(pd.date_range("2010-06-01", "2010-06-30"))
-    features, _, _ = holiday_features(dates, superbowls(-1, 1), 10.0)
+    features, _, _ = make_holiday_features(dates, superbowls(-1, 1), 10.0)
 
     assert features.shape == (30, 3)
     assert np.all(features == 0)
@@ -181,8 +181,8 @@ def test_columns_are_sorted_by_name_not_by_row_order():
     forward = two_holidays()
     reversed_rows = forward.iloc[::-1].reset_index(drop=True)
 
-    a, scales_a, _ = holiday_features(dates, forward, 10.0)
-    b, scales_b, _ = holiday_features(dates, reversed_rows, 10.0)
+    a, scales_a, _ = make_holiday_features(dates, forward, 10.0)
+    b, scales_b, _ = make_holiday_features(dates, reversed_rows, 10.0)
 
     np.testing.assert_array_equal(a, b)
     assert scales_a == scales_b
@@ -194,7 +194,7 @@ def test_an_inconsistent_prior_scale_for_one_holiday_is_rejected():
     frame.loc[0, "prior_scale"] = 5.0
 
     with pytest.raises(ValueError, match="consistent prior scale"):
-        holiday_features(pd.Series(pd.date_range("2010-01-01", "2010-12-31")), frame, 10.0)
+        make_holiday_features(pd.Series(pd.date_range("2010-01-01", "2010-12-31")), frame, 10.0)
 
 
 # -- reaching the fit ---------------------------------------------------
@@ -214,8 +214,8 @@ def test_holiday_columns_extend_the_parameter_vector(peyton_manning_df,
     assert layout.n_holiday_columns > 0
     assert layout.n_regressor_columns == (layout.n_seasonality_columns
                                           + layout.n_holiday_columns)
-    assert with_holidays.opt_params.shape == (layout.size,)
-    assert np.all(np.isfinite(with_holidays.opt_params))
+    assert with_holidays.get_parameters().shape == (layout.size,)
+    assert np.all(np.isfinite(with_holidays.get_parameters()))
 
 
 def test_the_holiday_prior_scale_lands_on_the_holiday_columns(peyton_manning_df,
@@ -286,11 +286,11 @@ def test_a_holiday_effect_is_actually_fitted(peyton_manning_df, compiled_optimiz
     model = CustomProphet().add_holidays(frame)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    coefficients = model.opt_params[model.layout.holidays]
+    coefficients = model.params["beta"][0][model.layout.holiday_block]
     assert coefficients.shape == (1,)
     # the bump is +4 on a series scaled by max|y|; the coefficient is in
     # normalized units, so compare there
-    assert coefficients[0] > 0.5 * 4.0 / model.y_absmax
+    assert coefficients[0] > 0.5 * 4.0 / model.y_scale
 
 
 # -- predict ------------------------------------------------------------
@@ -351,10 +351,10 @@ def test_design_matrix_and_sigmas_match_prophets(prophet_comparison,
 
     prophet_model = Prophet(holidays=frame, **common.PROPHET_KWARGS)
     _, stan_data, _ = bridge.capture_stan_model(prophet_model, df)
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = CustomProphet().add_holidays(frame)
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     _, X_ours = ours._design_matrices()
@@ -390,16 +390,16 @@ def test_our_objective_is_stans_with_holidays(prophet_comparison,
     lp_prophet = bridge.validate_bridge(
         stan_model, stan_data, prophet_params,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = CustomProphet().add_holidays(frame)
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)
     sums = []
     for scale in (0.0, 0.05, 0.3):
-        point = ours.opt_params.copy()
+        point = ours.get_parameters().copy()
         if scale:
             point[:2] += rng.normal(scale=scale, size=2)
             point[ours.layout.delta] += rng.normal(scale=scale * 0.1, size=25)
@@ -415,7 +415,7 @@ def test_our_objective_is_stans_with_holidays(prophet_comparison,
     assert abs(sums[0]) < 1e-3, f"objectives differ by {sums[0]} at the optimum"
     assert max(sums) - min(sums) < 1e-2, f"the difference varies across points: {sums}"
 
-    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.opt_params[0],
-                                   ours.opt_params[1], ours.opt_params[ours.layout.delta],
-                                   ours.sigma_obs, ours.opt_params[ours.layout.beta])
+    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
+                                   ours.params["m"][0][0], ours.params["delta"][0],
+                                   ours.sigma_obs, ours.params["beta"][0])
     assert lp_ours >= lp_prophet - 1e-6

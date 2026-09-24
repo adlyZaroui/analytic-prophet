@@ -17,9 +17,9 @@ import pytest
 
 from customProphet import (BUILT_IN_SEASONALITIES, check_seasonality_supported,
                            CustomProphet, DEFAULT_LAYOUT, ParameterLayout,
-                           extract_params, fourier_components,
+                           extract_params, fourier_series,
                            from_dict_to_array, n_yearly, N_CHANGE_POINTS, seasonality,
-                           seasonality_columns, seasonality_design_matrix, SIGMA,
+                           seasonality_columns, SIGMA,
                            SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD)
 
 
@@ -120,16 +120,16 @@ def test_design_matrix_concatenates_blocks_in_registry_order(prepared_model):
     the order `beta` is laid out in, so getting it wrong misassigns every
     coefficient."""
     t = prepared_model.t_seasonality
-    x = seasonality_design_matrix(t, yearly_and_weekly())
+    x = seasonal_block(yearly_and_weekly(), pd.DataFrame({"ds": prepared_model.ds}))
 
     assert x.shape == (len(t), 2 * 10 + 2 * 3)
-    np.testing.assert_array_equal(x[:, :20], fourier_components(t, 365.25, 10))
-    np.testing.assert_array_equal(x[:, 20:], fourier_components(t, 7.0, 3))
+    np.testing.assert_array_equal(x[:, :20], fourier_series(t, 365.25, 10))
+    np.testing.assert_array_equal(x[:, 20:], fourier_series(t, 7.0, 3))
 
 
 def test_empty_registry_gives_a_zero_width_block(prepared_model):
     """A model with no seasonality is trend plus noise, not an error."""
-    x = seasonality_design_matrix(prepared_model.t_seasonality, {})
+    x = seasonal_block({}, pd.DataFrame({"ds": prepared_model.ds}))
     assert x.shape == (len(prepared_model.t_seasonality), 0)
 
 
@@ -152,8 +152,8 @@ def test_a_model_with_no_seasonality_fits(peyton_manning_df, compiled_optimizer_
 
     assert model.seasonalities == {}
     assert model.layout.n_regressor_columns == 0
-    assert model.opt_params.shape == (model.layout.size,)
-    assert np.all(np.isfinite(model.opt_params))
+    assert model.get_parameters().shape == (model.layout.size,)
+    assert np.all(np.isfinite(model.get_parameters()))
 
     forecast = model.predict(model.make_future_dataframe(periods=30))
     assert np.all(np.isfinite(forecast["yhat"].values))
@@ -230,18 +230,18 @@ def test_a_trend_only_fit_is_prophets_fit(prophet_comparison, compiled_optimizer
     lp_prophet = bridge.validate_bridge(
         stan_model, stan_data, prophet_params,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
                          daily_seasonality=False, growth="flat")
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert ours.layout.n_regressor_columns == 0
-    assert len(ours.opt_params) == len(prophet_params["delta"]) + 3   # one shorter
+    assert len(ours.get_parameters()) == len(prophet_params["delta"]) + 3   # one shorter
 
-    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.opt_params[0],
-                                   ours.opt_params[1], ours.opt_params[ours.layout.delta],
+    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
+                                   ours.params["m"][0][0], ours.params["delta"][0],
                                    ours.sigma_obs, [0.0])
     assert lp_ours == pytest.approx(lp_prophet, abs=1e-6)
 
@@ -254,8 +254,8 @@ def test_layout_follows_the_registered_seasonalities(peyton_manning_df,
 
     assert list(model.seasonalities) == ["yearly", "weekly"]
     assert model.layout.n_seasonality_columns == 26
-    assert model.opt_params.shape == (2 + N_CHANGE_POINTS + 1 + 26,)
-    assert np.all(np.isfinite(model.opt_params))
+    assert model.get_parameters().shape == (2 + N_CHANGE_POINTS + 1 + 26,)
+    assert np.all(np.isfinite(model.get_parameters()))
 
 
 # -- the two design matrices agreeing -----------------------------------
@@ -284,6 +284,19 @@ def test_cpp_and_python_objectives_agree_with_two_seasonalities(prepared_model,
     from customProphet import canonical_to_cpp
     value, gradient = cpp_mlp_and_gradient(model, canonical_to_cpp(canonical, model.layout))
 
+def seasonal_block(seasonalities, df):
+    """The seasonal columns for a registry, through the model's own builder.
+
+    [fc] make_all_seasonality_features is a method because it reads the
+    holiday and regressor registries too, so a test wanting only the seasonal
+    part goes through a model configured with just that.
+    """
+    model = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
+                          daily_seasonality=False)
+    model.seasonalities = seasonalities
+    return np.ascontiguousarray(model.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
+
+
     assert value == pytest.approx(expected, rel=1e-12)
     # C++ order is (k, m, delta, beta, zeta): the blocks are reordered, and the
     # sigma_obs slot becomes d/d_zeta by the chain rule d(sigma_obs)/d(zeta) =
@@ -302,24 +315,24 @@ def test_cpp_rejects_a_params_vector_the_registry_cannot_fill(prepared_model, cp
 
     with pytest.raises(ValueError, match="seasonality coefficients"):
         cpp_module.optimize(
-            params=np.zeros(DEFAULT_LAYOUT.size), t_scaled=model.t_scaled,
-            change_points=model.change_points, t_seasonality=model.t_seasonality,
-            normalized_y=model.normalized_y,
+            params=np.zeros(DEFAULT_LAYOUT.size), t=model.t,
+            changepoints_t=model.changepoints_t, t_seasonality=model.t_seasonality,
+            y_scaled=model.y_scaled,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=model.sigma_k,
-            sigma_m=model.sigma_m, sigmas=np.full(26, SIGMA), tau=model.tau,
+            sigma_m=model.sigma_m, sigmas=np.full(26, SIGMA), changepoint_prior_scale=model.changepoint_prior_scale,
             fourier_orders=[10, 3], seasonality_periods=[365.25, 7.0])
 
 
 def test_cpp_rejects_mismatched_orders_and_periods(prepared_model, cpp_module):
     with pytest.raises(ValueError, match="one period per seasonality"):
         cpp_module.minus_log_posterior_and_gradient(
-            params=np.zeros(DEFAULT_LAYOUT.size), t_scaled=prepared_model.t_scaled,
-            change_points=prepared_model.change_points,
+            params=np.zeros(DEFAULT_LAYOUT.size), t=prepared_model.t,
+            changepoints_t=prepared_model.changepoints_t,
             t_seasonality=prepared_model.t_seasonality,
-            normalized_y=prepared_model.normalized_y,
+            y_scaled=prepared_model.y_scaled,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=prepared_model.sigma_k,
             sigma_m=prepared_model.sigma_m, sigmas=np.full(26, SIGMA),
-            tau=prepared_model.tau, fourier_orders=[10, 3], seasonality_periods=[365.25])
+            changepoint_prior_scale=prepared_model.changepoint_prior_scale, fourier_orders=[10, 3], seasonality_periods=[365.25])
 
 
 
@@ -346,7 +359,7 @@ def test_registering_yearly_explicitly_reproduces_the_default_fit(
     automatic.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert list(automatic.seasonalities) == ["yearly"]
-    np.testing.assert_array_equal(registered.opt_params, automatic.opt_params)
+    np.testing.assert_array_equal(registered.get_parameters(), automatic.get_parameters())
     assert registered.opt.n_iterations == automatic.opt.n_iterations
 
 

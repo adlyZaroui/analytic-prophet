@@ -84,7 +84,7 @@ def test_the_nested_model_is_fitted_at_fit_time(peyton_manning_df,
 
     predictor = model.extra_regressors["driver"]["predictor"]
     assert isinstance(predictor, CustomProphet)
-    assert predictor.opt_params is not None
+    assert predictor.get_parameters() is not None
     assert predictor._regressor_name == "driver"     # [fc] marker
 
 
@@ -162,7 +162,7 @@ def test_predict_needs_no_future_values(peyton_manning_df, compiled_optimizer_mo
 def test_predict_does_not_write_into_the_callers_frame(peyton_manning_df,
                                                        compiled_optimizer_module):
     """The filling happens on a copy. Related to #35, which is about predict
-    adding `t_scaled` to the frame it is given -- this must not add to it."""
+    adding `t` to the frame it is given -- this must not add to it."""
     df = driven(peyton_manning_df.iloc[:400].reset_index(drop=True))
     model = CustomProphet().add_regressor("driver", regressor_predictor=True)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)

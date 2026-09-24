@@ -451,6 +451,30 @@ The two agree to **1.5e-8** relative on the full series.
 Two deviations are decisions rather than outstanding gaps. Both were measured before
 being settled.
 
+### Three names stay different
+
+Names follow Prophet's. `tests/test_prophet_naming.py` enumerates the mapping and fails
+if one moves on either side — including if an exception stops being an exception, since a
+silent convergence is as much a surprise as a silent divergence. It checks values too: a
+matching name on a different quantity would be worse than no match.
+
+Only these have no counterpart to match:
+
+| here | why |
+|---|---|
+| `fit_cpp` | Prophet has nothing like it. It is the point of the project. |
+| `sigma_k`, `sigma_m` | `[stan]` writes these as literals in `k ~ normal(0, 5)` rather than naming them in the data block, and Prophet does not expose them. |
+| `T` | `[stan] T`. Prophet reads the count off `history.shape[0]` rather than keeping an attribute. |
+
+Everything else that used to differ now matches, including the five that were argued for
+in an earlier revision of this section — `changepoint_prior_scale` (was `tau`),
+`changepoints_t` (was `t_change`), `t` (was `t_scaled`), `params` (was `opt_params`, and
+now a dict of arrays shaped as Prophet's) and `make_all_seasonality_features` (was
+`seasonality_design_matrix`, and now returns a named frame whose columns are Prophet's
+`{component}_delim_{i}`). The case for keeping them was internal consistency; the case
+against was that anyone porting a script or reading a traceback beside Prophet's meets
+these far more often than the derivations do.
+
 ### A model with no seasonality fits `K = 0`, where Prophet fits `K = 1`
 
 Stan declares `K` as `int<lower=1>`, so Prophet cannot hand it an empty design matrix:
@@ -532,13 +556,6 @@ Tracked, deliberate, and not yet closed:
 - **The Python path's convergence tolerances**
   ([#24](https://github.com/adlyZaroui/analytic-prophet/issues/24)) deviate from Stan's,
   because Stan's values make scipy stall on the split reformulation.
-- **Names differ from Prophet's for the same objects**
-  ([#54](https://github.com/adlyZaroui/analytic-prophet/issues/54)). `t_scaled` against
-  `history['t']`, `y_absmax` against `y_scale`, `fourier_components` against
-  `fourier_series`, and eleven more — every pair verified to hold the same value. Some
-  are deliberate (`tau` is what `prophet.stan` calls it, and what every derivation here
-  calls it); most are drift, with nothing checking for it. The constructor's *arguments*
-  match Prophet's exactly as of #52; the attributes behind them do not all follow.
 - **Refitting is allowed** ([#41](https://github.com/adlyZaroui/analytic-prophet/issues/41)).
   `Prophet.fit` refuses a second call; this implementation accepts one. Neither the
   divergence nor the contract is currently written down, and it has already produced one
@@ -578,7 +595,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 463 tests
+pytest tests/                        # 507 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite

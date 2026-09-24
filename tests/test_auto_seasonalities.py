@@ -22,7 +22,7 @@ from customProphet import (AUTO_SEASONALITY_RULES, CustomProphet, history_spacin
 
 
 def model_for(ds):
-    """A model with just enough state for _set_auto_seasonalities()."""
+    """A model with just enough state for set_auto_seasonalities()."""
     model = CustomProphet()
     model.ds = pd.to_datetime(pd.Series(ds))
     model.y = np.arange(len(model.ds), dtype=float)
@@ -33,7 +33,7 @@ def selected(ds, **overrides):
     model = model_for(ds)
     for key, value in overrides.items():
         setattr(model, key, value)
-    model._set_auto_seasonalities()
+    model.set_auto_seasonalities()
     return {name: props["fourier_order"] for name, props in model.seasonalities.items()}
 
 
@@ -161,7 +161,7 @@ def test_a_registered_component_suppresses_its_built_in(caplog):
 
     model = model_for(daily(1000))
     model.seasonalities = {"weekly": seasonality(7.0, 8)}
-    model._set_auto_seasonalities()
+    model.set_auto_seasonalities()
 
     assert model.seasonalities["weekly"]["fourier_order"] == 8   # not overwritten
     assert list(model.seasonalities) == ["weekly", "yearly"]
@@ -204,11 +204,11 @@ def test_the_rule_decides_what_a_fit_estimates(peyton_manning_df,
 
     assert list(short.seasonalities) == ["weekly"]
     assert short.layout.n_seasonality_columns == 6
-    assert short.opt_params.shape == (short.layout.size,)
+    assert short.get_parameters().shape == (short.layout.size,)
 
     assert list(long.seasonalities) == ["yearly", "weekly"]
     assert long.layout.n_seasonality_columns == 26
-    assert long.opt_params.shape == (long.layout.size,)
+    assert long.get_parameters().shape == (long.layout.size,)
 
 
 def test_both_fit_paths_select_the_same_components(peyton_manning_df,
@@ -238,7 +238,7 @@ def test_selection_is_not_sticky_across_fits(peyton_manning_df, compiled_optimiz
     model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     assert list(model.seasonalities) == ["weekly"]
-    assert model.opt_params.shape == (model.layout.size,)
+    assert model.get_parameters().shape == (model.layout.size,)
 
 
 def test_rules_table_matches_prophets_documented_thresholds():

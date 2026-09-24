@@ -18,8 +18,7 @@ import pandas as pd
 import pytest
 
 from customProphet import (CustomProphet, condition_masks, condition_matrix,
-                           fourier_components, seasonal_time,
-                           seasonality_design_matrix)
+                           fourier_series, seasonal_time)
 
 CONDITION = "on_season"
 
@@ -94,7 +93,7 @@ def test_excluded_rows_are_zeroed_and_the_columns_stay(peyton_manning_df):
     masks = condition_masks(registry, df)
     mask = masks["on_season_weekly"]
 
-    x = seasonality_design_matrix(seasonal_time(df["ds"]), registry, masks)
+    x = seasonal_block(registry, df)
 
     assert x.shape == (len(df), 6)
     assert np.all(x[~mask] == 0)
@@ -108,17 +107,16 @@ def test_an_unconditioned_component_is_untouched(peyton_manning_df):
     masks = condition_masks(model.seasonalities, df)
 
     t = seasonal_time(df["ds"])
-    x = seasonality_design_matrix(t, model.seasonalities, masks)
+    x = seasonal_block(model.seasonalities, df)
 
-    np.testing.assert_array_equal(x[:, 6:], fourier_components(t, 365.25, 10))
+    np.testing.assert_array_equal(x[:, 6:], fourier_series(t, 365.25, 10))
 
 
 def test_an_all_false_condition_removes_the_component_entirely(peyton_manning_df):
     df = peyton_manning_df.iloc[:100].reset_index(drop=True).assign(**{CONDITION: False})
     registry = conditioned_model().seasonalities
 
-    x = seasonality_design_matrix(seasonal_time(df["ds"]), registry,
-                                  condition_masks(registry, df))
+    x = seasonal_block(registry, df)
     assert np.all(x == 0)
 
 
@@ -154,7 +152,7 @@ def test_both_objectives_agree_with_a_conditioned_component(peyton_manning_df,
     model = conditioned_model()
     model.y = df["y"].values
     model.ds = pd.to_datetime(df["ds"])
-    model.t_scaled = np.array((model.ds - model.ds.min()) / (model.ds.max() - model.ds.min()))
+    model.t = np.array((model.ds - model.ds.min()) / (model.ds.max() - model.ds.min()))
     model.T = len(df)
     model.t_seasonality = seasonal_time(model.ds)
     model._normalize_y()
@@ -168,11 +166,11 @@ def test_both_objectives_agree_with_a_conditioned_component(peyton_manning_df,
     expected, expected_gradient = model._minus_log_posteriorAndGradient(params)
 
     value, gradient = cpp_module.minus_log_posterior_and_gradient(
-        params=canonical_to_cpp(params, model.layout), t_scaled=model.t_scaled,
-        change_points=model.change_points, t_seasonality=model.t_seasonality,
-        normalized_y=model.normalized_y, sigma_obs_prior_scale=0.5,
+        params=canonical_to_cpp(params, model.layout), t=model.t,
+        changepoints_t=model.changepoints_t, t_seasonality=model.t_seasonality,
+        y_scaled=model.y_scaled, sigma_obs_prior_scale=0.5,
         sigma_k=model.sigma_k, sigma_m=model.sigma_m,
-        sigmas=np.full(6, SIGMA), tau=model.tau,
+        sigmas=np.full(6, SIGMA), changepoint_prior_scale=model.changepoint_prior_scale,
         fourier_orders=[3], seasonality_periods=[7.0],
         seasonality_conditions=condition_matrix(model.seasonalities,
                                                 model.condition_masks, model.T))
@@ -187,16 +185,29 @@ def test_both_objectives_agree_with_a_conditioned_component(peyton_manning_df,
 def test_cpp_rejects_a_condition_matrix_of_the_wrong_shape(prepared_model, cpp_module):
     from customProphet import SIGMA
 
+def seasonal_block(seasonalities, df):
+    """The seasonal columns for a registry, through the model's own builder.
+
+    [fc] make_all_seasonality_features is a method because it reads the
+    holiday and regressor registries too, so a test wanting only the seasonal
+    part goes through a model configured with just that.
+    """
+    model = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
+                          daily_seasonality=False)
+    model.seasonalities = seasonalities
+    return np.ascontiguousarray(model.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
+
+
     with pytest.raises(ValueError, match="one column per seasonality"):
         cpp_module.minus_log_posterior_and_gradient(
-            params=np.zeros(prepared_model.layout.size), t_scaled=prepared_model.t_scaled,
-            change_points=prepared_model.change_points,
+            params=np.zeros(prepared_model.layout.size), t=prepared_model.t,
+            changepoints_t=prepared_model.changepoints_t,
             t_seasonality=prepared_model.t_seasonality,
-            normalized_y=prepared_model.normalized_y, sigma_obs_prior_scale=0.5,
+            y_scaled=prepared_model.y_scaled, sigma_obs_prior_scale=0.5,
             sigma_k=prepared_model.sigma_k, sigma_m=prepared_model.sigma_m,
-            sigmas=np.full(20, SIGMA), tau=prepared_model.tau,
+            sigmas=np.full(20, SIGMA), changepoint_prior_scale=prepared_model.changepoint_prior_scale,
             fourier_orders=[10], seasonality_periods=[365.25],
-            seasonality_conditions=np.ones((len(prepared_model.t_scaled), 2)))
+            seasonality_conditions=np.ones((len(prepared_model.t), 2)))
 
 
 # -- fit and predict ----------------------------------------------------
@@ -210,7 +221,7 @@ def test_the_condition_reaches_the_fit(peyton_manning_df, compiled_optimizer_mod
     assert "on_season_weekly" in model.condition_masks
     assert list(model.seasonalities) == ["on_season_weekly", "yearly", "weekly"]
     assert model.layout.n_seasonality_columns == 2 * (3 + 10 + 3)
-    assert np.all(np.isfinite(model.opt_params))
+    assert np.all(np.isfinite(model.get_parameters()))
 
 
 def test_predict_requires_the_condition_column(peyton_manning_df,
@@ -278,7 +289,7 @@ def test_fourier_features_match_prophets_to_floating_point(prophet_comparison,
     ds = pd.to_datetime(peyton_manning_df["ds"])
 
     for period, order in ((7.0, 3), (365.25, 10), (30.5, 5)):
-        ours = fourier_components(seasonal_time(ds), period, order)
+        ours = fourier_series(seasonal_time(ds), period, order)
         theirs = Prophet.fourier_series(ds, period, order)
         assert np.max(np.abs(ours - theirs)) < BASIS_TOLERANCE
         assert ours.shape == theirs.shape
@@ -306,12 +317,11 @@ def test_the_feature_matrix_reproduces_prophets_column_for_column(
 
     ours = conditioned_model()
     ours._generate_change_points = lambda: setattr(
-        ours, "change_points", np.asarray(stan_data["t_change"], dtype=float))
+        ours, "changepoints_t", np.asarray(stan_data["t_change"], dtype=float))
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert list(ours.seasonalities) == list(prophet_model.seasonalities)
-    X_ours = seasonality_design_matrix(ours.t_seasonality, ours.seasonalities,
-                                       ours.condition_masks)
+    X_ours = ours._design_matrices()[1]
 
     assert X_ours.shape == X_stan.shape
     assert np.max(np.abs(X_ours - X_stan)) < BASIS_TOLERANCE
@@ -333,14 +343,14 @@ def test_posterior_agrees_with_prophet_on_a_conditioned_model(prophet_comparison
     lp_prophet = bridge.validate_bridge(
         stan_model, stan_data, prophet_params,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = conditioned_model()
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.opt_params[0],
-                                   ours.opt_params[1], ours.opt_params[2:2 + len(t_change)],
-                                   ours.sigma_obs, ours.opt_params[ours.layout.beta])
+    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
+                                   ours.params["m"][0][0], ours.params["delta"][0],
+                                   ours.sigma_obs, ours.params["beta"][0])
     assert lp_ours >= lp_prophet - 1e-6, (
         f"our posterior is worse on a conditioned model: {lp_ours} < {lp_prophet}")

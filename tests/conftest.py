@@ -58,7 +58,7 @@ def peyton_manning_df():
 @pytest.fixture
 def prepared_model(peyton_manning_df):
     """A CustomProphet with data loaded and preprocessed but not yet fit --
-    gives direct access to t_scaled / change_points / normalized_y without
+    gives direct access to t / changepoints_t / y_scaled without
     paying for a full optimize() run in every test.
 
     Yearly seasonality is registered by hand rather than by the auto rule of
@@ -70,7 +70,7 @@ def prepared_model(peyton_manning_df):
     model.seasonalities = {"yearly": seasonality(YEARLY_PERIOD, n_yearly)}
     model.y = peyton_manning_df["y"].values
     model.ds = pd.to_datetime(peyton_manning_df["ds"])
-    model.t_scaled = np.array(
+    model.t = np.array(
         (model.ds - model.ds.min()) / (model.ds.max() - model.ds.min())
     )
     model.T = peyton_manning_df.shape[0]
@@ -203,10 +203,10 @@ def cpp_mlp_and_gradient(cpp_module):
     def call(model, cpp_params, include_l1_prior=True):
         return cpp_module.minus_log_posterior_and_gradient(
             params=cpp_params,
-            t_scaled=model.t_scaled,
-            change_points=model.change_points,
+            t=model.t,
+            changepoints_t=model.changepoints_t,
             t_seasonality=model.t_seasonality,
-            normalized_y=model.normalized_y,
+            y_scaled=model.y_scaled,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE,
             sigma_k=model.sigma_k,
             sigma_m=model.sigma_m,
@@ -215,17 +215,17 @@ def cpp_mlp_and_gradient(cpp_module):
             cap_scaled=(model.cap_scaled if model.growth == 'logistic'
                         else np.empty(0)),
             trend_indicator=TREND_INDICATORS[model.growth],
-            tau=model.tau,
+            changepoint_prior_scale=model.changepoint_prior_scale,
             # from the model's registry, so a test that registers a second
             # seasonality gets the design matrix it asked for
             fourier_orders=[p["fourier_order"] for p in model.seasonalities.values()],
             seasonality_periods=[p["period"] for p in model.seasonalities.values()],
             seasonality_conditions=condition_matrix(model.seasonalities,
                                                     model.condition_masks,
-                                                    len(model.t_scaled)),
+                                                    len(model.t)),
             data_columns=(model._data_columns
                               if model._holiday_columns
-                              else np.empty((len(model.t_scaled), 0))),
+                              else np.empty((len(model.t), 0))),
             include_l1_prior=include_l1_prior,
         )
 

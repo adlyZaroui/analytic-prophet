@@ -102,11 +102,11 @@ def test_cpp_rejects_a_sigmas_of_the_wrong_length(prepared_model, cpp_module):
 
     with pytest.raises(ValueError, match="one prior scale per column"):
         cpp_module.minus_log_posterior_and_gradient(
-            params=np.zeros(model.layout.size), t_scaled=model.t_scaled,
-            change_points=model.change_points, t_seasonality=model.t_seasonality,
-            normalized_y=model.normalized_y, sigma_obs_prior_scale=0.5,
+            params=np.zeros(model.layout.size), t=model.t,
+            changepoints_t=model.changepoints_t, t_seasonality=model.t_seasonality,
+            y_scaled=model.y_scaled, sigma_obs_prior_scale=0.5,
             sigma_k=model.sigma_k, sigma_m=model.sigma_m,
-            sigmas=np.full(19, SIGMA), tau=model.tau,
+            sigmas=np.full(19, SIGMA), changepoint_prior_scale=model.changepoint_prior_scale,
             fourier_orders=[10], seasonality_periods=[365.25])
 
 
@@ -117,11 +117,11 @@ def test_cpp_rejects_a_non_positive_scale(prepared_model, cpp_module):
 
     with pytest.raises(ValueError, match="must be positive"):
         cpp_module.optimize(
-            params=np.zeros(model.layout.size), t_scaled=model.t_scaled,
-            change_points=model.change_points, t_seasonality=model.t_seasonality,
-            normalized_y=model.normalized_y, sigma_obs_prior_scale=0.5,
+            params=np.zeros(model.layout.size), t=model.t,
+            changepoints_t=model.changepoints_t, t_seasonality=model.t_seasonality,
+            y_scaled=model.y_scaled, sigma_obs_prior_scale=0.5,
             sigma_k=model.sigma_k, sigma_m=model.sigma_m, sigmas=sigmas,
-            tau=model.tau, fourier_orders=[10], seasonality_periods=[365.25])
+            changepoint_prior_scale=model.changepoint_prior_scale, fourier_orders=[10], seasonality_periods=[365.25])
 
 
 # -- the objective and its gradient -------------------------------------
@@ -188,8 +188,9 @@ def test_a_uniform_vector_reproduces_the_old_scalar_term(prepared_model):
     beta = params[model.layout.beta]
 
     scaled = configured(CustomProphet(), {"yearly": seasonality(365.25, 10, prior_scale=1.0)})
-    for attribute in ("t_scaled", "change_points", "t_seasonality", "normalized_y",
-                      "T", "y_absmax", "sigma_k", "sigma_m", "tau"):
+    for attribute in ("t", "changepoints_t", "t_seasonality", "y_scaled",
+                      "T", "y_scale", "sigma_k", "sigma_m", "changepoint_prior_scale",
+                      "ds", "condition_masks"):
         setattr(scaled, attribute, getattr(model, attribute))
     scaled._build_layout()
 
@@ -232,8 +233,8 @@ def test_a_tighter_scale_shrinks_by_the_amount_the_prior_implies(
 
     loose, tight = fit(10.0), fit(scale)
 
-    loose_beta = loose.opt_params[loose.layout.beta]
-    tight_beta = tight.opt_params[tight.layout.beta]
+    loose_beta = loose.params["beta"][0]
+    tight_beta = tight.params["beta"][0]
     ratio = np.max(np.abs(tight_beta[weekly])) / np.max(np.abs(loose_beta[weekly]))
     assert ratio == pytest.approx(expected_ratio, abs=0.01)
 
@@ -263,19 +264,19 @@ def test_matches_the_prior_term_stan_computes(prophet_comparison, compiled_optim
     prophet_model.add_seasonality("weekly", 7, 3, prior_scale=WEEKLY_SCALE)
 
     stan_model, stan_data, _ = bridge.capture_stan_model(prophet_model, df)
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = configured(CustomProphet(), two_scales())
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     # the vector itself, element for element -- ordering included
     np.testing.assert_array_equal(ours.sigmas, np.asarray(stan_data["sigmas"], dtype=float))
 
     rng = np.random.default_rng(0)
-    points = [ours.opt_params]
+    points = [ours.get_parameters()]
     for scale in (0.01, 0.1, 0.5):
-        point = ours.opt_params.copy()
+        point = ours.get_parameters().copy()
         point[:2] += rng.normal(scale=scale, size=2)
         point[ours.layout.delta] += rng.normal(scale=scale * 0.1, size=25)
         point[ours.layout.beta] += rng.normal(scale=scale, size=26)

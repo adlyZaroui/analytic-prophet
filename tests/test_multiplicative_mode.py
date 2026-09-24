@@ -210,7 +210,7 @@ def test_an_explicitly_additive_model_fits_exactly_as_before(peyton_manning_df,
     explicit.seasonality_mode = "additive"
     explicit.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    np.testing.assert_array_equal(default.opt_params, explicit.opt_params)
+    np.testing.assert_array_equal(default.get_parameters(), explicit.get_parameters())
     assert default.opt.n_iterations == explicit.opt.n_iterations
 
 
@@ -271,10 +271,10 @@ def test_objective_and_posterior_agree_with_prophet(prophet_comparison,
     lp_prophet = bridge.validate_bridge(
         stan_model, stan_data, prophet_params,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = multiplicative_model()
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     np.testing.assert_array_equal(ours.s_m, np.asarray(stan_data["s_m"], dtype=float))
@@ -283,7 +283,7 @@ def test_objective_and_posterior_agree_with_prophet(prophet_comparison,
     rng = np.random.default_rng(0)
     sums = []
     for scale in (0.0, 0.05, 0.3):
-        point = ours.opt_params.copy()
+        point = ours.get_parameters().copy()
         if scale:
             point[:2] += rng.normal(scale=scale, size=2)
             point[ours.layout.delta] += rng.normal(scale=scale * 0.1, size=25)
@@ -299,7 +299,7 @@ def test_objective_and_posterior_agree_with_prophet(prophet_comparison,
     assert abs(sums[0]) < 1e-3, f"objectives differ by {sums[0]} at the optimum"
     assert max(sums) - min(sums) < 1e-2, f"the difference varies across points: {sums}"
 
-    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.opt_params[0],
-                                   ours.opt_params[1], ours.opt_params[ours.layout.delta],
-                                   ours.sigma_obs, ours.opt_params[ours.layout.beta])
+    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
+                                   ours.params["m"][0][0], ours.params["delta"][0],
+                                   ours.sigma_obs, ours.params["beta"][0])
     assert lp_ours >= lp_prophet - 1e-6

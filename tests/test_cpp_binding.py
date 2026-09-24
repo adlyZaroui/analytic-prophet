@@ -45,15 +45,15 @@ def call_kwargs(prepared_model):
     """A valid optimize() call, for tests that then break one argument."""
     return {
         "params": _valid_params(),
-        "t_scaled": prepared_model.t_scaled,
-        "change_points": prepared_model.change_points,
+        "t": prepared_model.t,
+        "changepoints_t": prepared_model.changepoints_t,
         "t_seasonality": prepared_model.t_seasonality,
-        "normalized_y": prepared_model.normalized_y,
+        "y_scaled": prepared_model.y_scaled,
         "sigma_obs_prior_scale": SIGMA_OBS_PRIOR_SCALE,
         "sigma_k": prepared_model.sigma_k,
         "sigma_m": prepared_model.sigma_m,
         "sigmas": prepared_model.sigmas,
-        "tau": prepared_model.tau,
+        "changepoint_prior_scale": prepared_model.changepoint_prior_scale,
         "fourier_orders": [n_yearly],
         "seasonality_periods": [YEARLY_PERIOD],
     }
@@ -102,9 +102,9 @@ def test_optimize_does_not_mutate_the_callers_array(cpp_module, call_kwargs):
 @pytest.mark.parametrize(
     "override, message",
     [
-        ({"tau": 0.0}, "tau must be positive"),
+        ({"changepoint_prior_scale": 0.0}, "changepoint_prior_scale must be positive"),
         ({"sigma_obs_prior_scale": -1.0}, "sigma_obs_prior_scale must be positive"),
-        ({"normalized_y": np.zeros(7)}, "same length"),
+        ({"y_scaled": np.zeros(7)}, "same length"),
         ({"params": np.zeros(3)}, "too short"),
     ],
 )
@@ -119,7 +119,7 @@ def test_invalid_input_raises_instead_of_corrupting_memory(cpp_module, call_kwar
 
 def test_wrong_argument_type_raises_type_error(cpp_module, call_kwargs):
     """ctypes would have tried to reinterpret this as a double pointer."""
-    call_kwargs["t_scaled"] = "not an array"
+    call_kwargs["t"] = "not an array"
 
     with pytest.raises(TypeError):
         cpp_module.optimize(**call_kwargs)
@@ -129,7 +129,7 @@ def test_optimize_requires_its_arguments(cpp_module, call_kwargs):
     """A missing argument is an error at the boundary. The ctypes call was
     positional with 19 entries, where a dropped argument shifted everything
     after it."""
-    del call_kwargs["tau"]
+    del call_kwargs["changepoint_prior_scale"]
 
     with pytest.raises(TypeError):
         cpp_module.optimize(**call_kwargs)
@@ -152,7 +152,7 @@ def test_gradient_entry_point_returns_a_tuple(cpp_module, call_kwargs, prepared_
     mlp_with_l1, _ = cpp_module.minus_log_posterior_and_gradient(
         params=point, include_l1_prior=True, **call_kwargs)
 
-    expected_l1 = np.sum(np.abs(np.full(N_CHANGE_POINTS, 0.1))) / prepared_model.tau
+    expected_l1 = np.sum(np.abs(np.full(N_CHANGE_POINTS, 0.1))) / prepared_model.changepoint_prior_scale
     assert mlp_with_l1 - mlp_without_l1 == pytest.approx(expected_l1)
 
 

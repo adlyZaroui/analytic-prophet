@@ -278,10 +278,10 @@ def test_a_regressor_carrying_signal_is_actually_fitted(peyton_manning_df,
     model = CustomProphet().add_regressor("driver")
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    coefficient = model.opt_params[model.layout.holidays][-1]
+    coefficient = model.params["beta"][0][model.layout.holiday_block][-1]
     std = model.extra_regressors["driver"]["std"]
     # beta is in normalized units against the standardized column
-    recovered = coefficient * model.y_absmax / std
+    recovered = coefficient * model.y_scale / std
     assert recovered == pytest.approx(2.0, rel=0.1)
 
 
@@ -302,10 +302,10 @@ def test_design_matrix_sigmas_and_posterior_match_prophets(prophet_comparison,
     lp_prophet = bridge.validate_bridge(
         stan_model, stan_data, prophet_params,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = configure(CustomProphet())
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     _, X_ours = ours._design_matrices()
@@ -320,7 +320,7 @@ def test_design_matrix_sigmas_and_posterior_match_prophets(prophet_comparison,
     np.testing.assert_array_equal(ours.sigmas, np.asarray(stan_data["sigmas"], dtype=float))
     np.testing.assert_array_equal(ours.s_m, np.asarray(stan_data["s_m"], dtype=float))
 
-    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.opt_params[0],
-                                   ours.opt_params[1], ours.opt_params[ours.layout.delta],
-                                   ours.sigma_obs, ours.opt_params[ours.layout.beta])
+    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
+                                   ours.params["m"][0][0], ours.params["delta"][0],
+                                   ours.sigma_obs, ours.params["beta"][0])
     assert lp_ours >= lp_prophet - 1e-6

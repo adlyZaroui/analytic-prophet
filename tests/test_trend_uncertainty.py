@@ -108,9 +108,9 @@ def test_the_number_of_new_changepoints_follows_the_poisson_rate(fitted):
     original, fitted.rng = fitted.rng, recording
     try:
         future = fitted.make_future_dataframe(periods=100)
-        t_scaled = ((pd.to_datetime(future["ds"]) - fitted.ds.min())
+        t = ((pd.to_datetime(future["ds"]) - fitted.ds.min())
                     / (fitted.ds.max() - fitted.ds.min())).values
-        fitted.trend_forecast_uncertainty(t_scaled=t_scaled, n_samples=300)
+        fitted.trend_forecast_uncertainty(t=t, n_samples=300)
     finally:
         fitted.rng = original
 
@@ -118,7 +118,7 @@ def test_the_number_of_new_changepoints_follows_the_poisson_rate(fitted):
     assert len(rates) == 1, "the rate must not vary between draws"
     rate = rates.pop()
 
-    expected = len(fitted.change_points) * (t_scaled.max() - 1.0)
+    expected = len(fitted.changepoints_t) * (t.max() - 1.0)
     assert rate == pytest.approx(expected)
 
     drawn = np.array([count for _, count in recording.counts])
@@ -142,7 +142,7 @@ def test_the_laplace_scale_has_prophets_epsilon(peyton_manning_df,
                           weekly_seasonality=False, daily_seasonality=False)
     model.fit_cpp(straight, lib_path=compiled_optimizer_module)
 
-    assert np.abs(model.opt_params[model.layout.delta]).mean() < 1e-6, (
+    assert np.abs(model.params["delta"][0]).mean() < 1e-6, (
         "the fixture must actually produce a flat delta for this to test anything")
 
     forecast = model.predict(model.make_future_dataframe(periods=180))
@@ -158,13 +158,13 @@ def test_the_laplace_scale_has_prophets_epsilon(peyton_manning_df,
 def test_the_band_is_reproducible_from_the_models_generator(fitted):
     """One of the two draws used the global numpy generator until #52."""
     future = fitted.make_future_dataframe(periods=60)
-    t_scaled = ((pd.to_datetime(future["ds"]) - fitted.ds.min())
+    t = ((pd.to_datetime(future["ds"]) - fitted.ds.min())
                 / (fitted.ds.max() - fitted.ds.min())).values
 
     state = fitted.rng.bit_generator.state
-    _, first = fitted.trend_forecast_uncertainty(t_scaled=t_scaled, n_samples=100)
+    _, first = fitted.trend_forecast_uncertainty(t=t, n_samples=100)
     fitted.rng.bit_generator.state = state
-    _, second = fitted.trend_forecast_uncertainty(t_scaled=t_scaled, n_samples=100)
+    _, second = fitted.trend_forecast_uncertainty(t=t, n_samples=100)
 
     np.testing.assert_array_equal(first, second)
 
@@ -172,14 +172,14 @@ def test_the_band_is_reproducible_from_the_models_generator(fitted):
 # -- #35, fixed alongside -----------------------------------------------
 
 def test_predict_does_not_write_into_the_callers_frame(fitted):
-    """#35: predict added a `t_scaled` column to the frame it was handed."""
+    """#35: predict added a `t` column to the frame it was handed."""
     future = fitted.make_future_dataframe(periods=30)
     before = list(future.columns)
 
     fitted.predict(future)
 
     assert list(future.columns) == before
-    assert "t_scaled" not in future.columns
+    assert "t" not in future.columns
 
 
 def test_predict_does_not_write_into_a_frame_carrying_extra_columns(
