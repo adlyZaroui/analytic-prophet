@@ -448,11 +448,32 @@ The two agree to **1.5e-8** relative on the full series.
 
 ## Where this deviates on purpose
 
-One deviation is a decision rather than an outstanding gap, and it is recorded here
-because it was implemented, measured and then reverted.
+Two deviations are decisions rather than outstanding gaps. Both were measured before
+being settled.
 
-**The Fourier basis is evaluated in a different order from Prophet's.** This
-implementation folds the frequency into one constant, `(2π/period) · t·(i+1)`; Prophet
+### A model with no seasonality fits `K = 0`, where Prophet fits `K = 1`
+
+Stan declares `K` as `int<lower=1>`, so Prophet cannot hand it an empty design matrix:
+[fc] `make_all_seasonality_features` appends a `zeros` column with prior scale `1.0` —
+*"Dummy to prevent empty X"*. This implementation allows `K = 0` and fits one parameter
+fewer.
+
+That is only safe if the padding column does nothing, which is now measured rather than
+argued. It is identically zero **and** carries `s_a = s_m = 0`, so it enters neither
+`X_sa` nor `X_sm` and cannot touch the likelihood at any `β`. Its only term is
+`normal(0, 1)`, costing `β²/2` — verified at `β = 0.5, 1.0, 2.0` against Stan's own
+`log_prob`, giving 0.125, 0.500 and 2.000 exactly. At the `β = 0` where Prophet's fit
+puts it, the cost is zero.
+
+And the fits agree. Trend-plus-noise under flat growth, at T = 300, 400 and 1000:
+identical `lp__` to Stan's full printed precision and identical forecasts. Under linear
+growth ours is ahead by 1.3–3.8 nats, which is the usual margin on the trend's flat
+directions — the same thing [flat growth](#flat-growth-is-an-exact-tie-and-that-is-the-point)
+shows from the other side.
+
+### The Fourier basis is evaluated in a different order
+
+This implementation folds the frequency into one constant, `(2π/period) · t·(i+1)`; Prophet
 computes `2π·t` and scales it by `(i+1)/period`. The two are the same function in exact
 arithmetic. In floating point they differ by up to **7e-12**, because `t` is days since
 the 1970 epoch, so the angles reach ~15000 radians where one ULP is ~1e-12 in `sin`/`cos`.
@@ -557,7 +578,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 459 tests
+pytest tests/                        # 463 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
@@ -597,6 +618,7 @@ numbers rather than errors.
 | | [#63](https://github.com/adlyZaroui/analytic-prophet/issues/63), [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14a | `yhat`'s interval was the trend's band shifted, so it carried no observation noise — the term that dominates it. Measured at 0.056× Prophet's, an 18-fold overstatement of precision, and in the dangerous direction: too narrow looks reasonable in a way too wide does not. `predict` now draws `yhat` rather than deriving it, which is also what lets a regressor predictor's own uncertainty enter |
 | | [#58](https://github.com/adlyZaroui/analytic-prophet/issues/58), [#35](https://github.com/adlyZaroui/analytic-prophet/issues/35) | The trend interval drew its new changepoints across the whole frame at a per-point rate, so most landed *inside* the fitted history and every draw rewrote the past before extrapolating from it — a band ~170× Prophet's, wider than the data. Placed as Prophet's Poisson process on `(1, T]` instead, which brings it to 1.2×, the residual being our own `mean\|delta\|`. `predict` also stopped writing a `t_scaled` column into the caller's frame |
 | | [#52](https://github.com/adlyZaroui/analytic-prophet/issues/52) | The constructor took no arguments, so every setting was an attribute assigned afterwards and a ported Prophet script had to be rewritten line by line. Wiring `interval_width` and `uncertainty_samples` into it exposed three defects in the method they feed: quantiles hardcoded at 95% where Prophet's default is 80%, one draw taken from the global numpy generator so seeding a model did nothing, and `compute_trend` called without the growth mode — a linear band around a logistic fit |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14d | The `K = 0` divergence above was argued rather than measured, which is the one thing every other agreement claim here is not. Measured: the padding column costs exactly `β²/2` and nothing else, and a trend-only fit under flat growth reproduces Prophet's `lp__` exactly |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14 | A model with every seasonality disabled could not fit: the C++ length guard read `params_size < 2 + S + 2`, assuming at least one seasonality column. `K = 0` is trend plus noise, and a model. Found through a nested regressor model on 400 days with weekly turned off, which puts yearly below its threshold too |
 | | [#33](https://github.com/adlyZaroui/analytic-prophet/issues/33), [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 10 | `add_regressor` accepted a `pd.Series` and discarded it, so a caller's regressor was simply absent with no error. The signature could not have worked either: a series carries the history's values and no way to produce the future ones `predict` needs |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 9 | Country holidays, via the `holidays` package rather than by importing anything from Prophet. Frames and name sets checked against Prophet's own helpers for five countries, since the underlying data moves between releases and asserting specific dates would test the package rather than this code |

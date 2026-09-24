@@ -161,6 +161,91 @@ def test_a_model_with_no_seasonality_fits(peyton_manning_df, compiled_optimizer_
     np.testing.assert_array_equal(forecast["seasonality"].values, 0.0)
 
 
+def test_the_dummy_column_prophet_pads_with_costs_exactly_its_prior(prophet_comparison):
+    """#16 task 14d, first half.
+
+    Stan declares `K` as `int<lower=1>`, so Prophet never fits `K = 0`: [fc]
+    make_all_seasonality_features appends a `zeros` column with prior scale 1.0
+    -- "Dummy to prevent empty X". This implementation allows `K = 0` and fits
+    one parameter fewer.
+
+    The claim that this is harmless used to be argued rather than measured. It
+    is measurable: the column is identically zero *and* carries `s_a = s_m = 0`,
+    so it enters neither `X_sa` nor `X_sm` and contributes nothing to the
+    likelihood at any `beta`. Its only term is `normal(0, 1)`, which costs
+    `beta^2 / 2` -- exactly zero at `beta = 0`, where the fit puts it.
+    """
+    Prophet, common, bridge = prophet_comparison
+    df = common.load_data(400)
+    kwargs = dict(common.PROPHET_KWARGS)
+    kwargs.update(yearly_seasonality=False, weekly_seasonality=False,
+                  daily_seasonality=False)
+
+    prophet_model = Prophet(**kwargs)
+    stan_model, stan_data, prophet_params = bridge.capture_stan_model(prophet_model, df)
+
+    # the padding is one all-zero column, in neither mode, at prior scale 1
+    assert stan_data["K"] == 1
+    np.testing.assert_array_equal(np.asarray(stan_data["X"], dtype=float), 0.0)
+    np.testing.assert_array_equal(np.asarray(stan_data["sigmas"], dtype=float), 1.0)
+    np.testing.assert_array_equal(np.asarray(stan_data["s_a"], dtype=float), 0.0)
+    np.testing.assert_array_equal(np.asarray(stan_data["s_m"], dtype=float), 0.0)
+    np.testing.assert_allclose(np.asarray(prophet_params["beta"]).ravel(), 0.0, atol=1e-8)
+
+    def score(beta):
+        return bridge.stan_log_prob(stan_model, stan_data, prophet_params["k"][0],
+                                    prophet_params["m"][0], prophet_params["delta"],
+                                    prophet_params["sigma_obs"][0], [beta])
+
+    at_zero = score(0.0)
+    for beta in (0.5, 1.0, 2.0):
+        # normal(0, 1) on one coefficient, so the cost is beta^2 / 2 and
+        # nothing else -- if the column touched the likelihood it would not be
+        assert at_zero - score(beta) == pytest.approx(beta ** 2 / 2, rel=1e-6)
+
+
+@pytest.mark.parametrize("n_rows", [300, 400, 1000])
+def test_a_trend_only_fit_is_prophets_fit(prophet_comparison, compiled_optimizer_module,
+                                          n_rows):
+    """#16 task 14d, second half: the fits themselves, not just the column.
+
+    Under flat growth the two are identical -- same `lp__` to Stan's full
+    printed precision, same forecast -- which is what says our one-shorter
+    vector is the same model. Under linear growth ours is ahead by 1.3 to 3.8
+    nats, the usual margin on the trend's flat directions (#56 measured the
+    same thing from the other side: remove those directions and the gap
+    disappears).
+
+    The comparison needs `beta = [0]` supplied on our side, since our vector
+    has no seasonality entry at all.
+    """
+    Prophet, common, bridge = prophet_comparison
+    df = common.load_data(n_rows)
+    kwargs = dict(common.PROPHET_KWARGS)
+    kwargs.update(yearly_seasonality=False, weekly_seasonality=False,
+                  daily_seasonality=False, growth="flat")
+
+    prophet_model = Prophet(**kwargs)
+    stan_model, stan_data, prophet_params = bridge.capture_stan_model(prophet_model, df)
+    lp_prophet = bridge.validate_bridge(
+        stan_model, stan_data, prophet_params,
+        float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
+    t_change = np.asarray(stan_data["t_change"], dtype=float)
+
+    ours = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
+                         daily_seasonality=False, growth="flat")
+    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+
+    assert ours.layout.n_regressor_columns == 0
+    assert len(ours.opt_params) == len(prophet_params["delta"]) + 3   # one shorter
+
+    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.opt_params[0],
+                                   ours.opt_params[1], ours.opt_params[ours.layout.delta],
+                                   ours.sigma_obs, [0.0])
+    assert lp_ours == pytest.approx(lp_prophet, abs=1e-6)
+
+
 def test_layout_follows_the_registered_seasonalities(peyton_manning_df,
                                                      compiled_optimizer_module):
     model = CustomProphet()
