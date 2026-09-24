@@ -89,7 +89,7 @@ def seasonal_block(seasonalities, df):
 def fit_ours(df, lib_path, changepoints_t=None):
     model = CustomProphet()
     if changepoints_t is not None:
-        model._generate_change_points = lambda: setattr(model, "changepoints_t", changepoints_t.copy())
+        model.set_changepoints = lambda: setattr(model, "changepoints_t", changepoints_t.copy())
     model.fit_cpp(df, lib_path=lib_path)
     return model
 

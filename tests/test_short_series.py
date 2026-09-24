@@ -53,7 +53,7 @@ def our_score(bridge, stan_model, stan_data, df, lib_path):
     """
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
     model = CustomProphet(n_changepoints=len(changepoints_t))
-    model._generate_change_points = lambda: setattr(
+    model.set_changepoints = lambda: setattr(
         model, "changepoints_t", changepoints_t.copy())
     model.fit_cpp(df, lib_path=lib_path)
     return model, bridge.stan_log_prob(
@@ -114,21 +114,19 @@ def test_the_compiled_path_converges_on_every_short_series(peyton_manning_df,
     assert np.all(np.isfinite(model.get_parameters()))
 
 
-def test_the_python_path_still_has_one_abnormal_termination(peyton_manning_df):
-    """Pinned rather than fixed, and pinned here because #25 is where someone
-    will look for it.
+def test_the_python_path_converges_on_every_short_series(peyton_manning_df):
+    """`fit()` is the readable reference rather than the deliverable, and it
+    used to terminate ABNORMAL at T = 30.
 
-    `fit()` is the readable reference, not the deliverable, and its convergence
-    tolerances deviate from Stan's (#24) -- which is where this belongs. At
-    T = 30 scipy terminates ABNORMAL. The fit is still usable; the status is
-    not clean.
+    Aligning the changepoint placement with Prophet's (#15) removed that:
+    index-spaced changepoints land on actual observations, so each one has data
+    at it, where a time-spaced changepoint could fall in a gap with nothing
+    nearby. Better-conditioned, and it converges everywhere now.
     """
-    model = CustomProphet()
-    model.fit(peyton_manning_df.iloc[:30].reset_index(drop=True), analytic=True)
-
-    assert not model.opt.success
-    assert np.all(np.isfinite(model.get_parameters())), (
-        "the fit is unusable, not merely untidy -- that would be a different bug")
+    for n_rows in (10, 20, 30, 50, 75, 99, 100):
+        model = CustomProphet()
+        model.fit(peyton_manning_df.iloc[:n_rows].reset_index(drop=True), analytic=True)
+        assert model.opt.success, f"scipy reports {model.opt.message} at T={n_rows}"
 
 
 def test_prophets_cutoff_is_strict(prophet_comparison):

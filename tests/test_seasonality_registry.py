@@ -234,7 +234,7 @@ def test_a_trend_only_fit_is_prophets_fit(prophet_comparison, compiled_optimizer
 
     ours = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
                          daily_seasonality=False, growth="flat")
-    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
+    ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert ours.layout.n_regressor_columns == 0

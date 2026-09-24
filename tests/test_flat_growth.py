@@ -214,7 +214,7 @@ def test_the_fit_is_prophets_fit_exactly(prophet_comparison, compiled_optimizer_
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = flat_model()
-    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
+    ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
@@ -242,7 +242,7 @@ def test_our_objective_is_stans_under_flat_growth(prophet_comparison,
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = flat_model()
-    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
+    ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)

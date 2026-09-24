@@ -46,7 +46,7 @@ def posterior_comparison(df, lib_path):
 
     # our fit, on Prophet's changepoints so delta indexes the same breakpoints
     ours = CustomProphet()
-    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
+    ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=lib_path)
 
     X_ours = np.ascontiguousarray(ours.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
@@ -114,7 +114,7 @@ def short_series_comparison(df, lib_path):
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = CustomProphet(n_changepoints=len(changepoints_t))
-    ours._generate_change_points = lambda: setattr(
+    ours.set_changepoints = lambda: setattr(
         ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=lib_path)
     lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],

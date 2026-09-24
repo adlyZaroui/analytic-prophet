@@ -77,7 +77,7 @@ def prepared_model(peyton_manning_df):
     model.t_seasonality = seasonal_time(model.ds)
     model._normalize_y()
     model._build_layout()
-    model._generate_change_points()
+    model.set_changepoints()
     return model
 
 

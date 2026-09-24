@@ -282,7 +282,7 @@ def test_registry_and_posterior_agree_with_prophet(prophet_comparison,
 
     ours = CustomProphet()
     configure(ours)
-    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
+    ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert list(ours.seasonalities) == list(prophet_model.seasonalities)
