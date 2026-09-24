@@ -19,17 +19,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# the repo root, so `analytic_prophet` imports without an install
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from analytic_prophet import (AnalyticProphet, N_CHANGE_POINTS, n_yearly,  # noqa: E402
+# Both the repo root and benchmark/ reach sys.path through `pythonpath` in
+# pyproject.toml, so a fresh clone runs `pytest` with no install and no
+# PYTHONPATH. benchmark/ is there because the Prophet-comparison plumbing lives
+# with the benchmarks -- that is also where it is exercised interactively, and
+# the agreement tests reuse it rather than keeping a second copy in step.
+from analytic_prophet import (AnalyticProphet, N_CHANGE_POINTS, n_yearly,
                            SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE, CPP_MODULE_NAME,
                            load_cpp_module, seasonal_time, seasonality,
                            condition_matrix, TREND_INDICATORS, YEARLY_PERIOD)
-
-# The Prophet-comparison plumbing lives with the benchmarks, which is also
-# where it is exercised interactively. The agreement tests reuse it rather
-# than keeping a second copy in step.
-sys.path.insert(0, str(Path(__file__).parent.parent / "benchmark"))
 
 DATA_PATH = Path(__file__).parent / "data" / "peyton_manning.csv"
 CPP_SOURCE = Path(__file__).parent.parent / "analytic_prophet" / "optimize.cpp"

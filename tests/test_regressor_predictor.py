@@ -268,11 +268,17 @@ def test_the_regressors_own_uncertainty_widens_the_interval(peyton_manning_df,
     """
     df = driven(peyton_manning_df.iloc[:400].reset_index(drop=True))
 
+    # Same seed on both, so the trend and observation draws are the *same*
+    # sequence and the only difference left is the one being measured. Unseeded
+    # this compared two 400-sample means whose gap is smaller than their own
+    # sampling noise, and failed about one run in four.
     uncertain = AnalyticProphet(uncertainty_samples=400)
+    uncertain.rng = np.random.default_rng(0)
     uncertain.add_regressor("driver", regressor_predictor=True)
     uncertain.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     supplied = AnalyticProphet(uncertainty_samples=400)
+    supplied.rng = np.random.default_rng(0)
     supplied.add_regressor("driver")
     supplied.fit_cpp(df, lib_path=compiled_optimizer_module)
 

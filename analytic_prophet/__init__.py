@@ -21,5 +21,7 @@ test monkeypatching `minimize` or `load_cpp_module`, must import
 facade leaves the module's own global untouched, and the patch silently does
 nothing.
 """
-from .forecaster import *          # noqa: F401,F403
-from .forecaster import AnalyticProphet   # noqa: F401  -- the one that matters
+__version__ = "0.1.0"
+
+from .forecaster import *          # noqa: F401,F403,E402
+from .forecaster import AnalyticProphet   # noqa: F401,E402  -- the one that matters
