@@ -306,6 +306,38 @@ Whether a better MAP point generalizes better is an empirical question requiring
 held-out evaluation, which has not been done. The planned prediction benchmark is where
 that gets settled.
 
+### Short series do not need a second algorithm
+
+Prophet runs **Newton** below 100 observations and L-BFGS at or above, [fc]
+`'Newton' if T < 100 else 'LBFGS'`, retrying with Newton if the first attempt raises.
+[#25](https://github.com/adlyZaroui/analytic-prophet/issues/25) was filed on the
+reasonable premise that running a different algorithm meant we could not expect matching
+parameters on short series, and it proposed measuring before deriving a Hessian.
+
+The measurement inverts the premise. Scored under Stan's own density:
+
+| T | Prophet, Newton | Prophet, L-BFGS | this implementation |
+|---|---|---|---|
+| 20 | 74.40912 | 73.93879 | **74.89546** |
+| 30 | 91.61102 | 91.13599 | **91.61988** |
+| 50 | 139.93934 | 139.55784 | **139.95119** |
+| 75 | 185.66277 | 184.26281 | **185.66397** |
+| 99 | 246.80793 | 246.38023 | **246.82546** |
+| 150 | 380.44485 | 379.47301 | **380.56898** |
+
+Prophet's Newton beats Prophet's L-BFGS at every size, which is why the switch exists.
+This implementation's L-BFGS-B beats Prophet's Newton at every size, including below 100.
+Adopting Newton for short series would cost accuracy rather than buy it.
+
+That is not a claim about Newton as a method. It is a claim about this objective: the
+Laplace prior makes it non-differentiable exactly where the optimum sits, the
+[split reformulation](#the-fix-a-smooth-reformulation) removes that, and Stan's own
+convergence criteria stop the run in the right place. Prophet's L-BFGS runs on the
+unreformulated problem, which is what its Newton fallback is for.
+
+The fallback itself is still unmatched, and `fit_cpp` reports convergence at every size
+down to ten observations — so there is nothing yet for one to catch.
+
 ### Flat growth is an exact tie, and that is the point
 
 Every comparison above ends with our posterior a few nats ahead, attributed throughout
@@ -550,9 +582,10 @@ Tracked, deliberate, and not yet closed:
 - **Algorithm selection for short series**
   ([#25](https://github.com/adlyZaroui/analytic-prophet/issues/25)). Prophet uses
   **Newton** when `T < 100` and falls back to Newton when L-BFGS raises. This
-  implementation is L-BFGS-only and has no fallback. Related: on short series the Python
-  path takes 20–40× more iterations than on a series six times longer, and at `T = 100`
-  L-BFGS-B terminates with `ABNORMAL_TERMINATION_IN_LNSRCH`.
+  implementation is L-BFGS-only and has no fallback. Measured rather than assumed to
+  matter — see [Short series](#short-series-do-not-need-a-second-algorithm) — and it
+  does not: our optimum is the better one at every size tested. What remains unmatched
+  is the *fallback*, which currently has nothing to catch.
 - **The Python path's convergence tolerances**
   ([#24](https://github.com/adlyZaroui/analytic-prophet/issues/24)) deviate from Stan's,
   because Stan's values make scipy stall on the split reformulation.
@@ -595,7 +628,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 507 tests
+pytest tests/                        # 526 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite

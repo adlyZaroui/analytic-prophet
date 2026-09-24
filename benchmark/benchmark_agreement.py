@@ -91,6 +91,38 @@ def prediction_comparison(df, lib_path, horizon):
     }
 
 
+def short_series_comparison(df, lib_path):
+    """Our optimum against *both* of Prophet's algorithms.
+
+    [fc] the backend runs Newton below 100 observations and L-BFGS at or above
+    it, so a short series is not being fitted by the same method at all. #25
+    asked which of them we should match; this is the answer.
+    """
+    from prophet import Prophet
+    from customProphet import CustomProphet
+
+    scores = {}
+    for algorithm in ("Newton", "LBFGS"):
+        prophet_model = Prophet(**common.PROPHET_KWARGS)
+        stan_model, stan_data, params = bridge.capture_stan_model(
+            prophet_model, df, algorithm=algorithm)
+        reported = float(np.asarray(prophet_model.params["lp__"]).ravel()[0])
+        scores[algorithm] = (stan_model, stan_data,
+                             bridge.validate_bridge(stan_model, stan_data, params, reported))
+
+    stan_model, stan_data, lp_newton = scores["Newton"]
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
+
+    ours = CustomProphet(n_changepoints=len(changepoints_t))
+    ours._generate_change_points = lambda: setattr(
+        ours, "changepoints_t", changepoints_t.copy())
+    ours.fit_cpp(df, lib_path=lib_path)
+    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
+                                   ours.params["m"][0][0], ours.params["delta"][0],
+                                   ours.sigma_obs, ours.params["beta"][0])
+    return lp_newton, scores["LBFGS"][2], lp_ours
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -132,6 +164,17 @@ def main():
             cells = "".join(f"{mx * 100:11.3f}% ({mn * 100:.3f}%)" for mx, mn in
                             (r["yhat"], r["trend"], r["seasonality"]))
             print(f"{size:>6} {cells}")
+        print()
+        print("3. SHORT SERIES -- against both of Prophet's algorithms")
+        print("   it runs Newton below 100 observations, L-BFGS at or above (#25)")
+        print()
+        print(f"{'T':>6} {'newton':>13} {'lbfgs':>13} {'ours':>13} {'ours - newton':>15}")
+        print("-" * 64)
+        for size in (20, 30, 50, 75, 99, 150):
+            df = common.load_data(size)
+            lp_newton, lp_lbfgs, lp_ours = short_series_comparison(df, lib_path)
+            print(f"{size:>6} {lp_newton:13.5f} {lp_lbfgs:13.5f} {lp_ours:13.5f} "
+                  f"{lp_ours - lp_newton:+15.5f}")
     return 0
 
 
