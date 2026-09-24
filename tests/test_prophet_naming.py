@@ -25,8 +25,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import customProphet
-from customProphet import CustomProphet
+from analytic_prophet import forecaster
+from analytic_prophet import AnalyticProphet
 
 
 # ours -> Prophet's, for things that now share a name
@@ -71,13 +71,13 @@ def prophet_class(prophet_comparison):
 def test_a_shared_attribute_exists_on_both(prophet_class, name):
     """Fails if either side renames it, which is the whole point of the
     module: the gap closed in #54 must not reopen silently."""
-    assert hasattr(CustomProphet(), name), f"{name} is gone from this implementation"
+    assert hasattr(AnalyticProphet(), name), f"{name} is gone from this implementation"
     assert hasattr(prophet_class(), name), f"{name} is gone from Prophet"
 
 
 @pytest.mark.parametrize("name", SHARED_CALLABLES)
 def test_a_shared_callable_exists_on_both(prophet_class, name):
-    ours = getattr(CustomProphet, name, None) or getattr(customProphet, name, None)
+    ours = getattr(AnalyticProphet, name, None) or getattr(forecaster, name, None)
     theirs = getattr(prophet_class, name, None)
 
     assert callable(ours), f"{name} is gone from this implementation"
@@ -91,11 +91,11 @@ def test_a_deliberate_difference_is_still_different(prophet_class, ours, expecte
     convergence is as much a surprise as a silent divergence.
     """
     theirs, _reason = expected
-    assert hasattr(CustomProphet(), ours) or hasattr(customProphet, ours), ours
+    assert hasattr(AnalyticProphet(), ours) or hasattr(forecaster, ours), ours
 
     if theirs is None or "[" in theirs:
         return
-    assert not hasattr(CustomProphet(), theirs), (
+    assert not hasattr(AnalyticProphet(), theirs), (
         f"{ours} and {theirs} now both exist here; DELIBERATE says they should "
         f"not, so either the entry is stale or this was an accident")
 
@@ -119,7 +119,7 @@ def test_the_renamed_quantities_hold_what_prophet_holds(prophet_comparison,
     prophet_model = Prophet(**common.PROPHET_KWARGS)
     _, stan_data, _ = bridge.capture_stan_model(prophet_model, df)
 
-    ours = CustomProphet()
+    ours = AnalyticProphet()
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     # y_scale: the divisor, shared name as of #54
@@ -141,10 +141,10 @@ def test_fourier_series_matches_prophets_under_the_shared_name(prophet_class,
                                                                peyton_manning_df):
     """Renamed from `fourier_components` in #54. Accessed through the class on
     Prophet's side, so the names cannot shadow each other here."""
-    from customProphet import seasonal_time
+    from analytic_prophet import seasonal_time
 
     dates = pd.to_datetime(peyton_manning_df["ds"])
-    ours = customProphet.fourier_series(seasonal_time(dates), 365.25, 10)
+    ours = forecaster.fourier_series(seasonal_time(dates), 365.25, 10)
     theirs = prophet_class.fourier_series(dates, 365.25, 10)
 
     assert ours.shape == theirs.shape
@@ -157,6 +157,6 @@ def test_the_signature_of_each_shared_callable_is_compatible(prophet_class):
     parameter *we* require, Prophet also has, so a call written against their
     documentation does not fail on an argument name."""
     for name in ("add_seasonality", "add_regressor", "add_country_holidays"):
-        ours = set(inspect.signature(getattr(CustomProphet, name)).parameters) - {"self"}
+        ours = set(inspect.signature(getattr(AnalyticProphet, name)).parameters) - {"self"}
         theirs = set(inspect.signature(getattr(prophet_class, name)).parameters) - {"self"}
         assert ours <= theirs, f"{name} takes {sorted(ours - theirs)}, which Prophet does not"

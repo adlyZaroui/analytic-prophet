@@ -22,11 +22,11 @@ namespace py = pybind11;
 
 // Column-for-column identical to Prophet's fourier_series: sin(order i) at
 // column 2i, cos(order i) at 2i+1, with t_days measured from the Unix epoch.
-// Must stay in lockstep with fourier_series() in customProphet.py --
+// Must stay in lockstep with fourier_series() in analytic_prophet/forecaster.py --
 // tests/test_prophet_agreement.py compares both against Prophet's own matrix.
 Eigen::MatrixXd fourier_series(const Eigen::VectorXd& t_days, double period, int n) {
     // `2*pi/period` folded into one constant, matching
-    // customProphet.fourier_series rather than Prophet's operation order.
+    // fourier_series rather than Prophet's operation order.
     // Deliberate -- see README, "Where this deviates on purpose".
     Eigen::VectorXd orders = Eigen::VectorXd::LinSpaced(n, 1, n) * (2 * M_PI / period);
     Eigen::MatrixXd angles = t_days * orders.transpose();
@@ -711,7 +711,7 @@ Eigen::MatrixXd finite_difference_hessian(
 
 // [fc] CmdStanPyBackend.fit runs Stan's Newton below 100 observations and
 // L-BFGS at or above, retrying with Newton if the first attempt raises. This
-// is that Newton. Its Python twin is projected_newton() in customProphet.py.
+// is that Newton. Its Python twin is projected_newton() in analytic_prophet/forecaster.py.
 OptimizeResult newton(Eigen::VectorXd params,
                       const Eigen::Ref<const Eigen::VectorXd>& t,
                       const Eigen::Ref<const Eigen::VectorXd>& changepoints_t,

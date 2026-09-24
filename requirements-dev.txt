@@ -1,4 +1,4 @@
-# Dependencies for running the reference implementation in legacy/ and its
+# Dependencies for running the reference implementation in analytic_prophet/ and its
 # tests. Temporary: superseded once a pyproject.toml declares the package's
 # real dependencies.
 
@@ -15,7 +15,7 @@ pytest
 # all work without it, so a user who needs none of those needs none of this.
 holidays
 
-# Build-time dependency of the C++ core (legacy/optimize.cpp). Headers only --
+# Build-time dependency of the C++ core (analytic_prophet/optimize.cpp). Headers only --
 # nothing imports pybind11 at runtime, but the extension cannot be compiled
 # without it.
 pybind11

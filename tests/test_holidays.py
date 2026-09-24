@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import (CustomProphet, make_holiday_features, validate_holidays_frame)
+from analytic_prophet import (AnalyticProphet, make_holiday_features, validate_holidays_frame)
 
 YEARS = range(2008, 2017)
 
@@ -57,7 +57,7 @@ def two_holidays():
 # -- validating the frame -----------------------------------------------
 
 def test_a_frame_without_the_required_columns_is_rejected():
-    model = CustomProphet()
+    model = AnalyticProphet()
     with pytest.raises(ValueError, match='"ds" and "holiday" columns'):
         model.add_holidays(pd.DataFrame({"holiday": ["x"]}))
     with pytest.raises(ValueError, match='"ds" and "holiday" columns'):
@@ -66,7 +66,7 @@ def test_a_frame_without_the_required_columns_is_rejected():
 
 def test_a_nan_anywhere_in_the_frame_is_rejected():
     with pytest.raises(ValueError, match="Found a NaN"):
-        CustomProphet().add_holidays(pd.DataFrame(
+        AnalyticProphet().add_holidays(pd.DataFrame(
             {"holiday": ["x", None], "ds": pd.to_datetime(["2020-01-01", "2020-01-02"])}))
 
 
@@ -74,7 +74,7 @@ def test_one_window_without_the_other_is_rejected():
     """[fc] "Holidays must have both lower_window and upper_window, or neither"."""
     frame = superbowls().drop(columns=["upper_window"])
     with pytest.raises(ValueError, match="both lower_window and upper_window"):
-        CustomProphet().add_holidays(frame)
+        AnalyticProphet().add_holidays(frame)
 
 
 @pytest.mark.parametrize("lower,upper,message", [
@@ -83,16 +83,16 @@ def test_one_window_without_the_other_is_rejected():
 ])
 def test_windows_must_point_the_right_way(lower, upper, message):
     with pytest.raises(ValueError, match=message):
-        CustomProphet().add_holidays(superbowls(lower, upper))
+        AnalyticProphet().add_holidays(superbowls(lower, upper))
 
 
 def test_a_holiday_may_not_take_a_reserved_or_taken_name():
     """The same validate_column_name add_seasonality uses (#16 task 6), so a
     holiday cannot shadow a seasonality or a predict() output column."""
     with pytest.raises(ValueError, match="reserved"):
-        CustomProphet().add_holidays(superbowls().assign(holiday="trend"))
+        AnalyticProphet().add_holidays(superbowls().assign(holiday="trend"))
 
-    model = CustomProphet().add_seasonality("monthly", 30.5, 5)
+    model = AnalyticProphet().add_seasonality("monthly", 30.5, 5)
     with pytest.raises(ValueError, match="already used for a seasonality"):
         model.add_holidays(superbowls().assign(holiday="monthly"))
 
@@ -100,12 +100,12 @@ def test_a_holiday_may_not_take_a_reserved_or_taken_name():
 def test_the_same_holiday_may_repeat_across_years():
     """check_holidays=False on the name check: repeating a holiday is how its
     occurrences are listed, and must not read as a collision."""
-    frame = validate_holidays_frame(superbowls(), CustomProphet().validate_column_name)
+    frame = validate_holidays_frame(superbowls(), AnalyticProphet().validate_column_name)
     assert len(frame) == len(list(YEARS))
 
 
 def test_adding_holidays_after_a_fit_is_refused(peyton_manning_df, compiled_optimizer_module):
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     with pytest.raises(RuntimeError, match="before fitting"):
@@ -115,15 +115,15 @@ def test_adding_holidays_after_a_fit_is_refused(peyton_manning_df, compiled_opti
 def test_holidays_mode_is_validated_and_accepted():
     """Refused as unimplemented until task 11; fitted now."""
     with pytest.raises(ValueError, match='"additive" or "multiplicative"'):
-        CustomProphet().add_holidays(superbowls(), mode="sideways")
+        AnalyticProphet().add_holidays(superbowls(), mode="sideways")
 
-    model = CustomProphet().add_holidays(superbowls(), mode="multiplicative")
+    model = AnalyticProphet().add_holidays(superbowls(), mode="multiplicative")
     assert model.holidays_mode == "multiplicative"
 
 
 def test_a_non_positive_prior_scale_is_refused():
     with pytest.raises(ValueError, match="Prior scale must be > 0"):
-        CustomProphet().add_holidays(superbowls(), prior_scale=0)
+        AnalyticProphet().add_holidays(superbowls(), prior_scale=0)
 
 
 # -- building the columns -----------------------------------------------
@@ -203,10 +203,10 @@ def test_holiday_columns_extend_the_parameter_vector(peyton_manning_df,
                                                      compiled_optimizer_module):
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
-    plain = CustomProphet()
+    plain = AnalyticProphet()
     plain.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    with_holidays = CustomProphet().add_holidays(two_holidays())
+    with_holidays = AnalyticProphet().add_holidays(two_holidays())
     with_holidays.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     layout = with_holidays.layout
@@ -224,7 +224,7 @@ def test_the_holiday_prior_scale_lands_on_the_holiday_columns(peyton_manning_df,
     holidays_prior_scale, the seasonal block seasonality_prior_scale."""
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
-    model = CustomProphet().add_holidays(two_holidays(), prior_scale=3.0)
+    model = AnalyticProphet().add_holidays(two_holidays(), prior_scale=3.0)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert model.sigmas.shape == (model.layout.n_regressor_columns,)
@@ -236,7 +236,7 @@ def test_the_two_layout_slices_are_not_interchangeable():
     """`holidays` indexes the parameter vector, `holiday_block` the design
     matrix and sigmas. They differ by 3 + S, and mixing them returns a wrong
     slice silently rather than raising -- which is what this pins."""
-    from customProphet import ParameterLayout
+    from analytic_prophet import ParameterLayout
     layout = ParameterLayout(25, 26, 6)
 
     assert layout.holidays == slice(54, 60)
@@ -250,10 +250,10 @@ def test_both_objectives_agree_with_holidays(peyton_manning_df, cpp_mlp_and_grad
     """The holiday block is passed to the C++ rather than rebuilt there, since
     indicator columns are data and not derivable from a period. Python and C++
     must still land on the same matrix."""
-    from customProphet import canonical_to_cpp
+    from analytic_prophet import canonical_to_cpp
 
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
-    model = CustomProphet().add_holidays(two_holidays())
+    model = AnalyticProphet().add_holidays(two_holidays())
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)
@@ -283,7 +283,7 @@ def test_a_holiday_effect_is_actually_fitted(peyton_manning_df, compiled_optimiz
 
     frame = pd.DataFrame({"holiday": "bump", "ds": bump_dates,
                           "lower_window": 0, "upper_window": 0})
-    model = CustomProphet().add_holidays(frame)
+    model = AnalyticProphet().add_holidays(frame)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     coefficients = model.params["beta"][0][model.layout.holiday_block]
@@ -297,7 +297,7 @@ def test_a_holiday_effect_is_actually_fitted(peyton_manning_df, compiled_optimiz
 
 def test_predict_carries_the_holiday_columns(peyton_manning_df, compiled_optimizer_module):
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
-    model = CustomProphet().add_holidays(two_holidays())
+    model = AnalyticProphet().add_holidays(two_holidays())
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     forecast = model.predict(model.make_future_dataframe(periods=60))
@@ -311,7 +311,7 @@ def test_predict_drops_a_holiday_the_fit_never_saw(peyton_manning_df,
     """[fc] construct_holiday_dataframe drops names absent from training --
     there is no coefficient for them, so including them would misalign beta."""
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
-    model = CustomProphet().add_holidays(superbowls(-1, 1))
+    model = AnalyticProphet().add_holidays(superbowls(-1, 1))
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
     fitted_columns = model.layout.n_holiday_columns
 
@@ -329,7 +329,7 @@ def test_a_training_holiday_absent_from_the_future_keeps_its_empty_column(
     """[fc] holidays_to_add with ds as NA. The column must stay so `beta` keeps
     its alignment, even with nothing in it."""
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
-    model = CustomProphet().add_holidays(two_holidays())
+    model = AnalyticProphet().add_holidays(two_holidays())
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     far_future = pd.DataFrame({"ds": pd.date_range("2030-06-01", periods=30)})
@@ -353,7 +353,7 @@ def test_design_matrix_and_sigmas_match_prophets(prophet_comparison,
     _, stan_data, _ = bridge.capture_stan_model(prophet_model, df)
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
-    ours = CustomProphet().add_holidays(frame)
+    ours = AnalyticProphet().add_holidays(frame)
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
@@ -392,7 +392,7 @@ def test_our_objective_is_stans_with_holidays(prophet_comparison,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
-    ours = CustomProphet().add_holidays(frame)
+    ours = AnalyticProphet().add_holidays(frame)
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 

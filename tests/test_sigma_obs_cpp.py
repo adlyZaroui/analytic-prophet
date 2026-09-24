@@ -16,7 +16,7 @@ the MLE it converges to is exactly the value that term balances against.
 import numpy as np
 import pytest
 
-from customProphet import (CustomProphet, BETA_SLICE, DELTA_SLICE, N_CHANGE_POINTS,
+from analytic_prophet import (AnalyticProphet, BETA_SLICE, DELTA_SLICE, N_CHANGE_POINTS,
                            SIGMA_OBS_IDX, canonical_to_cpp, cpp_to_canonical,
                            fourier_series, n_yearly, YEARLY_PERIOD)
 from conftest import pin_yearly_only
@@ -67,7 +67,7 @@ def test_fitted_sigma_obs_approaches_the_gaussian_mle(peyton_manning_df, compile
     more data gets closer: the ratio is 0.9958 at T=150, 0.9997 at T=300 and
     1.00008 at T=600.
     """
-    model = pin_yearly_only(CustomProphet())
+    model = pin_yearly_only(AnalyticProphet())
     # seasonality_prior_scale, not `sigma`: the latter was removed in #45 when
     # the prior scale became per column, so setting it here made an unused
     # attribute and left beta's prior at its real 10.0 -- defeating the premise
@@ -110,7 +110,7 @@ def test_fit_cpp_estimates_sigma_obs_rather_than_taking_it_as_given(peyton_manni
 
     fits = []
     for preset in (1.0, 0.5):
-        model = pin_yearly_only(CustomProphet())
+        model = pin_yearly_only(AnalyticProphet())
         model.sigma_obs = preset   # used to be the value the C++ optimized against
         model.fit_cpp(small_df, lib_path=compiled_optimizer_module)
         fits.append(model.sigma_obs)

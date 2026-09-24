@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import CustomProphet
+from analytic_prophet import AnalyticProphet
 
 
 def driven(df):
@@ -39,7 +39,7 @@ def driven(df):
 # -- registering --------------------------------------------------------
 
 def test_no_predictor_by_default():
-    model = CustomProphet().add_regressor("driver")
+    model = AnalyticProphet().add_regressor("driver")
     assert model.extra_regressors["driver"]["predictor_spec"] is None
     assert model.extra_regressors["driver"]["predictor"] is None
 
@@ -52,7 +52,7 @@ def test_no_predictor_by_default():
 ])
 def test_a_truthy_non_dict_means_default_settings(argument, expected):
     """[fc] `if isinstance(regressor_predictor, dict)` ... `else {}`."""
-    model = CustomProphet().add_regressor("driver", regressor_predictor=argument)
+    model = AnalyticProphet().add_regressor("driver", regressor_predictor=argument)
     assert model.extra_regressors["driver"]["predictor_spec"] == expected
 
 
@@ -61,7 +61,7 @@ def test_an_unsupported_setting_is_rejected():
     know. Until #52 this ran against a hand-kept whitelist, which was a second
     list of settable arguments maintained alongside the first."""
     with pytest.raises(TypeError, match="unexpected keyword"):
-        CustomProphet().add_regressor("driver",
+        AnalyticProphet().add_regressor("driver",
                                       regressor_predictor={"not_a_setting": 1})
 
 
@@ -70,7 +70,7 @@ def test_a_setting_prophet_has_and_this_rejects_still_rejects():
     The refusal has to reach the spec too, rather than being accepted there
     and failing later inside the nested fit."""
     with pytest.raises(NotImplementedError, match="MAP only"):
-        CustomProphet().add_regressor("driver",
+        AnalyticProphet().add_regressor("driver",
                                       regressor_predictor={"mcmc_samples": 100})
 
 
@@ -79,11 +79,11 @@ def test_a_setting_prophet_has_and_this_rejects_still_rejects():
 def test_the_nested_model_is_fitted_at_fit_time(peyton_manning_df,
                                                 compiled_optimizer_module):
     df = driven(peyton_manning_df.iloc[:1000].reset_index(drop=True))
-    model = CustomProphet().add_regressor("driver", regressor_predictor=True)
+    model = AnalyticProphet().add_regressor("driver", regressor_predictor=True)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     predictor = model.extra_regressors["driver"]["predictor"]
-    assert isinstance(predictor, CustomProphet)
+    assert isinstance(predictor, AnalyticProphet)
     assert predictor.get_parameters() is not None
     assert predictor._regressor_name == "driver"     # [fc] marker
 
@@ -94,11 +94,11 @@ def test_the_nested_model_uses_the_same_fit_path(peyton_manning_df,
     would turn one fit into one fast and one slow."""
     df = driven(peyton_manning_df.iloc[:400].reset_index(drop=True))
 
-    compiled = CustomProphet().add_regressor("driver", regressor_predictor=True)
+    compiled = AnalyticProphet().add_regressor("driver", regressor_predictor=True)
     compiled.fit_cpp(df, lib_path=compiled_optimizer_module)
     assert compiled.extra_regressors["driver"]["predictor"]._fitted_with_cpp
 
-    python_path = CustomProphet().add_regressor("driver", regressor_predictor=True)
+    python_path = AnalyticProphet().add_regressor("driver", regressor_predictor=True)
     python_path.fit(df, analytic=True)
     assert not python_path.extra_regressors["driver"]["predictor"]._fitted_with_cpp
 
@@ -106,7 +106,7 @@ def test_the_nested_model_uses_the_same_fit_path(peyton_manning_df,
 def test_the_spec_reaches_the_nested_model(peyton_manning_df,
                                            compiled_optimizer_module):
     df = driven(peyton_manning_df.iloc[:400].reset_index(drop=True))
-    model = CustomProphet().add_regressor(
+    model = AnalyticProphet().add_regressor(
         "driver", regressor_predictor={"n_changepoints": 5, "weekly_seasonality": False})
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
@@ -130,7 +130,7 @@ def test_too_little_data_to_fit_a_nested_model_is_rejected(peyton_manning_df):
     df = driven(peyton_manning_df.iloc[:300].reset_index(drop=True))
     df.loc[df.index[1:], "driver"] = np.nan          # one usable row
 
-    model = CustomProphet().add_regressor("driver", regressor_predictor=True)
+    model = AnalyticProphet().add_regressor("driver", regressor_predictor=True)
     with pytest.raises(ValueError, match="Not enough data to fit regressor model"):
         model._fit_regressor_models(df)
 
@@ -138,7 +138,7 @@ def test_too_little_data_to_fit_a_nested_model_is_rejected(peyton_manning_df):
 def test_a_regressor_without_a_predictor_fits_nothing_extra(peyton_manning_df,
                                                             compiled_optimizer_module):
     df = driven(peyton_manning_df.iloc[:400].reset_index(drop=True))
-    model = CustomProphet().add_regressor("driver")
+    model = AnalyticProphet().add_regressor("driver")
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert model.extra_regressors["driver"]["predictor"] is None
@@ -150,7 +150,7 @@ def test_predict_needs_no_future_values(peyton_manning_df, compiled_optimizer_mo
     """The point of the feature: make_future_dataframe emits only `ds`, and
     that is now enough."""
     df = driven(peyton_manning_df.iloc[:1000].reset_index(drop=True))
-    model = CustomProphet().add_regressor("driver", regressor_predictor=True)
+    model = AnalyticProphet().add_regressor("driver", regressor_predictor=True)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     forecast = model.predict(model.make_future_dataframe(periods=90))
@@ -164,7 +164,7 @@ def test_predict_does_not_write_into_the_callers_frame(peyton_manning_df,
     """The filling happens on a copy. Related to #35, which is about predict
     adding `t` to the frame it is given -- this must not add to it."""
     df = driven(peyton_manning_df.iloc[:400].reset_index(drop=True))
-    model = CustomProphet().add_regressor("driver", regressor_predictor=True)
+    model = AnalyticProphet().add_regressor("driver", regressor_predictor=True)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     future = model.make_future_dataframe(periods=30)
@@ -180,7 +180,7 @@ def test_supplied_values_win_inside_the_history(peyton_manning_df,
     """The nested model fills the future only. What the caller gave for the
     history is what the history gets."""
     df = driven(peyton_manning_df.iloc[:400].reset_index(drop=True))
-    model = CustomProphet().add_regressor("driver", regressor_predictor=True)
+    model = AnalyticProphet().add_regressor("driver", regressor_predictor=True)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     future = model.make_future_dataframe(periods=30)
@@ -196,7 +196,7 @@ def test_history_rows_left_out_come_back_from_the_fit(peyton_manning_df,
     """Not from the nested model: it forecasts, it does not re-explain what
     was observed. [fc] reads them back off self.history."""
     df = driven(peyton_manning_df.iloc[:400].reset_index(drop=True))
-    model = CustomProphet().add_regressor("driver", regressor_predictor=True)
+    model = AnalyticProphet().add_regressor("driver", regressor_predictor=True)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     filled = model._ensure_regressor_values(
@@ -210,7 +210,7 @@ def test_the_nested_forecast_tracks_the_signal(peyton_manning_df,
     """A regressor built from a known trend plus a weekly cycle has to be
     forecast as such, or the nested model is decorative."""
     df = driven(peyton_manning_df.iloc[:1000].reset_index(drop=True))
-    model = CustomProphet().add_regressor("driver", regressor_predictor=True)
+    model = AnalyticProphet().add_regressor("driver", regressor_predictor=True)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     horizon = 90
@@ -241,7 +241,7 @@ def test_the_forecast_agrees_with_prophets(prophet_comparison,
     prophet_forecast = prophet_model.predict(
         prophet_model.make_future_dataframe(periods=90))
 
-    ours = CustomProphet().add_regressor("driver", regressor_predictor=True)
+    ours = AnalyticProphet().add_regressor("driver", regressor_predictor=True)
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
     our_forecast = ours.predict(ours.make_future_dataframe(periods=90))
 
@@ -268,11 +268,11 @@ def test_the_regressors_own_uncertainty_widens_the_interval(peyton_manning_df,
     """
     df = driven(peyton_manning_df.iloc[:400].reset_index(drop=True))
 
-    uncertain = CustomProphet(uncertainty_samples=400)
+    uncertain = AnalyticProphet(uncertainty_samples=400)
     uncertain.add_regressor("driver", regressor_predictor=True)
     uncertain.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    supplied = CustomProphet(uncertainty_samples=400)
+    supplied = AnalyticProphet(uncertainty_samples=400)
     supplied.add_regressor("driver")
     supplied.fit_cpp(df, lib_path=compiled_optimizer_module)
 
@@ -296,7 +296,7 @@ def test_a_regressor_without_a_predictor_adds_no_width(peyton_manning_df,
     """Only the regressors with a nested model vary across draws; one whose
     values the caller supplies is fixed, as it was."""
     df = driven(peyton_manning_df.iloc[:400].reset_index(drop=True))
-    model = CustomProphet(uncertainty_samples=200).add_regressor("driver")
+    model = AnalyticProphet(uncertainty_samples=200).add_regressor("driver")
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert model._regressor_draws(

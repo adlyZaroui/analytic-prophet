@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import (BUILT_IN_NAMES, CustomProphet, RESERVED_COLUMN_NAMES,
+from analytic_prophet import (BUILT_IN_NAMES, AnalyticProphet, RESERVED_COLUMN_NAMES,
                            SIGMA)
 
 def seasonal_block(seasonalities, df):
@@ -33,7 +33,7 @@ def seasonal_block(seasonalities, df):
     holiday and regressor registries too, so a test wanting only the seasonal
     part goes through a model configured with just that.
     """
-    model = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
+    model = AnalyticProphet(yearly_seasonality=False, weekly_seasonality=False,
                           daily_seasonality=False)
     model.seasonalities = seasonalities
     return np.ascontiguousarray(model.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
@@ -77,7 +77,7 @@ def test_accepts_and_rejects_what_prophet_does(prophet_comparison, args, kwargs)
             return type(exc)
         return None
 
-    assert outcome(CustomProphet()) is outcome(Prophet())
+    assert outcome(AnalyticProphet()) is outcome(Prophet())
 
 
 def test_reserved_names_match_prophets_list(prophet_comparison):
@@ -90,14 +90,14 @@ def test_reserved_names_match_prophets_list(prophet_comparison):
         with pytest.raises(ValueError, match="reserved"):
             prophet_model.validate_column_name(name)
         with pytest.raises(ValueError, match="reserved"):
-            CustomProphet().validate_column_name(name)
+            AnalyticProphet().validate_column_name(name)
 
 
 def test_built_in_names_are_exempt_from_the_collision_check():
     """[fc] `if name not in ['daily', 'weekly', 'yearly']` -- registering
     `weekly` twice is how a user raises its Fourier order, so it must not trip
     the "already used for a seasonality" check."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.add_seasonality("weekly", 7, 10)
     model.add_seasonality("weekly", 7, 12)
 
@@ -108,7 +108,7 @@ def test_built_in_names_are_exempt_from_the_collision_check():
 def test_a_name_colliding_with_a_regressor_is_rejected():
     """The check is a no-op today -- extra_regressors is always empty until
     task 10 -- so it is exercised directly rather than through add_regressor."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.extra_regressors = {"temperature": {}}
 
     with pytest.raises(ValueError, match="already used for an added regressor"):
@@ -119,13 +119,13 @@ def test_a_name_colliding_with_a_regressor_is_rejected():
 
 def test_returns_self_so_calls_chain():
     """[fc] returns the Prophet object."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     assert model.add_seasonality("monthly", 30.5, 5) is model
     assert model.add_seasonality("a", 2, 1).add_seasonality("b", 3, 1) is model
 
 
 def test_the_entry_carries_prophets_full_field_set():
-    model = CustomProphet().add_seasonality("monthly", 30.5, 5, prior_scale=2.0)
+    model = AnalyticProphet().add_seasonality("monthly", 30.5, 5, prior_scale=2.0)
     entry = registered(model, "monthly")
 
     assert entry == {"period": 30.5, "fourier_order": 5, "prior_scale": 2.0,
@@ -134,10 +134,10 @@ def test_the_entry_carries_prophets_full_field_set():
 
 def test_prior_scale_falls_back_to_the_model_wide_default():
     """[fc] `ps = self.seasonality_prior_scale` when none is given."""
-    default = CustomProphet().add_seasonality("monthly", 30.5, 5)
+    default = AnalyticProphet().add_seasonality("monthly", 30.5, 5)
     assert registered(default, "monthly")["prior_scale"] == SIGMA
 
-    overridden = CustomProphet()
+    overridden = AnalyticProphet()
     overridden.seasonality_prior_scale = 4.0
     overridden.add_seasonality("monthly", 30.5, 5)
     assert registered(overridden, "monthly")["prior_scale"] == 4.0
@@ -147,7 +147,7 @@ def test_the_model_wide_default_also_reaches_the_auto_selected_components(
         peyton_manning_df, compiled_optimizer_module):
     """[fc] set_auto_seasonalities registers with self.seasonality_prior_scale
     too, so an override is not silently confined to hand-registered ones."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.seasonality_prior_scale = 4.0
     model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
@@ -161,7 +161,7 @@ def test_adding_after_a_fit_is_refused(peyton_manning_df, compiled_optimizer_mod
     """[fc] "Seasonality must be added prior to model fitting." The registry is
     read when the layout is built, so a later addition would be accepted and
     then ignored."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
@@ -176,7 +176,7 @@ def test_every_argument_prophet_accepts_is_now_accepted():
     Both are fitted as of tasks 11 and 7, so the refusals are gone and the
     signature matches Prophet's in what it accepts as well as what it rejects.
     """
-    model = (CustomProphet()
+    model = (AnalyticProphet()
              .add_seasonality("monthly", 30.5, 5, mode="multiplicative")
              .add_seasonality("quarterly", 91.0, 3, condition_name="in_season"))
 
@@ -187,11 +187,11 @@ def test_every_argument_prophet_accepts_is_now_accepted():
 def test_invalid_values_are_still_rejected():
     """Accepting the argument is not accepting anything for it."""
     with pytest.raises(ValueError, match="additive"):
-        CustomProphet().add_seasonality("monthly", 30.5, 5, mode="sideways")
+        AnalyticProphet().add_seasonality("monthly", 30.5, 5, mode="sideways")
     with pytest.raises(ValueError, match="reserved"):
-        CustomProphet().add_seasonality("monthly", 30.5, 5, condition_name="trend")
+        AnalyticProphet().add_seasonality("monthly", 30.5, 5, condition_name="trend")
 
-    model = CustomProphet()
+    model = AnalyticProphet()
     with pytest.raises(ValueError):
         model.add_seasonality("monthly", 30.5, 5, mode="sideways")
     assert model.seasonalities == {}
@@ -203,7 +203,7 @@ def test_a_custom_component_reaches_the_parameter_vector(peyton_manning_df,
                                                          compiled_optimizer_module):
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
-    model = CustomProphet().add_seasonality("monthly", 30.5, 5)
+    model = AnalyticProphet().add_seasonality("monthly", 30.5, 5)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     # registered first, so its block comes first -- auto-selection appends
@@ -216,7 +216,7 @@ def test_a_custom_component_reaches_the_parameter_vector(peyton_manning_df,
 def test_a_custom_component_reaches_predict(peyton_manning_df, compiled_optimizer_module):
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
-    model = CustomProphet().add_seasonality("monthly", 30.5, 5)
+    model = AnalyticProphet().add_seasonality("monthly", 30.5, 5)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
     forecast = model.predict(model.make_future_dataframe(periods=30))
 
@@ -232,7 +232,7 @@ def test_overwriting_a_built_in_survives_auto_selection(peyton_manning_df,
                                                         compiled_optimizer_module):
     """The point of the exemption: a hand-registered `weekly` must not be
     replaced by the order-3 built-in at fit time."""
-    model = CustomProphet().add_seasonality("weekly", 7, 10, prior_scale=3.0)
+    model = AnalyticProphet().add_seasonality("weekly", 7, 10, prior_scale=3.0)
     model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
@@ -248,7 +248,7 @@ def test_a_hand_registered_component_survives_a_refit(peyton_manning_df,
                                                       compiled_optimizer_module):
     """#41: only what the auto rule registered is cleared between fits. A
     component the user added is theirs."""
-    model = CustomProphet().add_seasonality("monthly", 30.5, 5)
+    model = AnalyticProphet().add_seasonality("monthly", 30.5, 5)
     model.fit_cpp(peyton_manning_df, lib_path=compiled_optimizer_module)
     assert list(model.seasonalities) == ["monthly", "yearly", "weekly"]
 
@@ -280,7 +280,7 @@ def test_registry_and_posterior_agree_with_prophet(prophet_comparison,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
-    ours = CustomProphet()
+    ours = AnalyticProphet()
     configure(ours)
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)

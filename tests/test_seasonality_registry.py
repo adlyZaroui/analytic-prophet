@@ -15,8 +15,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import (BUILT_IN_SEASONALITIES, check_seasonality_supported,
-                           CustomProphet, DEFAULT_LAYOUT, ParameterLayout,
+from analytic_prophet import (BUILT_IN_SEASONALITIES, check_seasonality_supported,
+                           AnalyticProphet, DEFAULT_LAYOUT, ParameterLayout,
                            extract_params, fourier_series,
                            from_dict_to_array, n_yearly, N_CHANGE_POINTS, seasonality,
                            seasonality_columns, SIGMA,
@@ -145,7 +145,7 @@ def test_a_model_with_no_seasonality_fits(peyton_manning_df, compiled_optimizer_
     Found via a nested regressor model (#16 task 14) on 400 days with weekly
     turned off, which puts yearly below its threshold too.
     """
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.yearly_seasonality = model.weekly_seasonality = model.daily_seasonality = False
     model.fit_cpp(peyton_manning_df.iloc[:400].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
@@ -232,7 +232,7 @@ def test_a_trend_only_fit_is_prophets_fit(prophet_comparison, compiled_optimizer
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
-    ours = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
+    ours = AnalyticProphet(yearly_seasonality=False, weekly_seasonality=False,
                          daily_seasonality=False, growth="flat")
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
@@ -248,7 +248,7 @@ def test_a_trend_only_fit_is_prophets_fit(prophet_comparison, compiled_optimizer
 
 def test_layout_follows_the_registered_seasonalities(peyton_manning_df,
                                                      compiled_optimizer_module):
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
@@ -281,7 +281,7 @@ def test_cpp_and_python_objectives_agree_with_two_seasonalities(prepared_model,
     expected = model._minus_log_posterior(canonical)
     expected_gradient = model._gradient(canonical)
 
-    from customProphet import canonical_to_cpp
+    from analytic_prophet import canonical_to_cpp
     value, gradient = cpp_mlp_and_gradient(model, canonical_to_cpp(canonical, model.layout))
 
 def seasonal_block(seasonalities, df):
@@ -291,7 +291,7 @@ def seasonal_block(seasonalities, df):
     holiday and regressor registries too, so a test wanting only the seasonal
     part goes through a model configured with just that.
     """
-    model = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
+    model = AnalyticProphet(yearly_seasonality=False, weekly_seasonality=False,
                           daily_seasonality=False)
     model.seasonalities = seasonalities
     return np.ascontiguousarray(model.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
@@ -347,14 +347,14 @@ def test_registering_yearly_explicitly_reproduces_the_default_fit(
     """
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
-    registered = CustomProphet()
+    registered = AnalyticProphet()
     registered.seasonalities = {"yearly": seasonality(YEARLY_PERIOD, n_yearly)}
     registered.weekly_seasonality = False
     registered.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     # the same model reached the other way: let the built-in yearly be selected
     # automatically, and only suppress the weekly the history also supports
-    automatic = CustomProphet()
+    automatic = AnalyticProphet()
     automatic.weekly_seasonality = False
     automatic.fit_cpp(df, lib_path=compiled_optimizer_module)
 
@@ -368,7 +368,7 @@ def test_second_seasonality_reaches_predict(peyton_manning_df, compiled_optimize
     weekly term would have been fit and then dropped from the forecast."""
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
     forecast = model.predict(model.make_future_dataframe(periods=30))
 
@@ -381,7 +381,7 @@ def test_second_seasonality_reaches_predict(peyton_manning_df, compiled_optimize
     by_weekday = pd.Series(history["seasonality"].values).groupby(
         pd.to_datetime(history["ds"]).dt.dayofweek.values).mean()
 
-    yearly_only = CustomProphet()
+    yearly_only = AnalyticProphet()
     yearly_only.weekly_seasonality = False
     yearly_only.fit_cpp(df, lib_path=compiled_optimizer_module)
     yearly_forecast = yearly_only.predict(yearly_only.make_future_dataframe(periods=30))

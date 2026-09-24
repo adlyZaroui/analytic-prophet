@@ -30,11 +30,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import CustomProphet
+from analytic_prophet import AnalyticProphet
 
 
 def changepoints_for(df, **kwargs):
-    model = CustomProphet(**kwargs)
+    model = AnalyticProphet(**kwargs)
     model.y = df["y"].values
     model.ds = pd.to_datetime(df["ds"])
     model.t = np.array((model.ds - model.ds.min()) / (model.ds.max() - model.ds.min()))
@@ -57,7 +57,7 @@ def test_the_changepoints_are_prophets_exactly(prophet_comparison,
     prophet_model = Prophet(**common.PROPHET_KWARGS)
     _, stan_data, _ = bridge.capture_stan_model(prophet_model, df)
 
-    ours = CustomProphet()
+    ours = AnalyticProphet()
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     np.testing.assert_array_equal(ours.changepoints_t,
@@ -137,7 +137,7 @@ def test_the_cap_reaches_the_parameter_vector(peyton_manning_df,
                                               compiled_optimizer_module):
     """The count is capped before the layout is built, or `delta` would be
     sized for a request the placement did not honour."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df.iloc[:20].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
@@ -162,7 +162,7 @@ def test_an_explicit_list_is_used_as_given(peyton_manning_df, compiled_optimizer
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
     dates = ["2008-02-01", "2008-05-01", "2008-08-01"]
 
-    model = CustomProphet(changepoints=dates)
+    model = AnalyticProphet(changepoints=dates)
     assert model.specified_changepoints
     assert model.n_changepoints == 3
 
@@ -177,7 +177,7 @@ def test_an_explicit_list_must_fall_inside_the_history(peyton_manning_df,
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
 
     with pytest.raises(ValueError, match="within training data"):
-        CustomProphet(changepoints=["2030-01-01"]).fit_cpp(
+        AnalyticProphet(changepoints=["2030-01-01"]).fit_cpp(
             df, lib_path=compiled_optimizer_module)
 
 
@@ -188,7 +188,7 @@ def test_generated_changepoints_do_not_survive_a_refit(peyton_manning_df,
     implementation allows one (#41), and the previous fit's *generated* dates
     must not be read back as a user-supplied list -- they would fall outside a
     shorter history and raise."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df, lib_path=compiled_optimizer_module)
     first = model.changepoints_t.copy()
 
@@ -203,7 +203,7 @@ def test_an_explicit_list_does_survive_a_refit(peyton_manning_df,
                                                compiled_optimizer_module):
     """The other half: what the user gave is theirs, and stays."""
     dates = ["2008-02-01", "2008-05-01"]
-    model = CustomProphet(changepoints=dates)
+    model = AnalyticProphet(changepoints=dates)
     model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     model.fit_cpp(peyton_manning_df.iloc[:400].reset_index(drop=True),

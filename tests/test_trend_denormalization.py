@@ -19,7 +19,7 @@ part of the uncertainty band is left in normalized-y units.
 
 Two tests, two different jobs:
 - test_predict_trend_bounds_are_correctly_scaled calls the real predict()
-  path directly and is expected to FAIL against the current legacy code --
+  path directly and was expected to FAIL against the code as it stood --
   the regression test that should start passing once the fix lands.
 - test_trend_denormalization_is_uniform targets what the fix should look
   like: one shared trend function, checked for the property that actually

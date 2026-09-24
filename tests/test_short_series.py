@@ -34,8 +34,8 @@ import types
 import numpy as np
 import pytest
 
-import customProphet
-from customProphet import CPP_SOLVER_RAISED, SCIPY_LINE_SEARCH_FAILURE, CustomProphet
+from analytic_prophet import forecaster
+from analytic_prophet import CPP_SOLVER_RAISED, SCIPY_LINE_SEARCH_FAILURE, AnalyticProphet
 
 # Prophet's own cutoff, [fc] `'Newton' if T < 100 else 'LBFGS'`.
 NEWTON_BELOW = 100
@@ -72,7 +72,7 @@ def our_score(bridge, stan_model, stan_data, df, lib_path, algorithm=None):
     gets by default; naming one measures that algorithm on its own.
     """
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
-    model = CustomProphet(n_changepoints=len(changepoints_t))
+    model = AnalyticProphet(n_changepoints=len(changepoints_t))
     model.set_changepoints = lambda: setattr(
         model, "changepoints_t", changepoints_t.copy())
     model.fit_cpp(df, lib_path=lib_path, algorithm=algorithm)
@@ -158,9 +158,9 @@ def test_the_python_newton_also_matches_its_own_lbfgs(peyton_manning_df, n_rows)
     """
     df = peyton_manning_df.iloc[:n_rows].reset_index(drop=True)
 
-    newton = CustomProphet()
+    newton = AnalyticProphet()
     newton.fit(df, analytic=True, algorithm="Newton")
-    lbfgs = CustomProphet()
+    lbfgs = AnalyticProphet()
     lbfgs.fit(df, analytic=True, algorithm="LBFGS")
 
     assert newton._minus_log_posterior(newton.get_parameters()) == pytest.approx(
@@ -173,7 +173,7 @@ def test_prophets_cutoff_is_strict(prophet_comparison):
     """[fc] `'Newton' if T < 100 else 'LBFGS'`. Recorded because the boundary
     is the sort of thing a reimplementation gets off by one."""
     Prophet, common, bridge = prophet_comparison
-    assert customProphet.NEWTON_BELOW == NEWTON_BELOW == 100
+    assert forecaster.NEWTON_BELOW == NEWTON_BELOW == 100
 
     # at exactly 100 Prophet uses L-BFGS, so its own Newton does better there
     df = common.load_data(NEWTON_BELOW)
@@ -187,7 +187,7 @@ def test_prophets_cutoff_is_strict(prophet_comparison):
 def test_the_compiled_path_follows_the_rule(peyton_manning_df,
                                             compiled_optimizer_module,
                                             n_rows, expected):
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df.iloc[:n_rows].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     assert model.optimizer_used == expected
@@ -198,7 +198,7 @@ def test_the_compiled_path_follows_the_rule(peyton_manning_df,
 def test_the_python_path_follows_the_same_rule(peyton_manning_df, n_rows, expected):
     """Both paths, or a script that switches between them changes optimizer
     without asking."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit(peyton_manning_df.iloc[:n_rows].reset_index(drop=True), analytic=True)
     assert model.optimizer_used == expected
 
@@ -213,11 +213,11 @@ def test_an_explicit_algorithm_overrides_the_rule(peyton_manning_df,
     long = peyton_manning_df.iloc[:300].reset_index(drop=True)
 
     for df in (short, long):
-        compiled = CustomProphet()
+        compiled = AnalyticProphet()
         compiled.fit_cpp(df, lib_path=compiled_optimizer_module, algorithm=algorithm)
         assert compiled.optimizer_used == algorithm
 
-        python = CustomProphet()
+        python = AnalyticProphet()
         python.fit(df, analytic=True, algorithm=algorithm)
         assert python.optimizer_used == algorithm
 
@@ -244,11 +244,11 @@ def test_a_failed_compiled_lbfgs_falls_back_to_newton(peyton_manning_df, cpp_mod
                                                       compiled_optimizer_module,
                                                       monkeypatch, caplog):
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
-    monkeypatch.setattr(customProphet, "load_cpp_module",
+    monkeypatch.setattr(forecaster, "load_cpp_module",
                         lambda _: failing_cpp_module(cpp_module, CPP_SOLVER_RAISED))
 
-    model = CustomProphet()
-    with caplog.at_level("WARNING", logger="customProphet"):
+    model = AnalyticProphet()
+    with caplog.at_level("WARNING", logger="analytic_prophet"):
         model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert model.optimizer_used == "Newton"
@@ -261,7 +261,7 @@ def test_a_failed_compiled_lbfgs_falls_back_to_newton(peyton_manning_df, cpp_mod
 def test_a_failed_python_lbfgs_falls_back_to_newton(peyton_manning_df,
                                                     monkeypatch, caplog):
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
-    real_minimize = customProphet.minimize
+    real_minimize = forecaster.minimize
 
     def failing_minimize(*args, **kwargs):
         result = real_minimize(*args, **kwargs)
@@ -269,10 +269,10 @@ def test_a_failed_python_lbfgs_falls_back_to_newton(peyton_manning_df,
         result.success = False
         return result
 
-    monkeypatch.setattr(customProphet, "minimize", failing_minimize)
+    monkeypatch.setattr(forecaster, "minimize", failing_minimize)
 
-    model = CustomProphet()
-    with caplog.at_level("WARNING", logger="customProphet"):
+    model = AnalyticProphet()
+    with caplog.at_level("WARNING", logger="analytic_prophet"):
         model.fit(df, analytic=True)
 
     assert model.optimizer_used == "Newton"
@@ -292,10 +292,10 @@ def test_the_iteration_cap_is_not_a_failure(peyton_manning_df, cpp_module,
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
     cap_status = 2  # the C++ core's "reached max_iterations", not its failure
     assert cap_status != CPP_SOLVER_RAISED
-    monkeypatch.setattr(customProphet, "load_cpp_module",
+    monkeypatch.setattr(forecaster, "load_cpp_module",
                         lambda _: failing_cpp_module(cpp_module, cap_status))
 
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert model.optimizer_used == "LBFGS"
@@ -306,10 +306,10 @@ def test_the_fallback_can_be_switched_off(peyton_manning_df, cpp_module,
     """[fc] `newton_fallback`, set in IStanBackend.__init__ and honoured before
     the retry."""
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
-    monkeypatch.setattr(customProphet, "load_cpp_module",
+    monkeypatch.setattr(forecaster, "load_cpp_module",
                         lambda _: failing_cpp_module(cpp_module, CPP_SOLVER_RAISED))
 
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.newton_fallback = False
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
@@ -335,15 +335,15 @@ def test_the_fallback_fires_where_the_python_path_actually_fails(peyton_manning_
 
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
     zero_init = {"k": 0.0, "m": 0.0,
-                 "delta": np.zeros(customProphet.N_CHANGE_POINTS),
-                 "beta": np.zeros(2 * customProphet.n_yearly)}
+                 "delta": np.zeros(forecaster.N_CHANGE_POINTS),
+                 "beta": np.zeros(2 * forecaster.n_yearly)}
 
-    without = pin_yearly_only(CustomProphet())
+    without = pin_yearly_only(AnalyticProphet())
     without.newton_fallback = False
     without.fit(df, analytic=True, initial_params=zero_init)
     assert without.opt.status == SCIPY_LINE_SEARCH_FAILURE
 
-    with_fallback = pin_yearly_only(CustomProphet())
+    with_fallback = pin_yearly_only(AnalyticProphet())
     with_fallback.fit(df, analytic=True, initial_params=zero_init)
 
     assert with_fallback.optimizer_used == "Newton"
@@ -362,7 +362,7 @@ def test_the_compiled_path_converges_on_every_short_series(peyton_manning_df,
     still nothing here -- `fit_cpp` converges at every size down to ten
     observations, now under whichever algorithm the rule picks.
     """
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df.iloc[:n_rows].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
@@ -381,7 +381,7 @@ def test_the_python_path_converges_on_every_short_series(peyton_manning_df, n_ro
     at it, where a time-spaced changepoint could fall in a gap with nothing
     nearby. Better-conditioned, and it converges everywhere now.
     """
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit(peyton_manning_df.iloc[:n_rows].reset_index(drop=True), analytic=True)
     assert model.opt.success, f"{model.optimizer_used} reports {model.opt.message} at T={n_rows}"
 
@@ -401,7 +401,7 @@ def test_newton_runs_on_the_split_reformulation(peyton_manning_df):
     split bounds, every delta_pos/delta_neg pair has at most one non-zero
     member, which is the property that makes the two problems equivalent.
     """
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit(peyton_manning_df.iloc[:50].reset_index(drop=True),
               analytic=True, algorithm="Newton")
 
@@ -423,12 +423,12 @@ def test_the_hessian_is_a_difference_of_the_analytic_gradient(prepared_model):
     while the gradient-based one is the sharper of the two.
     """
     model = prepared_model
-    z = customProphet.canonical_to_split(
+    z = forecaster.canonical_to_split(
         np.concatenate(([0.1], [0.2], np.zeros(model.layout.n_changepoints), [1.0],
                         np.zeros(model.layout.n_regressor_columns))),
         model.layout)
 
-    analytic = customProphet.finite_difference_hessian(
+    analytic = forecaster.finite_difference_hessian(
         lambda point: model._split_gradient(point), z)
 
     step = 1e-4
@@ -458,7 +458,7 @@ def test_projected_newton_pins_a_coordinate_at_its_bound():
     objective = lambda v: (v[0] + 1.0) ** 2 + (v[1] - 2.0) ** 2
     gradient = lambda v: np.array([2.0 * (v[0] + 1.0), 2.0 * (v[1] - 2.0)])
 
-    result = customProphet.projected_newton(
+    result = forecaster.projected_newton(
         objective, gradient, np.array([3.0, -5.0]),
         np.array([0.0, -np.inf]), np.array([np.inf, np.inf]))
 

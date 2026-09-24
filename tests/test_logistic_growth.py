@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import (CustomProphet, canonical_to_cpp, predict_trend,
+from analytic_prophet import (AnalyticProphet, canonical_to_cpp, predict_trend,
                            logistic_gamma_and_jacobian, logistic_growth_init,
                            logistic_trend_and_jacobian)
 
@@ -37,7 +37,7 @@ def with_cap(df, multiple=1.25):
 
 
 def logistic_model():
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.growth = "logistic"
     return model
 
@@ -210,7 +210,7 @@ def test_an_unsupported_growth_mode_says_so(peyton_manning_df,
                                             compiled_optimizer_module):
     """'flat' was on this list until #16 task 13; anything outside the three
     Stan knows about still is."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.growth = "quadratic"
     with pytest.raises(ValueError, match="flat, linear, logistic"):
         model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
@@ -298,7 +298,7 @@ def test_init_clamps_y_outside_the_capacity():
 # -- linear growth is untouched -----------------------------------------
 
 def test_linear_growth_takes_its_own_path(peyton_manning_df, compiled_optimizer_module):
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 

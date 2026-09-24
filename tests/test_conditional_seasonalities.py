@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import (CustomProphet, condition_masks, condition_matrix,
+from analytic_prophet import (AnalyticProphet, condition_masks, condition_matrix,
                            fourier_series, seasonal_time)
 
 CONDITION = "on_season"
@@ -29,7 +29,7 @@ def with_condition(df, months=(9, 10, 11, 12, 1)):
 
 
 def conditioned_model():
-    return CustomProphet().add_seasonality("on_season_weekly", 7, 3,
+    return AnalyticProphet().add_seasonality("on_season_weekly", 7, 3,
                                            condition_name=CONDITION)
 
 
@@ -76,7 +76,7 @@ def test_nan_in_the_condition_column_is_rejected():
 def test_an_unconditioned_registry_needs_no_columns(peyton_manning_df,
                                                     compiled_optimizer_module):
     """The common case must not start demanding columns."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
@@ -123,7 +123,7 @@ def test_an_all_false_condition_removes_the_component_entirely(peyton_manning_df
 def test_the_condition_matrix_is_empty_when_nothing_is_conditioned():
     """Empty means "no conditions" to the C++, so the common case carries no
     T x n matrix of ones."""
-    model = CustomProphet().add_seasonality("monthly", 30.5, 5)
+    model = AnalyticProphet().add_seasonality("monthly", 30.5, 5)
     assert condition_matrix(model.seasonalities, {}, 100).shape == (100, 0)
 
 
@@ -146,7 +146,7 @@ def test_both_objectives_agree_with_a_conditioned_component(peyton_manning_df,
                                                             cpp_module):
     """The Python and C++ design matrices are built separately; a mask applied
     in one and not the other would surface nowhere until the fits diverged."""
-    from customProphet import SIGMA, canonical_to_cpp
+    from analytic_prophet import SIGMA, canonical_to_cpp
 
     df = with_condition(peyton_manning_df.iloc[:400].reset_index(drop=True))
     model = conditioned_model()
@@ -183,7 +183,7 @@ def test_both_objectives_agree_with_a_conditioned_component(peyton_manning_df,
 
 
 def test_cpp_rejects_a_condition_matrix_of_the_wrong_shape(prepared_model, cpp_module):
-    from customProphet import SIGMA
+    from analytic_prophet import SIGMA
 
 def seasonal_block(seasonalities, df):
     """The seasonal columns for a registry, through the model's own builder.
@@ -192,7 +192,7 @@ def seasonal_block(seasonalities, df):
     holiday and regressor registries too, so a test wanting only the seasonal
     part goes through a model configured with just that.
     """
-    model = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
+    model = AnalyticProphet(yearly_seasonality=False, weekly_seasonality=False,
                           daily_seasonality=False)
     model.seasonalities = seasonalities
     return np.ascontiguousarray(model.make_all_seasonality_features(df)[0].to_numpy(dtype=float))

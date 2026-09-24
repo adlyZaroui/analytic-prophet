@@ -10,7 +10,7 @@ from scipy.optimize import OptimizeResult, approx_fprime, minimize
 from scipy.stats import halfcauchy
 from typing import Tuple
 
-logger = logging.getLogger("customProphet")
+logger = logging.getLogger("analytic_prophet")
 
 # ---------------------------------------------------------------------------
 # Model constants, checked against facebook/prophet (additive mode, linear
@@ -859,9 +859,9 @@ def from_dict_to_array(params, layout=DEFAULT_LAYOUT):
 CPP_MODULE_NAME = 'analytic_prophet_cpp'
 
 BUILD_HINT = (
-    "Build it from legacy/optimize.cpp -- see the compile command in that file's "
-    "trailing comment, or let tests/conftest.py's compiled_optimizer_module "
-    "fixture build it for you."
+    "Build it from analytic_prophet/optimize.cpp -- see the compile command in "
+    "that file's trailing comment, or let tests/conftest.py's "
+    "compiled_optimizer_module fixture build it for you."
 )
 
 _cpp_module_cache = {}
@@ -1099,7 +1099,7 @@ def predict_trend(k, m, delta, changepoints_t, t, y_scale,
     trend = trend_normalized * y_scale
     return trend if floor is None else trend + floor
 
-class CustomProphet:
+class AnalyticProphet:
 
     def __init__(self, growth='linear', changepoints=None, n_changepoints=N_CHANGE_POINTS,
                  changepoint_range=CHANGEPOINT_RANGE, yearly_seasonality='auto',
@@ -2424,7 +2424,7 @@ class CustomProphet:
             # [fc] the spec goes to the constructor, which rejects what it does
             # not know. This used to run against a hand-kept whitelist, because
             # the constructor took no arguments (#16 task 14c, #52).
-            CustomProphet(**predictor_spec)
+            AnalyticProphet(**predictor_spec)
 
         # mu and std are placeholders until a fit measures them on the history
         self.extra_regressors[name] = {"prior_scale": prior_scale,
@@ -2459,7 +2459,7 @@ class CustomProphet:
                     f"Not enough data to fit regressor model for {name!r}.")
             regressor_df = regressor_df.rename(columns={name: "y"})
 
-            predictor = CustomProphet(**props["predictor_spec"])
+            predictor = AnalyticProphet(**props["predictor_spec"])
             predictor._regressor_name = name          # marker, [fc]
 
             logger.info("Fitting regressor model %r with %d observations",

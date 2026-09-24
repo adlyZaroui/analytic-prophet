@@ -31,12 +31,12 @@ a regression the size of the project's whole margin over Prophet.
 import numpy as np
 import pytest
 
-from customProphet import (CustomProphet, canonical_to_cpp, seasonality,
+from analytic_prophet import (AnalyticProphet, canonical_to_cpp, seasonality,
                            seasonality_modes)
 
 
 def multiplicative_model():
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.seasonality_mode = "multiplicative"
     return model
 
@@ -55,7 +55,7 @@ def test_modes_repeat_across_each_components_block():
 
 def test_s_a_and_s_m_partition_the_columns(peyton_manning_df, compiled_optimizer_module):
     """[stan] s_a and s_m are complementary indicators over the K columns."""
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.add_seasonality("monthly", 30.5, 5, mode="multiplicative")
     model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
@@ -86,7 +86,7 @@ def test_holidays_carry_their_own_mode(peyton_manning_df, compiled_optimizer_mod
     frame = pd.DataFrame({"holiday": "bump",
                           "ds": [pd.Timestamp(f"{y}-03-15") for y in (2008, 2009, 2010)],
                           "lower_window": 0, "upper_window": 0})
-    model = CustomProphet().add_holidays(frame, mode="multiplicative")
+    model = AnalyticProphet().add_holidays(frame, mode="multiplicative")
     model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
@@ -98,7 +98,7 @@ def test_an_unrecognized_mode_is_rejected_rather_than_read_as_additive():
     """The check that survives now nothing is refused as unimplemented: an
     unknown mode would otherwise reach the design matrix as "not
     multiplicative", which is silently additive."""
-    from customProphet import check_seasonality_supported
+    from analytic_prophet import check_seasonality_supported
     with pytest.raises(ValueError, match="additive"):
         check_seasonality_supported({"x": seasonality(7.0, 3, mode="sideways")})
 
@@ -121,7 +121,7 @@ def test_analytic_gradient_matches_finite_differences(peyton_manning_df,
     beta's, shows up here and essentially nowhere else.
     """
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
-    model = CustomProphet()
+    model = AnalyticProphet()
     if mode == "multiplicative":
         model.seasonality_mode = "multiplicative"
     else:
@@ -189,7 +189,7 @@ def test_both_languages_agree_in_multiplicative_mode(peyton_manning_df,
 
 def test_an_all_additive_model_takes_the_additive_branch(peyton_manning_df,
                                                          compiled_optimizer_module):
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
@@ -203,10 +203,10 @@ def test_an_explicitly_additive_model_fits_exactly_as_before(peyton_manning_df,
     setting it -- same branch, same arithmetic, same fit."""
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
 
-    default = CustomProphet()
+    default = AnalyticProphet()
     default.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    explicit = CustomProphet()
+    explicit = AnalyticProphet()
     explicit.seasonality_mode = "additive"
     explicit.fit_cpp(df, lib_path=compiled_optimizer_module)
 
@@ -222,7 +222,7 @@ def test_the_multiplicative_formulas_reduce_to_the_additive_ones(peyton_manning_
     rather than avoiding a rounding difference.
     """
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
     params = non_optimal_point(model)
 

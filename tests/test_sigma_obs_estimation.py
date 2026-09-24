@@ -12,7 +12,7 @@ constant is T*log(sigma_obs) -- droppable when sigma_obs is a fixed constant,
 but not once it's a variable being optimized over.
 
 These tests target the fix: sigma_obs now lives in the parameter vector
-(layout: k, m, delta, sigma_obs, beta -- see SIGMA_OBS_IDX in customProphet.py,
+(layout: k, m, delta, sigma_obs, beta -- see SIGMA_OBS_IDX in analytic_prophet/forecaster.py,
 matching the order of Prophet's own Stan parameters block), the analytic
 posterior includes the T*log(sigma_obs) term and the sigma_obs prior, and the
 gradient has a matching dsigma_obs term. test_analytic_gradient_matches_numerical
@@ -23,7 +23,7 @@ target the specific behavior described in the issue instead.
 import numpy as np
 import pytest
 
-from customProphet import SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE, SIGMA_OBS_INIT, extract_params
+from analytic_prophet import SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE, SIGMA_OBS_INIT, extract_params
 
 
 def test_extract_params_unpacks_sigma_obs_at_its_own_slot(prepared_model, param_size):

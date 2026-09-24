@@ -5,8 +5,11 @@ env/
 
 # Python cache files
 __pycache__/
+*.py[cod]
+.pytest_cache/
 .DS_Store
 
-# Locally-built C++ core (see legacy/optimize.cpp's trailing comment / tests/conftest.py)
+# Locally-built C++ core (see analytic_prophet/optimize.cpp's trailing comment
+# / tests/conftest.py)
 *.so
 *.dylib

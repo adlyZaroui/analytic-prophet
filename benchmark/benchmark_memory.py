@@ -43,7 +43,7 @@ try:
     if name == "prophet":
         import prophet          # noqa: F401
     else:
-        import customProphet    # noqa: F401
+        import analytic_prophet    # noqa: F401
     if do_fit:
         common.run_one(name, common.load_data(size), lib_path)
 except Exception as exc:

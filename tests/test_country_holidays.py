@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import (COUNTRY_CODE_SUBSTITUTIONS, CustomProphet,
+from analytic_prophet import (COUNTRY_CODE_SUBSTITUTIONS, AnalyticProphet,
                            get_holiday_names, make_holidays_df)
 
 COUNTRIES = ["US", "FR", "UK", "DE", "IN"]
@@ -85,16 +85,16 @@ def test_the_turkey_code_substitution_is_carried():
 # -- registering --------------------------------------------------------
 
 def test_add_country_holidays_returns_self_and_records_the_country():
-    model = CustomProphet()
+    model = AnalyticProphet()
     assert model.add_country_holidays("US") is model
     assert model.country_holidays == "US"
 
 
 def test_registering_a_second_country_replaces_the_first_and_warns(caplog):
     """[fc] one country at a time, with a warning rather than a silent swap."""
-    model = CustomProphet().add_country_holidays("US")
+    model = AnalyticProphet().add_country_holidays("US")
 
-    with caplog.at_level("WARNING", logger="customProphet"):
+    with caplog.at_level("WARNING", logger="analytic_prophet"):
         model.add_country_holidays("FR")
 
     assert model.country_holidays == "FR"
@@ -102,8 +102,8 @@ def test_registering_a_second_country_replaces_the_first_and_warns(caplog):
 
 
 def test_registering_the_same_country_twice_is_quiet(caplog):
-    model = CustomProphet().add_country_holidays("US")
-    with caplog.at_level("WARNING", logger="customProphet"):
+    model = AnalyticProphet().add_country_holidays("US")
+    with caplog.at_level("WARNING", logger="analytic_prophet"):
         model.add_country_holidays("US")
     assert not [r for r in caplog.records if "Changing country holidays" in r.message]
 
@@ -111,7 +111,7 @@ def test_registering_the_same_country_twice_is_quiet(caplog):
 def test_a_seasonality_may_not_take_a_country_holiday_name():
     """The names are validated when the country is registered, so the
     collision is found before any frame is built around it."""
-    model = CustomProphet().add_country_holidays("US")
+    model = AnalyticProphet().add_country_holidays("US")
 
     with pytest.raises(ValueError, match="is a holiday name in US"):
         model.add_seasonality("Christmas Day", 30.5, 5)
@@ -123,7 +123,7 @@ def test_a_country_may_be_merged_with_a_hand_written_frame():
     frame = pd.DataFrame({"holiday": "Christmas Day",
                           "ds": [pd.Timestamp("2020-12-25")],
                           "lower_window": -1, "upper_window": 1})
-    model = CustomProphet().add_holidays(frame).add_country_holidays("US")
+    model = AnalyticProphet().add_holidays(frame).add_country_holidays("US")
 
     assert model.country_holidays == "US"
     assert model.holidays is not None
@@ -131,7 +131,7 @@ def test_a_country_may_be_merged_with_a_hand_written_frame():
 
 def test_adding_a_country_after_a_fit_is_refused(peyton_manning_df,
                                                  compiled_optimizer_module):
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     with pytest.raises(RuntimeError, match="before fitting"):
@@ -144,10 +144,10 @@ def test_country_holidays_extend_the_design_matrix(peyton_manning_df,
                                                    compiled_optimizer_module):
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
-    plain = CustomProphet()
+    plain = AnalyticProphet()
     plain.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    with_country = CustomProphet().add_country_holidays("US")
+    with_country = AnalyticProphet().add_country_holidays("US")
     with_country.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert with_country.layout.n_holiday_columns > 0
@@ -162,10 +162,10 @@ def test_a_country_and_a_frame_combine(peyton_manning_df, compiled_optimizer_mod
                           "ds": [pd.Timestamp(f"{y}-03-15") for y in (2008, 2009, 2010)],
                           "lower_window": 0, "upper_window": 0})
 
-    country_only = CustomProphet().add_country_holidays("US")
+    country_only = AnalyticProphet().add_country_holidays("US")
     country_only.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    both = CustomProphet().add_holidays(frame).add_country_holidays("US")
+    both = AnalyticProphet().add_holidays(frame).add_country_holidays("US")
     both.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert both.layout.n_holiday_columns == country_only.layout.n_holiday_columns + 1
@@ -178,7 +178,7 @@ def test_holidays_keep_coming_past_the_end_of_the_history(peyton_manning_df,
     against whatever years a frame covers, so a forecast into a year the
     history never saw still gets its holidays."""
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
-    model = CustomProphet().add_country_holidays("US")
+    model = AnalyticProphet().add_country_holidays("US")
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     future = model.make_future_dataframe(periods=400)
@@ -190,7 +190,7 @@ def test_holidays_keep_coming_past_the_end_of_the_history(peyton_manning_df,
 
 def test_predict_runs_with_country_holidays(peyton_manning_df, compiled_optimizer_module):
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
-    model = CustomProphet().add_country_holidays("US")
+    model = AnalyticProphet().add_country_holidays("US")
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     forecast = model.predict(model.make_future_dataframe(periods=400))
@@ -214,7 +214,7 @@ def test_design_matrix_and_posterior_match_prophets(prophet_comparison,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
-    ours = CustomProphet().add_country_holidays("US")
+    ours = AnalyticProphet().add_country_holidays("US")
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 

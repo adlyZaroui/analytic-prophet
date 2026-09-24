@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import CustomProphet
+from analytic_prophet import AnalyticProphet
 
 
 @pytest.fixture(scope="module")
@@ -41,7 +41,7 @@ def fitted(compiled_optimizer_module):
     samples each, and refitting for every one of them dominates the runtime."""
     from pathlib import Path
     df = pd.read_csv(Path(__file__).parent / "data" / "peyton_manning.csv")
-    model = CustomProphet(uncertainty_samples=400)
+    model = AnalyticProphet(uncertainty_samples=400)
     model.fit_cpp(df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     return model
@@ -138,7 +138,7 @@ def test_the_laplace_scale_has_prophets_epsilon(peyton_manning_df,
         "ds": pd.date_range("2015-01-01", periods=400),
         "y": np.linspace(10.0, 20.0, 400),
     })
-    model = CustomProphet(uncertainty_samples=200, yearly_seasonality=False,
+    model = AnalyticProphet(uncertainty_samples=200, yearly_seasonality=False,
                           weekly_seasonality=False, daily_seasonality=False)
     model.fit_cpp(straight, lib_path=compiled_optimizer_module)
 
@@ -187,7 +187,7 @@ def test_predict_does_not_write_into_a_frame_carrying_extra_columns(
     """The copy has to happen whether or not there are regressors to fill --
     the regressor path already copied, the plain path did not."""
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     future = model.make_future_dataframe(periods=10)
@@ -218,7 +218,7 @@ def test_the_band_agrees_with_prophets(prophet_comparison, compiled_optimizer_mo
     prophet_forecast = prophet_model.predict(
         prophet_model.make_future_dataframe(periods=365))
 
-    ours = CustomProphet(uncertainty_samples=1000)
+    ours = AnalyticProphet(uncertainty_samples=1000)
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
     our_forecast = ours.predict(ours.make_future_dataframe(periods=365))
 
@@ -241,7 +241,7 @@ def test_prophet_also_collapses_the_band_without_a_horizon(prophet_comparison,
     prophet_model.fit(df)
     theirs = prophet_model.predict(prophet_model.make_future_dataframe(periods=0))
 
-    ours = CustomProphet(uncertainty_samples=200)
+    ours = AnalyticProphet(uncertainty_samples=200)
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
     mine = ours.predict(ours.make_future_dataframe(periods=0))
 

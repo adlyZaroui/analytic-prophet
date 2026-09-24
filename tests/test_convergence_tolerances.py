@@ -34,9 +34,9 @@ import numpy as np
 import pytest
 from scipy.optimize import minimize as real_minimize
 
-import customProphet
-from customProphet import (SCIPY_TOL_REL_OBJ, STAN_EPS, STAN_MAX_ITERATIONS,
-                           STAN_TOL_GRAD, STAN_TOL_REL_OBJ, CustomProphet)
+from analytic_prophet import forecaster
+from analytic_prophet import (SCIPY_TOL_REL_OBJ, STAN_EPS, STAN_MAX_ITERATIONS,
+                           STAN_TOL_GRAD, STAN_TOL_REL_OBJ, AnalyticProphet)
 
 # Stan's relative-objective threshold, the number `ftol` declines to take.
 STAN_FTOL = STAN_TOL_REL_OBJ * STAN_EPS
@@ -55,10 +55,10 @@ def scipy_options(monkeypatch):
             kwargs["options"] = dict(kwargs.get("options") or {}, **overrides)
             return real_minimize(*args, **kwargs)
 
-        monkeypatch.setattr(customProphet, "minimize", patched)
-        model = CustomProphet()
+        monkeypatch.setattr(forecaster, "minimize", patched)
+        model = AnalyticProphet()
         model.fit(df, analytic=True, algorithm="LBFGS")
-        monkeypatch.setattr(customProphet, "minimize", real_minimize)
+        monkeypatch.setattr(forecaster, "minimize", real_minimize)
         return model, model._minus_log_posterior(model.get_parameters())
     return run
 
@@ -73,14 +73,14 @@ def test_the_settings_fit_passes_are_stans_except_for_one(peyton_manning_df, sci
         recorded.update(kwargs["options"])
         return real_minimize(*args, **kwargs)
 
-    model = CustomProphet()
-    original = customProphet.minimize
-    customProphet.minimize = patched
+    model = AnalyticProphet()
+    original = forecaster.minimize
+    forecaster.minimize = patched
     try:
         model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   analytic=True, algorithm="LBFGS")
     finally:
-        customProphet.minimize = original
+        forecaster.minimize = original
 
     assert recorded["maxiter"] == STAN_MAX_ITERATIONS   # [fc] iter=int(1e4)
     assert recorded["gtol"] == STAN_TOL_GRAD            # [fc] tol_grad
@@ -146,7 +146,7 @@ def test_the_run_stops_on_a_plateau_it_then_climbs_out_of(peyton_manning_df):
     iterations. It is not scipy's own stopping rule doing this: the quantity
     below is Stan's test evaluated by hand on the trajectory.
     """
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit(peyton_manning_df.reset_index(drop=True), analytic=True, algorithm="LBFGS")
     trace = np.asarray(model.loss_over_iterations)
 
@@ -181,7 +181,7 @@ def test_stans_objective_tolerance_would_score_below_prophet(prophet_comparison,
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     def score(**overrides):
-        model = CustomProphet(n_changepoints=len(changepoints_t))
+        model = AnalyticProphet(n_changepoints=len(changepoints_t))
         model.set_changepoints = lambda: setattr(
             model, "changepoints_t", changepoints_t.copy())
         patched = real_minimize
@@ -189,12 +189,12 @@ def test_stans_objective_tolerance_would_score_below_prophet(prophet_comparison,
             def patched(*args, **kwargs):
                 kwargs["options"] = dict(kwargs.get("options") or {}, **overrides)
                 return real_minimize(*args, **kwargs)
-        original = customProphet.minimize
-        customProphet.minimize = patched
+        original = forecaster.minimize
+        forecaster.minimize = patched
         try:
             model.fit(df, analytic=True, algorithm="LBFGS")
         finally:
-            customProphet.minimize = original
+            forecaster.minimize = original
         return bridge.stan_log_prob(
             stan_model, stan_data, model.params["k"][0][0], model.params["m"][0][0],
             model.params["delta"][0], model.sigma_obs, model.params["beta"][0])
@@ -234,7 +234,7 @@ def test_the_recorded_trajectory_is_the_objective_being_minimized(peyton_manning
     that descends monotonically, and a trace not comparable with `fit_cpp`'s.
     """
     df = peyton_manning_df.iloc[:n_rows].reset_index(drop=True)
-    model = CustomProphet()
+    model = AnalyticProphet()
     model.fit(df, analytic=True, algorithm="LBFGS")
     trace = np.asarray(model.loss_over_iterations)
 
