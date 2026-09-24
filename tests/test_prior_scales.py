@@ -103,8 +103,8 @@ def test_cpp_rejects_a_sigmas_of_the_wrong_length(prepared_model, cpp_module):
     with pytest.raises(ValueError, match="one prior scale per column"):
         cpp_module.minus_log_posterior_and_gradient(
             params=np.zeros(model.layout.size), t_scaled=model.t_scaled,
-            change_points=model.change_points, t_seasonality=model.t_seasonality,
-            normalized_y=model.normalized_y, sigma_obs_prior_scale=0.5,
+            t_change=model.t_change, t_seasonality=model.t_seasonality,
+            y_scaled=model.y_scaled, sigma_obs_prior_scale=0.5,
             sigma_k=model.sigma_k, sigma_m=model.sigma_m,
             sigmas=np.full(19, SIGMA), tau=model.tau,
             fourier_orders=[10], seasonality_periods=[365.25])
@@ -118,8 +118,8 @@ def test_cpp_rejects_a_non_positive_scale(prepared_model, cpp_module):
     with pytest.raises(ValueError, match="must be positive"):
         cpp_module.optimize(
             params=np.zeros(model.layout.size), t_scaled=model.t_scaled,
-            change_points=model.change_points, t_seasonality=model.t_seasonality,
-            normalized_y=model.normalized_y, sigma_obs_prior_scale=0.5,
+            t_change=model.t_change, t_seasonality=model.t_seasonality,
+            y_scaled=model.y_scaled, sigma_obs_prior_scale=0.5,
             sigma_k=model.sigma_k, sigma_m=model.sigma_m, sigmas=sigmas,
             tau=model.tau, fourier_orders=[10], seasonality_periods=[365.25])
 
@@ -188,8 +188,8 @@ def test_a_uniform_vector_reproduces_the_old_scalar_term(prepared_model):
     beta = params[model.layout.beta]
 
     scaled = configured(CustomProphet(), {"yearly": seasonality(365.25, 10, prior_scale=1.0)})
-    for attribute in ("t_scaled", "change_points", "t_seasonality", "normalized_y",
-                      "T", "y_absmax", "sigma_k", "sigma_m", "tau"):
+    for attribute in ("t_scaled", "t_change", "t_seasonality", "y_scaled",
+                      "T", "y_scale", "sigma_k", "sigma_m", "tau"):
         setattr(scaled, attribute, getattr(model, attribute))
     scaled._build_layout()
 
@@ -266,7 +266,7 @@ def test_matches_the_prior_term_stan_computes(prophet_comparison, compiled_optim
     t_change = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = configured(CustomProphet(), two_scales())
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     # the vector itself, element for element -- ordering included

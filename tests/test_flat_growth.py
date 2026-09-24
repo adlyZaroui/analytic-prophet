@@ -25,7 +25,7 @@ land on the same point.
 import numpy as np
 import pytest
 
-from customProphet import (CustomProphet, canonical_to_cpp, compute_trend,
+from customProphet import (CustomProphet, canonical_to_cpp, predict_trend,
                            flat_growth_init, TREND_INDICATORS)
 
 
@@ -46,7 +46,7 @@ def test_the_trend_is_constant(peyton_manning_df, compiled_optimizer_module):
     trend = forecast["trend"].values
 
     assert np.ptp(trend) < 1e-9, "a flat trend must not vary"
-    assert trend[0] == pytest.approx(model.opt_params[1] * model.y_absmax)
+    assert trend[0] == pytest.approx(model.opt_params[1] * model.y_scale)
 
 
 def test_k_and_delta_are_driven_to_zero(peyton_manning_df, compiled_optimizer_module):
@@ -165,11 +165,11 @@ def test_compute_trend_agrees_with_the_fitted_trend(peyton_manning_df,
     model = flat_model()
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    shared = compute_trend(model.opt_params[0], model.opt_params[1],
-                           model.opt_params[model.layout.delta], model.change_points,
-                           model.t_scaled, model.y_absmax, growth="flat")
+    shared = predict_trend(model.opt_params[0], model.opt_params[1],
+                           model.opt_params[model.layout.delta], model.t_change,
+                           model.t_scaled, model.y_scale, growth="flat")
 
-    np.testing.assert_allclose(shared, model.opt_params[1] * model.y_absmax, rtol=1e-12)
+    np.testing.assert_allclose(shared, model.opt_params[1] * model.y_scale, rtol=1e-12)
 
 
 def test_flat_growth_needs_no_cap(peyton_manning_df, compiled_optimizer_module):
@@ -214,7 +214,7 @@ def test_the_fit_is_prophets_fit_exactly(prophet_comparison, compiled_optimizer_
     t_change = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = flat_model()
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.opt_params[0],
@@ -242,7 +242,7 @@ def test_our_objective_is_stans_under_flat_growth(prophet_comparison,
     t_change = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = flat_model()
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)

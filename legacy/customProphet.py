@@ -334,7 +334,7 @@ def seasonality_design_matrix(t_seasonality, seasonalities, masks=None):
     masks = masks or {}
     blocks = []
     for name, props in seasonalities.items():
-        block = fourier_components(t_seasonality, props["period"], props["fourier_order"])
+        block = fourier_series(t_seasonality, props["period"], props["fourier_order"])
         if name in masks:
             block = np.where(np.asarray(masks[name], dtype=bool)[:, None], block, 0.0)
         blocks.append(block)
@@ -393,7 +393,7 @@ def _country_holidays_class(country):
     return getattr(holidays_package, country)
 
 
-def country_holiday_names(country):
+def get_holiday_names(country):
     """Every holiday name the country can produce. [fc] get_holiday_names.
 
     Swept over a fixed window of years rather than the data's, because the
@@ -405,7 +405,7 @@ def country_holiday_names(country):
                                           COUNTRY_NAME_SWEEP.stop)).values())
 
 
-def country_holidays_frame(years, country):
+def make_holidays_df(years, country):
     """A holidays frame for `years`. [fc] make_holidays_df.
 
     `expand=False` keeps the observed-date variants from being generated as
@@ -496,7 +496,7 @@ def validate_holidays_frame(holidays, validate_name):
     return holidays
 
 
-def holiday_features(dates, holidays, default_prior_scale):
+def make_holiday_features(dates, holidays, default_prior_scale):
     """Indicator columns for every holiday occurrence and window offset.
 
     [fc] Prophet.make_holiday_features. Returns (features, prior_scales, names):
@@ -591,12 +591,12 @@ def seasonality_prior_scales(seasonalities):
 TREND_INDICATORS = {"linear": 0, "logistic": 1, "flat": 2}
 
 
-def flat_growth_init(normalized_y):
+def flat_growth_init(y_scaled):
     """[fc] flat_growth_init: no rate, and the offset at the mean of y."""
-    return 0.0, float(np.mean(normalized_y))
+    return 0.0, float(np.mean(y_scaled))
 
 
-def logistic_gamma_and_jacobian(k, m, delta, change_points):
+def logistic_gamma_and_jacobian(k, m, delta, t_change):
     """Piecewise offsets for the logistic trend, and their Jacobian.
 
     [stan] logistic_gamma. Each segment's offset is chosen so the curve stays
@@ -634,15 +634,15 @@ def logistic_gamma_and_jacobian(k, m, delta, change_points):
         c = 1.0 - k_s[i] / k_s[i + 1]
         dc = -(dk_s[i] * k_s[i + 1] - k_s[i] * dk_s[i + 1]) / k_s[i + 1] ** 2
 
-        gamma[i] = (change_points[i] - m_pr) * c
-        dgamma[i] = -dm_pr * c + (change_points[i] - m_pr) * dc
+        gamma[i] = (t_change[i] - m_pr) * c
+        dgamma[i] = -dm_pr * c + (t_change[i] - m_pr) * dc
 
         m_pr = m_pr + gamma[i]
         dm_pr = dm_pr + dgamma[i]
     return gamma, dgamma
 
 
-def logistic_trend_and_jacobian(k, m, delta, t_scaled, cap_scaled, A, change_points):
+def logistic_trend_and_jacobian(k, m, delta, t_scaled, cap_scaled, A, t_change):
     """The logistic trend and d(trend)/d(k, m, delta).
 
     [stan] logistic_trend: cap .* inv_logit((k + A*delta) .* (t - (m + A*gamma))).
@@ -652,7 +652,7 @@ def logistic_trend_and_jacobian(k, m, delta, t_scaled, cap_scaled, A, change_poi
     the contracted gradient is what lets the multiplicative multiplier be
     applied outside, exactly as it is for the linear trend.
     """
-    gamma, dgamma = logistic_gamma_and_jacobian(k, m, delta, change_points)
+    gamma, dgamma = logistic_gamma_and_jacobian(k, m, delta, t_change)
     rate = k + np.dot(A, delta)
     offset = m + np.dot(A, gamma)
     z = rate * (t_scaled - offset)
@@ -673,15 +673,15 @@ def logistic_trend_and_jacobian(k, m, delta, t_scaled, cap_scaled, A, change_poi
     return trend, jacobian
 
 
-def logistic_growth_init(t_scaled, normalized_y, cap_scaled):
+def logistic_growth_init(t_scaled, y_scaled, cap_scaled):
     """[fc] logistic_growth_init: put the curve through the first and last
     points, clamping y into (0, cap) first so the logs are defined."""
     i0, i1 = int(np.argmin(t_scaled)), int(np.argmax(t_scaled))
     span = t_scaled[i1] - t_scaled[i0]
 
     c0, c1 = cap_scaled[i0], cap_scaled[i1]
-    y0 = max(0.01 * c0, min(0.99 * c0, normalized_y[i0]))
-    y1 = max(0.01 * c1, min(0.99 * c1, normalized_y[i1]))
+    y0 = max(0.01 * c0, min(0.99 * c0, y_scaled[i0]))
+    y1 = max(0.01 * c1, min(0.99 * c1, y_scaled[i1]))
 
     r0, r1 = c0 / y0, c1 / y1
     if abs(r0 - r1) <= 0.01:
@@ -691,7 +691,7 @@ def logistic_growth_init(t_scaled, normalized_y, cap_scaled):
     return (l0 - l1) / span, l0 * span / (l0 - l1)
 
 
-def linear_growth_init(t_scaled, normalized_y):
+def linear_growth_init(t_scaled, y_scaled):
     """Prophet's deterministic starting point for (k, m): the line through the
     first and last points of the scaled series.
 
@@ -707,8 +707,8 @@ def linear_growth_init(t_scaled, normalized_y):
     i0 = int(np.argmin(t_scaled))
     i1 = int(np.argmax(t_scaled))
     span = t_scaled[i1] - t_scaled[i0]
-    k = (normalized_y[i1] - normalized_y[i0]) / span
-    m = normalized_y[i0] - k * t_scaled[i0]
+    k = (y_scaled[i1] - y_scaled[i0]) / span
+    m = y_scaled[i0] - k * t_scaled[i0]
     return float(k), float(m)
 
 def det_dot(a, b):
@@ -729,7 +729,7 @@ def seasonal_time(ds):
     """
     return (pd.to_datetime(ds) - FOURIER_EPOCH).dt.total_seconds().to_numpy() / (24 * 60 * 60)
 
-def fourier_components(t_days, period, n):
+def fourier_series(t_days, period, n):
     """Fourier features, column-for-column identical to Prophet's.
 
     Ordering matters as much as the clock: Prophet interleaves, putting
@@ -866,7 +866,7 @@ def split_to_canonical(z, n_delta=N_CHANGE_POINTS):
     beta = z[3 + 2 * n_delta:]
     return np.concatenate(([k], [m], delta_pos - delta_neg, [sigma_obs], beta))
 
-def compute_trend(k, m, delta, change_points, t_scaled, y_absmax,
+def predict_trend(k, m, delta, t_change, t_scaled, y_scale,
                   cap_scaled=None, floor=None, growth='linear'):
     """The trend in normalized-y space, de-normalized once at the end.
 
@@ -874,16 +874,16 @@ def compute_trend(k, m, delta, change_points, t_scaled, y_absmax,
     de-normalization can't drift apart between the two again. `cap_scaled`
     selects logistic growth; without it the trend is piecewise linear.
     """
-    A = (t_scaled[:, None] >= change_points) * 1
+    A = (t_scaled[:, None] >= t_change) * 1
     if growth == 'flat':
         trend_normalized = np.full(len(t_scaled), m)
     elif cap_scaled is None:
-        gamma = -change_points * delta
+        gamma = -t_change * delta
         trend_normalized = (k + det_dot(A, delta)) * t_scaled + (m + det_dot(A, gamma))
     else:
         trend_normalized = logistic_trend_and_jacobian(
-            k, m, delta, t_scaled, cap_scaled, A, change_points)[0]
-    trend = trend_normalized * y_absmax
+            k, m, delta, t_scaled, cap_scaled, A, t_change)[0]
+    trend = trend_normalized * y_scale
     return trend if floor is None else trend + floor
 
 class CustomProphet:
@@ -910,8 +910,8 @@ class CustomProphet:
 
         self.t_scaled = None
         self.y = None
-        self.normalized_y = None
-        self.y_absmax = None
+        self.y_scaled = None
+        self.y_scale = None
         self.ds = None
 
         self.T = None
@@ -919,7 +919,7 @@ class CustomProphet:
         self.cap_scaled = None
         self.floor = None
         self.n_changepoints = n_changepoints
-        self.change_points = None
+        self.t_change = None
         self.changepoint_range = changepoint_range
 
         self.yearly_seasonality = yearly_seasonality
@@ -1009,8 +1009,8 @@ class CustomProphet:
         return self.opt_params
         
     def _normalize_y(self) -> None:
-        self.y_absmax = np.max(np.abs(self.y))
-        self.normalized_y = np.array(self.y / self.y_absmax)
+        self.y_scale = np.max(np.abs(self.y))
+        self.y_scaled = np.array(self.y / self.y_scale)
 
     def _future_capacity(self, future_df):
         """(cap_scaled, floor) for a frame passed to predict, or (None, None).
@@ -1028,13 +1028,13 @@ class CustomProphet:
         cap = future_df['cap'].to_numpy(dtype=float)
         if np.any(cap <= floor):
             raise ValueError('cap must be greater than floor (which defaults to 0).')
-        return (cap - floor) / self.y_absmax, floor
+        return (cap - floor) / self.y_scale, floor
 
     def _setup_growth(self, df) -> None:
         """Validate the growth mode and read `cap` for logistic growth.
 
         [fc] setup_dataframe. `floor` defaults to 0 under absmax scaling, which
-        is the only scaling here, so `cap_scaled` is `cap / y_absmax`.
+        is the only scaling here, so `cap_scaled` is `cap / y_scale`.
         """
         if self.growth not in TREND_INDICATORS:
             raise ValueError(
@@ -1054,8 +1054,8 @@ class CustomProphet:
             raise ValueError('cap must be greater than floor (which defaults to 0).')
 
         self.floor = floor
-        self.cap_scaled = (cap - floor) / self.y_absmax
-        self.normalized_y = (self.y - floor) / self.y_absmax
+        self.cap_scaled = (cap - floor) / self.y_scale
+        self.y_scaled = (self.y - floor) / self.y_scale
     
     def add_holidays(self, holidays, prior_scale=None, mode=None):
         """Register a holidays frame. Returns self, so calls chain.
@@ -1105,7 +1105,7 @@ class CustomProphet:
         # -- a collision only found at fit time would be found after the frame
         # had already been built around it. check_holidays=False so a country
         # may be merged with a hand-written frame naming the same holiday.
-        for name in country_holiday_names(country_name):
+        for name in get_holiday_names(country_name):
             self.validate_column_name(name, check_holidays=False)
 
         if self.country_holidays is not None and self.country_holidays != country_name:
@@ -1114,7 +1114,7 @@ class CustomProphet:
         self.country_holidays = country_name
         return self
 
-    def _holiday_frame_for(self, dates):
+    def construct_holiday_dataframe(self, dates):
         """The holidays relevant to `dates`, reconciled with what the fit saw.
 
         [fc] construct_holiday_dataframe. At predict time a holiday the fit
@@ -1130,7 +1130,7 @@ class CustomProphet:
         if self.country_holidays is not None:
             years = sorted({timestamp.year for timestamp in pd.to_datetime(pd.Series(
                 np.asarray(dates)))})
-            frame = pd.concat([frame, country_holidays_frame(years, self.country_holidays)],
+            frame = pd.concat([frame, make_holidays_df(years, self.country_holidays)],
                               sort=False, ignore_index=True)
 
         if self.train_holiday_names is not None:
@@ -1168,10 +1168,10 @@ class CustomProphet:
 
     def _holiday_design(self, dates):
         """(features, prior_scales) for `dates`, in the fit's column order."""
-        frame = self._holiday_frame_for(dates)
+        frame = self.construct_holiday_dataframe(dates)
         if frame is None:
             return None, []
-        return holiday_features(dates, frame, self.holidays_prior_scale)[:2]
+        return make_holiday_features(dates, frame, self.holidays_prior_scale)[:2]
 
     def validate_column_name(self, name, check_holidays=True,
                              check_seasonalities=True, check_regressors=True) -> None:
@@ -1190,7 +1190,7 @@ class CustomProphet:
                 name in set(self.holidays['holiday'].dropna().unique()):
             raise ValueError(f"Name {name!r} already used for a holiday.")
         if check_holidays and self.country_holidays is not None and \
-                name in country_holiday_names(self.country_holidays):
+                name in get_holiday_names(self.country_holidays):
             raise ValueError(
                 f"Name {name!r} is a holiday name in {self.country_holidays}.")
         if check_seasonalities and name in self.seasonalities:
@@ -1209,7 +1209,7 @@ class CustomProphet:
         A component registered here suppresses the built-in of the same name,
         which is how `add_seasonality('weekly', 7, 10)` asks for a
         higher-resolution weekly term than the default order 3 --
-        _set_auto_seasonalities leaves a name it finds already registered
+        set_auto_seasonalities leaves a name it finds already registered
         alone.
 
         `condition_name` names a boolean column that the frames passed to
@@ -1254,7 +1254,7 @@ class CustomProphet:
         self.seasonalities[name] = entry
         return self
 
-    def _set_auto_seasonalities(self) -> None:
+    def set_auto_seasonalities(self) -> None:
         """Register the built-in seasonalities the history supports.
 
         [fc] Prophet.set_auto_seasonalities. Runs at the start of a fit, on
@@ -1329,20 +1329,20 @@ class CustomProphet:
         Left as-is deliberately -- see the follow-up issue.
         """
         max_t_scaled = np.max(self.t_scaled)
-        self.change_points = np.linspace(0, self.changepoint_range * max_t_scaled, self.n_changepoints + 1)[1:]
+        self.t_change = np.linspace(0, self.changepoint_range * max_t_scaled, self.n_changepoints + 1)[1:]
 
         
     def _design_matrices(self):
         """The changepoint indicator A (T x S) and the Fourier design matrix
         (T x K).
 
-        Both depend only on t_scaled and change_points, so they are constant
+        Both depend only on t_scaled and t_change, so they are constant
         for a whole fit -- yet rebuilding them was 57% of every objective
         evaluation (issue #28). fit() computes them once and threads them
         through; callers that pass nothing still get correct results, which is
         what keeps the objective usable on its own.
         """
-        A = (self.t_scaled[:, None] >= self.change_points) * 1
+        A = (self.t_scaled[:, None] >= self.t_change) * 1
         # [fc] make_all_seasonality_features appends holiday columns after the
         # seasonal ones; `beta` and `sigmas` follow that order.
         x = seasonality_design_matrix(self.t_seasonality, self.seasonalities,
@@ -1361,7 +1361,7 @@ class CustomProphet:
         # sensitive to the last bits (see the note on the additive branch).
         if self.growth == 'logistic':
             g, trend_jacobian = logistic_trend_and_jacobian(
-                k, m, delta, self.t_scaled, self.cap_scaled, A, self.change_points)
+                k, m, delta, self.t_scaled, self.cap_scaled, A, self.t_change)
         elif self.growth == 'flat':
             # [stan] flat_trend: rep_vector(m, T). k and delta remain
             # parameters and keep their priors, but the likelihood does not see
@@ -1370,14 +1370,14 @@ class CustomProphet:
             g = np.full(self.T, m)
         else:
             trend_jacobian = None
-            gamma = -self.change_points * delta
+            gamma = -self.t_change * delta
             g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
         # [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...)
         # -- additive columns add to the trend, multiplicative ones scale it.
         y_pred = g + np.dot(x, beta) if not self._multiplicative else \
             g * (1.0 + np.dot(x * self.s_m, beta)) + np.dot(x * self.s_a, beta)
-        y_true = self.normalized_y
+        y_true = self.y_scaled
 
         # T*log(sigma_obs) is the Gaussian normalizing constant -- it can't be
         # dropped now that sigma_obs is itself a parameter being optimized.
@@ -1403,7 +1403,7 @@ class CustomProphet:
         # sensitive to the last bits (see the note on the additive branch).
         if self.growth == 'logistic':
             g, trend_jacobian = logistic_trend_and_jacobian(
-                k, m, delta, self.t_scaled, self.cap_scaled, A, self.change_points)
+                k, m, delta, self.t_scaled, self.cap_scaled, A, self.t_change)
         elif self.growth == 'flat':
             # [stan] flat_trend: rep_vector(m, T). k and delta remain
             # parameters and keep their priors, but the likelihood does not see
@@ -1412,7 +1412,7 @@ class CustomProphet:
             g = np.full(self.T, m)
         else:
             trend_jacobian = None
-            gamma = -self.change_points * delta
+            gamma = -self.t_change * delta
             g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
         # [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...).
@@ -1422,10 +1422,10 @@ class CustomProphet:
         # was enough to move the scipy path to a point 2.96 nats worse.
         if self._multiplicative:
             multiplier = 1.0 + np.dot(x * self.s_m, beta)
-            r = self.normalized_y - (g * multiplier + np.dot(x * self.s_a, beta))
+            r = self.y_scaled - (g * multiplier + np.dot(x * self.s_a, beta))
         else:
             multiplier = None
-            r = self.normalized_y - g - np.dot(x, beta)
+            r = self.y_scaled - g - np.dot(x, beta)
 
         # Every trend block picks up the multiplier, since d(yhat)/d(a trend
         # parameter) = d(g)/d(that parameter) * multiplier. beta's picks up the
@@ -1441,7 +1441,7 @@ class CustomProphet:
         elif trend_jacobian is None:
             dk = np.array([-np.sum(r_scaled * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
             dm = np.array([-np.sum(r_scaled) / sigma_obs**2 + m / self.sigma_m**2])
-            ddelta = -np.sum(r_scaled[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
+            ddelta = -np.sum(r_scaled[:, None] * (self.t_scaled[:, None] - self.t_change) * A, axis=0) / sigma_obs**2
         else:
             # one contraction for all three blocks: the Jacobian already holds
             # d(trend)/d(k, m, delta), including gamma's recursion
@@ -1471,7 +1471,7 @@ class CustomProphet:
         # sensitive to the last bits (see the note on the additive branch).
         if self.growth == 'logistic':
             g, trend_jacobian = logistic_trend_and_jacobian(
-                k, m, delta, self.t_scaled, self.cap_scaled, A, self.change_points)
+                k, m, delta, self.t_scaled, self.cap_scaled, A, self.t_change)
         elif self.growth == 'flat':
             # [stan] flat_trend: rep_vector(m, T). k and delta remain
             # parameters and keep their priors, but the likelihood does not see
@@ -1480,7 +1480,7 @@ class CustomProphet:
             g = np.full(self.T, m)
         else:
             trend_jacobian = None
-            gamma = -self.change_points * delta
+            gamma = -self.t_change * delta
             g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
 
         # [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...).
@@ -1490,10 +1490,10 @@ class CustomProphet:
         # was enough to move the scipy path to a point 2.96 nats worse.
         if self._multiplicative:
             multiplier = 1.0 + np.dot(x * self.s_m, beta)
-            r = self.normalized_y - (g * multiplier + np.dot(x * self.s_a, beta))
+            r = self.y_scaled - (g * multiplier + np.dot(x * self.s_a, beta))
         else:
             multiplier = None
-            r = self.normalized_y - g - np.dot(x, beta)
+            r = self.y_scaled - g - np.dot(x, beta)
 
         minus_log_posterior = self.T * np.log(sigma_obs) + \
                       np.sum(r**2) / (2*sigma_obs**2) + \
@@ -1516,7 +1516,7 @@ class CustomProphet:
         elif trend_jacobian is None:
             dk = np.array([-np.sum(r_scaled * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
             dm = np.array([-np.sum(r_scaled) / sigma_obs**2 + m / self.sigma_m**2])
-            ddelta = -np.sum(r_scaled[:, None] * (self.t_scaled[:, None] - self.change_points) * A, axis=0) / sigma_obs**2
+            ddelta = -np.sum(r_scaled[:, None] * (self.t_scaled[:, None] - self.t_change) * A, axis=0) / sigma_obs**2
         else:
             # one contraction for all three blocks: the Jacobian already holds
             # d(trend)/d(k, m, delta), including gamma's recursion
@@ -1592,7 +1592,7 @@ class CustomProphet:
 
         self._normalize_y()
         self._setup_growth(df)
-        self._set_auto_seasonalities()
+        self.set_auto_seasonalities()
         # after selection, since a conditioned component may have been added by
         # hand while an auto-selected one never carries a condition
         self.condition_masks = condition_masks(self.seasonalities, df)
@@ -1601,8 +1601,8 @@ class CustomProphet:
         # recorded after the features are built, so predict presents the same
         # columns even for a holiday that never lands in the future frame
         if self.train_holiday_names is None and self._holiday_columns:
-            self.train_holiday_names = list(holiday_features(
-                self.ds, self._holiday_frame_for(self.ds), self.holidays_prior_scale)[2])
+            self.train_holiday_names = list(make_holiday_features(
+                self.ds, self.construct_holiday_dataframe(self.ds), self.holidays_prior_scale)[2])
 
         # standardization is fitted here, on the history, and reapplied
         # unchanged at predict time. [fc] initialize_scales.
@@ -1621,12 +1621,12 @@ class CustomProphet:
         # beta at zero, sigma_obs at 1.0. Prophet passes these to Stan
         # explicitly, so Stan's random init is never used.
         if self.growth == 'logistic':
-            k_init, m_init = logistic_growth_init(self.t_scaled, self.normalized_y,
+            k_init, m_init = logistic_growth_init(self.t_scaled, self.y_scaled,
                                                   self.cap_scaled)
         elif self.growth == 'flat':
-            k_init, m_init = flat_growth_init(self.normalized_y)
+            k_init, m_init = flat_growth_init(self.y_scaled)
         else:
-            k_init, m_init = linear_growth_init(self.t_scaled, self.normalized_y)
+            k_init, m_init = linear_growth_init(self.t_scaled, self.y_scaled)
         initial_params_dict = {
             'k': k_init,
             'm': m_init,
@@ -1729,7 +1729,7 @@ class CustomProphet:
         self.t_seasonality = seasonal_time(self.ds)
         self._normalize_y()
         self._setup_growth(df)
-        self._set_auto_seasonalities()
+        self.set_auto_seasonalities()
         # after selection, since a conditioned component may have been added by
         # hand while an auto-selected one never carries a condition
         self.condition_masks = condition_masks(self.seasonalities, df)
@@ -1738,8 +1738,8 @@ class CustomProphet:
         # recorded after the features are built, so predict presents the same
         # columns even for a holiday that never lands in the future frame
         if self.train_holiday_names is None and self._holiday_columns:
-            self.train_holiday_names = list(holiday_features(
-                self.ds, self._holiday_frame_for(self.ds), self.holidays_prior_scale)[2])
+            self.train_holiday_names = list(make_holiday_features(
+                self.ds, self.construct_holiday_dataframe(self.ds), self.holidays_prior_scale)[2])
 
         # standardization is fitted here, on the history, and reapplied
         # unchanged at predict time. [fc] initialize_scales.
@@ -1762,12 +1762,12 @@ class CustomProphet:
         # Stan's random default is never reached. The draw also came from an
         # unseeded RNG, making fit_cpp() non-reproducible run to run.
         if self.growth == 'logistic':
-            k_init, m_init = logistic_growth_init(self.t_scaled, self.normalized_y,
+            k_init, m_init = logistic_growth_init(self.t_scaled, self.y_scaled,
                                                   self.cap_scaled)
         elif self.growth == 'flat':
-            k_init, m_init = flat_growth_init(self.normalized_y)
+            k_init, m_init = flat_growth_init(self.y_scaled)
         else:
-            k_init, m_init = linear_growth_init(self.t_scaled, self.normalized_y)
+            k_init, m_init = linear_growth_init(self.t_scaled, self.y_scaled)
         defaults = {
             'k': k_init,
             'm': m_init,
@@ -1789,9 +1789,9 @@ class CustomProphet:
         result = cpp.optimize(
             params=params,
             t_scaled=self.t_scaled,
-            change_points=self.change_points,
+            t_change=self.t_change,
             t_seasonality=self.t_seasonality,
-            normalized_y=self.normalized_y,
+            y_scaled=self.y_scaled,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE,
             sigma_k=self.sigma_k,
             sigma_m=self.sigma_m,
@@ -2050,8 +2050,8 @@ class CustomProphet:
                         else x_draw.dot(beta))
             # [fc] sample_model adds normal(0, sigma_obs) per draw; without it
             # the interval is the trend's alone and ~18x too narrow (#63)
-            noise = self.rng.normal(0.0, sigma_obs * self.y_absmax, len(t_scaled))
-            yhat_draws[i] = trend_draws[i] * multiplier + seasonal * self.y_absmax + noise
+            noise = self.rng.normal(0.0, sigma_obs * self.y_scale, len(t_scaled))
+            yhat_draws[i] = trend_draws[i] * multiplier + seasonal * self.y_scale + noise
 
         multiplier = 1.0 + x.dot(self.s_m * beta) if self._multiplicative else 1.0
         seasonality = x.dot(self.s_a * beta) if self._multiplicative else x.dot(beta)
@@ -2073,7 +2073,7 @@ class CustomProphet:
         """
         k, m, delta, _sigma_obs, _beta = extract_params(self.opt_params, self.layout)
         horizon_scaled = float(np.max(t_scaled))
-        n_changepoints = len(self.change_points)
+        n_changepoints = len(self.t_change)
         # [fc] `+ 1e-8`: a fit with no active changepoints gives mean|delta| of
         # exactly zero, and Laplace(0, 0) is degenerate -- every draw would
         # return the same trend and the band would be identically zero rather
@@ -2090,10 +2090,10 @@ class CustomProphet:
                 1.0 + self.rng.random(n_new) * (horizon_scaled - 1.0))
             new_delta = self.rng.laplace(0, lambda_mle, n_new)
 
-            draws.append(compute_trend(
+            draws.append(predict_trend(
                 k, m, np.concatenate((delta, new_delta)),
-                np.concatenate((self.change_points, new_change_points)),
-                t_scaled, self.y_absmax, cap_scaled, floor, self.growth))
+                np.concatenate((self.t_change, new_change_points)),
+                t_scaled, self.y_scale, cap_scaled, floor, self.growth))
         return np.array(draws)
 
     def trend_forecast_uncertainty(self, horizon=30, n_samples=None,
@@ -2133,7 +2133,7 @@ class CustomProphet:
         # [fc] the rate of the Poisson process is S per unit of scaled time,
         # so a frame reaching T sees S * (T - 1) new changepoints on average.
         horizon_scaled = float(future_t_scaled.max())
-        n_changepoints = len(self.change_points)
+        n_changepoints = len(self.t_change)
         # [fc] `+ 1e-8`: a fit with no active changepoints gives mean|delta| = 0,
         # and Laplace(0, 0) is undefined. Without it a perfectly straight series
         # produced a zero-width band rather than a narrow one.
@@ -2159,8 +2159,8 @@ class CustomProphet:
         # own capacities -- they are data, and may well differ from the
         # history's. [fc] predict re-runs setup_dataframe for the same reason.
         cap_scaled, floor = self._future_capacity(future_df)
-        trend = compute_trend(k, m, delta, self.change_points,
-                              future_df['t_scaled'].values, self.y_absmax,
+        trend = predict_trend(k, m, delta, self.t_change,
+                              future_df['t_scaled'].values, self.y_scale,
                               cap_scaled, floor, self.growth)
 
         # Seasonality, the regressor draws and the yhat draws, all from one
@@ -2173,7 +2173,7 @@ class CustomProphet:
         # [stan] trend .* (1 + X_sm * beta) + X_sa * beta. `trend` is already in
         # the series' own units, and the multiplier is unitless, so only the
         # additive part needs de-normalizing.
-        yhat = trend * multiplier + seasonality * self.y_absmax
+        yhat = trend * multiplier + seasonality * self.y_scale
 
         forecast = future_df[['ds']].copy()
         forecast['trend'] = trend
@@ -2188,7 +2188,7 @@ class CustomProphet:
 
         # the additive part in the series' units, plus what the multiplicative
         # part contributes at the fitted trend -- together, yhat - trend
-        forecast['seasonality'] = seasonality * self.y_absmax + trend * (multiplier - 1.0)
+        forecast['seasonality'] = seasonality * self.y_scale + trend * (multiplier - 1.0)
 
         forecast['yhat'] = yhat
 

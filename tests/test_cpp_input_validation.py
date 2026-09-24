@@ -33,14 +33,14 @@ BENCHMARK = Path(__file__).parent.parent / "benchmark"
 CASES = {
     "t_seasonality_short": "kw['t_seasonality'] = kw['t_seasonality'][:-5]",
     "t_seasonality_long": "kw['t_seasonality'] = np.r_[kw['t_seasonality'], kw['t_seasonality'][:5]]",
-    "normalized_y_short": "kw['normalized_y'] = kw['normalized_y'][:-5]",
+    "normalized_y_short": "kw['y_scaled'] = kw['y_scaled'][:-5]",
     "fourier_order_negative": "kw['fourier_orders'] = [-3]",
     "fourier_order_zero": "kw['fourier_orders'] = [0]",
     "period_negative": "kw['seasonality_periods'] = [-365.25]",
     "period_zero": "kw['seasonality_periods'] = [0.0]",
     "period_nan": "kw['seasonality_periods'] = [float('nan')]",
     "period_inf": "kw['seasonality_periods'] = [float('inf')]",
-    "empty_series": "kw['t_scaled'] = np.zeros(0); kw['normalized_y'] = np.zeros(0); kw['t_seasonality'] = np.zeros(0)",
+    "empty_series": "kw['t_scaled'] = np.zeros(0); kw['y_scaled'] = np.zeros(0); kw['t_seasonality'] = np.zeros(0)",
     "orders_periods_mismatched": "kw['fourier_orders'] = [10, 3]",
     "sigmas_short": "kw['sigmas'] = np.full(19, 10.0)",
     "sigmas_non_positive": "kw['sigmas'] = np.r_[np.full(19, 10.0), 0.0]",
@@ -77,8 +77,8 @@ model._normalize_y(); model._build_layout(); model._generate_change_points()
 
 def fresh():
     return dict(params=np.zeros(model.layout.size), t_scaled=model.t_scaled,
-                change_points=model.change_points, t_seasonality=model.t_seasonality,
-                normalized_y=model.normalized_y, sigma_obs_prior_scale=0.5,
+                t_change=model.t_change, t_seasonality=model.t_seasonality,
+                y_scaled=model.y_scaled, sigma_obs_prior_scale=0.5,
                 sigma_k=5.0, sigma_m=5.0, sigmas=np.full(20, 10.0), tau=0.05,
                 fourier_orders=[10], seasonality_periods=[365.25])
 
@@ -191,9 +191,9 @@ def test_valid_inputs_are_still_accepted(prepared_model, cpp_module):
 
     value, gradient = cpp_module.minus_log_posterior_and_gradient(
         params=np.zeros(prepared_model.layout.size), t_scaled=prepared_model.t_scaled,
-        change_points=prepared_model.change_points,
+        t_change=prepared_model.t_change,
         t_seasonality=prepared_model.t_seasonality,
-        normalized_y=prepared_model.normalized_y, sigma_obs_prior_scale=0.5,
+        y_scaled=prepared_model.y_scaled, sigma_obs_prior_scale=0.5,
         sigma_k=prepared_model.sigma_k, sigma_m=prepared_model.sigma_m,
         sigmas=prepared_model.sigmas, tau=prepared_model.tau,
         fourier_orders=[10], seasonality_periods=[365.25])

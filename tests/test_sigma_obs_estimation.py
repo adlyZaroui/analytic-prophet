@@ -37,7 +37,7 @@ def test_extract_params_unpacks_sigma_obs_at_its_own_slot(prepared_model, param_
 
 
 def test_minus_log_posterior_matches_closed_form_gaussian_nll(prepared_model, param_size):
-    """With k=m=delta=beta=0 the residual is just normalized_y, so the
+    """With k=m=delta=beta=0 the residual is just y_scaled, so the
     posterior reduces to a closed form that can be checked by hand: the
     Gaussian NLL (including its T*log(sigma_obs) normalizing term) plus the
     normal(0, SIGMA_OBS_PRIOR_SCALE) prior on sigma_obs."""
@@ -48,7 +48,7 @@ def test_minus_log_posterior_matches_closed_form_gaussian_nll(prepared_model, pa
 
     mlp = model._minus_log_posterior(params)
 
-    r = model.normalized_y
+    r = model.y_scaled
     expected = (
         model.T * np.log(sigma_obs)
         + np.sum(r**2) / (2 * sigma_obs**2)

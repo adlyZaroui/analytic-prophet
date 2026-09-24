@@ -17,7 +17,7 @@ import pytest
 
 from customProphet import (BUILT_IN_SEASONALITIES, check_seasonality_supported,
                            CustomProphet, DEFAULT_LAYOUT, ParameterLayout,
-                           extract_params, fourier_components,
+                           extract_params, fourier_series,
                            from_dict_to_array, n_yearly, N_CHANGE_POINTS, seasonality,
                            seasonality_columns, seasonality_design_matrix, SIGMA,
                            SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD)
@@ -123,8 +123,8 @@ def test_design_matrix_concatenates_blocks_in_registry_order(prepared_model):
     x = seasonality_design_matrix(t, yearly_and_weekly())
 
     assert x.shape == (len(t), 2 * 10 + 2 * 3)
-    np.testing.assert_array_equal(x[:, :20], fourier_components(t, 365.25, 10))
-    np.testing.assert_array_equal(x[:, 20:], fourier_components(t, 7.0, 3))
+    np.testing.assert_array_equal(x[:, :20], fourier_series(t, 365.25, 10))
+    np.testing.assert_array_equal(x[:, 20:], fourier_series(t, 7.0, 3))
 
 
 def test_empty_registry_gives_a_zero_width_block(prepared_model):
@@ -234,7 +234,7 @@ def test_a_trend_only_fit_is_prophets_fit(prophet_comparison, compiled_optimizer
 
     ours = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
                          daily_seasonality=False, growth="flat")
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert ours.layout.n_regressor_columns == 0
@@ -303,8 +303,8 @@ def test_cpp_rejects_a_params_vector_the_registry_cannot_fill(prepared_model, cp
     with pytest.raises(ValueError, match="seasonality coefficients"):
         cpp_module.optimize(
             params=np.zeros(DEFAULT_LAYOUT.size), t_scaled=model.t_scaled,
-            change_points=model.change_points, t_seasonality=model.t_seasonality,
-            normalized_y=model.normalized_y,
+            t_change=model.t_change, t_seasonality=model.t_seasonality,
+            y_scaled=model.y_scaled,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=model.sigma_k,
             sigma_m=model.sigma_m, sigmas=np.full(26, SIGMA), tau=model.tau,
             fourier_orders=[10, 3], seasonality_periods=[365.25, 7.0])
@@ -314,9 +314,9 @@ def test_cpp_rejects_mismatched_orders_and_periods(prepared_model, cpp_module):
     with pytest.raises(ValueError, match="one period per seasonality"):
         cpp_module.minus_log_posterior_and_gradient(
             params=np.zeros(DEFAULT_LAYOUT.size), t_scaled=prepared_model.t_scaled,
-            change_points=prepared_model.change_points,
+            t_change=prepared_model.t_change,
             t_seasonality=prepared_model.t_seasonality,
-            normalized_y=prepared_model.normalized_y,
+            y_scaled=prepared_model.y_scaled,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=prepared_model.sigma_k,
             sigma_m=prepared_model.sigma_m, sigmas=np.full(26, SIGMA),
             tau=prepared_model.tau, fourier_orders=[10, 3], seasonality_periods=[365.25])

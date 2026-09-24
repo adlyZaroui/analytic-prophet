@@ -1,20 +1,20 @@
 """
 predict() de-normalizes by combining the slope and intercept terms in
-normalized-y space FIRST, then multiplying the whole trend by y_absmax
+normalized-y space FIRST, then multiplying the whole trend by y_scale
 once:
 
     trend = (k + A.dot(delta)) * t_scaled + (m + A.dot(gamma))
-    forecast["trend"] = trend * self.y_absmax
+    forecast["trend"] = trend * self.y_scale
 
-trend_forecast_uncertainty currently multiplies y_absmax onto only the
+trend_forecast_uncertainty currently multiplies y_scale onto only the
 intercept-like term:
 
     future_trend = (k + det_dot(new_A, new_delta)) * future_t_scaled \
-                 + (m + det_dot(new_A, new_gamma)) * self.y_absmax
+                 + (m + det_dot(new_A, new_gamma)) * self.y_scale
 
 CONFIRMED, not just suspected: running predict() with k=0.4 and
 m=delta=beta=0 gives trend=4.7146 but trend_lower=trend_upper=0.4080 --
-off by a factor of exactly y_absmax (11.555 in that run). The slope-driven
+off by a factor of exactly y_scale (11.555 in that run). The slope-driven
 part of the uncertainty band is left in normalized-y units.
 
 Two tests, two different jobs:
@@ -31,21 +31,21 @@ import numpy as np
 import pytest
 
 
-def _compute_trend(k, m, delta, change_points, t_scaled, y_absmax):
-    A = (t_scaled[:, None] > change_points) * 1
-    gamma = -change_points * delta
+def _compute_trend(k, m, delta, t_change, t_scaled, y_scale):
+    A = (t_scaled[:, None] > t_change) * 1
+    gamma = -t_change * delta
     trend_normalized = (k + np.dot(A, delta)) * t_scaled + (m + np.dot(A, gamma))
-    return trend_normalized * y_absmax
+    return trend_normalized * y_scale
 
 
 def test_trend_denormalization_is_uniform(prepared_model):
     k, m = 0.4, -0.1
     delta = np.zeros(25)
     t_scaled = prepared_model.t_scaled
-    change_points = prepared_model.change_points
+    t_change = prepared_model.t_change
 
-    trend_scale_1 = _compute_trend(k, m, delta, change_points, t_scaled, y_absmax=1.0)
-    trend_scale_10 = _compute_trend(k, m, delta, change_points, t_scaled, y_absmax=10.0)
+    trend_scale_1 = _compute_trend(k, m, delta, t_change, t_scaled, y_scale=1.0)
+    trend_scale_10 = _compute_trend(k, m, delta, t_change, t_scaled, y_scale=10.0)
 
     np.testing.assert_allclose(trend_scale_10, trend_scale_1 * 10.0)
 
@@ -56,7 +56,7 @@ def test_predict_trend_bounds_are_correctly_scaled(prepared_model, param_size):
     beta, and m held at zero so the only surviving contribution is k.
     Confirmed by direct execution: this currently fails, with
     trend_lower/trend_upper smaller than `trend` by exactly a factor of
-    y_absmax. Expected to pass once trend_forecast_uncertainty shares
+    y_scale. Expected to pass once trend_forecast_uncertainty shares
     _compute_trend (or equivalent) with predict().
     """
     model = prepared_model
@@ -71,7 +71,7 @@ def test_predict_trend_bounds_are_correctly_scaled(prepared_model, param_size):
         (future_df["ds"].iloc[-1] - model.ds.min())
         / (model.ds.max() - model.ds.min())
     )
-    expected = 0.4 * last_t_scaled * model.y_absmax
+    expected = 0.4 * last_t_scaled * model.y_scale
 
     assert forecast["trend"].iloc[-1] == pytest.approx(expected)
     assert forecast["trend_lower"].iloc[-1] == pytest.approx(expected, rel=0.05)

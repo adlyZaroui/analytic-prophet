@@ -281,7 +281,7 @@ def test_a_regressor_carrying_signal_is_actually_fitted(peyton_manning_df,
     coefficient = model.opt_params[model.layout.holidays][-1]
     std = model.extra_regressors["driver"]["std"]
     # beta is in normalized units against the standardized column
-    recovered = coefficient * model.y_absmax / std
+    recovered = coefficient * model.y_scale / std
     assert recovered == pytest.approx(2.0, rel=0.1)
 
 
@@ -305,7 +305,7 @@ def test_design_matrix_sigmas_and_posterior_match_prophets(prophet_comparison,
     t_change = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = configure(CustomProphet())
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     _, X_ours = ours._design_matrices()

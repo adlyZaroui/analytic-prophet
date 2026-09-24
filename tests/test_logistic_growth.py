@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import (CustomProphet, canonical_to_cpp, compute_trend,
+from customProphet import (CustomProphet, canonical_to_cpp, predict_trend,
                            logistic_gamma_and_jacobian, logistic_growth_init,
                            logistic_trend_and_jacobian)
 
@@ -50,16 +50,16 @@ def test_gamma_matches_stans_recursion():
     rng = np.random.default_rng(0)
     k, m = 1.7, 0.3
     delta = rng.normal(scale=0.08, size=6)
-    change_points = np.sort(rng.uniform(0.05, 0.9, 6))
+    t_change = np.sort(rng.uniform(0.05, 0.9, 6))
 
     k_s = np.concatenate(([k], k + np.cumsum(delta)))
     expected = np.empty(6)
     m_pr = m
     for i in range(6):
-        expected[i] = (change_points[i] - m_pr) * (1 - k_s[i] / k_s[i + 1])
+        expected[i] = (t_change[i] - m_pr) * (1 - k_s[i] / k_s[i + 1])
         m_pr += expected[i]
 
-    gamma, _ = logistic_gamma_and_jacobian(k, m, delta, change_points)
+    gamma, _ = logistic_gamma_and_jacobian(k, m, delta, t_change)
     np.testing.assert_allclose(gamma, expected, rtol=0, atol=0)
 
 
@@ -68,9 +68,9 @@ def test_gamma_jacobian_matches_finite_differences():
     gamma, so a Jacobian that forgot the carry would still look plausible."""
     rng = np.random.default_rng(1)
     theta = np.concatenate(([1.7], [0.3], rng.normal(scale=0.08, size=6)))
-    change_points = np.sort(rng.uniform(0.05, 0.9, 6))
+    t_change = np.sort(rng.uniform(0.05, 0.9, 6))
 
-    _, analytic = logistic_gamma_and_jacobian(theta[0], theta[1], theta[2:], change_points)
+    _, analytic = logistic_gamma_and_jacobian(theta[0], theta[1], theta[2:], t_change)
 
     step = 1e-7
     numerical = np.empty_like(analytic)
@@ -79,8 +79,8 @@ def test_gamma_jacobian_matches_finite_differences():
         up[j] += step
         down[j] -= step
         numerical[:, j] = (
-            logistic_gamma_and_jacobian(up[0], up[1], up[2:], change_points)[0]
-            - logistic_gamma_and_jacobian(down[0], down[1], down[2:], change_points)[0]) / (2 * step)
+            logistic_gamma_and_jacobian(up[0], up[1], up[2:], t_change)[0]
+            - logistic_gamma_and_jacobian(down[0], down[1], down[2:], t_change)[0]) / (2 * step)
 
     np.testing.assert_allclose(analytic, numerical, rtol=1e-5, atol=1e-7)
 
@@ -89,16 +89,16 @@ def test_the_trend_is_continuous_at_every_changepoint():
     """What gamma exists for. A discontinuity would mean the offsets are being
     computed independently rather than carried forward."""
     rng = np.random.default_rng(2)
-    change_points = np.array([0.2, 0.5, 0.75])
+    t_change = np.array([0.2, 0.5, 0.75])
     delta = rng.normal(scale=0.3, size=3)
-    t = np.sort(np.concatenate([np.linspace(0, 1, 400), change_points - 1e-9,
-                                change_points + 1e-9]))
-    A = (t[:, None] >= change_points) * 1.0
+    t = np.sort(np.concatenate([np.linspace(0, 1, 400), t_change - 1e-9,
+                                t_change + 1e-9]))
+    A = (t[:, None] >= t_change) * 1.0
 
     trend, _ = logistic_trend_and_jacobian(1.5, 0.4, delta, t, np.full(len(t), 1.3),
-                                           A, change_points)
+                                           A, t_change)
 
-    for breakpoint in change_points:
+    for breakpoint in t_change:
         before = trend[np.searchsorted(t, breakpoint) - 1]
         after = trend[np.searchsorted(t, breakpoint)]
         assert abs(after - before) < 1e-6
@@ -250,7 +250,7 @@ def test_a_forecast_stays_under_a_raised_capacity(peyton_manning_df,
 
 def test_compute_trend_agrees_with_the_fitted_trend(peyton_manning_df,
                                                     compiled_optimizer_module):
-    """predict() and trend_forecast_uncertainty() share compute_trend, which
+    """predict() and trend_forecast_uncertainty() share predict_trend, which
     has to produce the same logistic curve the objective fitted."""
     df = with_cap(peyton_manning_df.iloc[:400].reset_index(drop=True))
     model = logistic_model()
@@ -261,11 +261,11 @@ def test_compute_trend_agrees_with_the_fitted_trend(peyton_manning_df,
     A, _ = model._design_matrices()
 
     direct, _ = logistic_trend_and_jacobian(k, m, delta, model.t_scaled,
-                                            model.cap_scaled, A, model.change_points)
-    shared = compute_trend(k, m, delta, model.change_points, model.t_scaled,
-                           model.y_absmax, model.cap_scaled, model.floor)
+                                            model.cap_scaled, A, model.t_change)
+    shared = predict_trend(k, m, delta, model.t_change, model.t_scaled,
+                           model.y_scale, model.cap_scaled, model.floor)
 
-    np.testing.assert_allclose(shared, direct * model.y_absmax, rtol=1e-12)
+    np.testing.assert_allclose(shared, direct * model.y_scale, rtol=1e-12)
 
 
 # -- initialization -----------------------------------------------------
@@ -326,7 +326,7 @@ def test_objective_and_posterior_agree_with_prophet(prophet_comparison,
     t_change = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = logistic_model()
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     np.testing.assert_allclose(ours.cap_scaled,

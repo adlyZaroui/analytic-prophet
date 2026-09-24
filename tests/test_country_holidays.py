@@ -21,41 +21,49 @@ import pandas as pd
 import pytest
 
 from customProphet import (COUNTRY_CODE_SUBSTITUTIONS, CustomProphet,
-                           country_holiday_names, country_holidays_frame)
+                           get_holiday_names, make_holidays_df)
 
 COUNTRIES = ["US", "FR", "UK", "DE", "IN"]
 
 
 @pytest.fixture(scope="module")
 def prophet_holiday_helpers(prophet_comparison):
-    from prophet.make_holidays import get_holiday_names, make_holidays_df
-    return make_holidays_df, get_holiday_names
+    """Prophet's two, under names that cannot be mistaken for ours.
+
+    Both implementations now call these `make_holidays_df` and
+    `get_holiday_names` (#54), so importing Prophet's at module scope would
+    shadow ours and leave these tests comparing Prophet against itself --
+    passing while verifying nothing.
+    """
+    from prophet.make_holidays import get_holiday_names as prophet_names
+    from prophet.make_holidays import make_holidays_df as prophet_frame
+    return prophet_frame, prophet_names
 
 
 # -- generation ---------------------------------------------------------
 
 @pytest.mark.parametrize("country", COUNTRIES)
 def test_the_frame_matches_prophets(prophet_holiday_helpers, country):
-    make_holidays_df, _ = prophet_holiday_helpers
+    prophet_frame, _ = prophet_holiday_helpers
     years = [2015, 2016]
 
     def normalize(frame):
         return frame.sort_values(["ds", "holiday"]).reset_index(drop=True)
 
-    assert normalize(country_holidays_frame(years, country)).equals(
-        normalize(make_holidays_df(years, country)))
+    assert normalize(make_holidays_df(years, country)).equals(
+        normalize(prophet_frame(years, country)))
 
 
 @pytest.mark.parametrize("country", COUNTRIES)
 def test_the_name_set_matches_prophets(prophet_holiday_helpers, country):
-    _, get_holiday_names = prophet_holiday_helpers
-    assert country_holiday_names(country) == get_holiday_names(country)
+    _, prophet_names = prophet_holiday_helpers
+    assert get_holiday_names(country) == prophet_names(country)
 
 
 def test_one_date_carrying_several_names_becomes_several_rows():
     """[fc] make_holidays_df explodes the name list, so a date with two
     holidays gets a row each -- and therefore a column each."""
-    frame = country_holidays_frame(range(2010, 2021), "US")
+    frame = make_holidays_df(range(2010, 2021), "US")
     counts = frame.groupby("ds").size()
 
     assert frame["ds"].is_unique or counts.max() > 1
@@ -65,13 +73,13 @@ def test_one_date_carrying_several_names_becomes_several_rows():
 
 def test_an_unsupported_country_says_so():
     with pytest.raises(AttributeError, match="not currently supported"):
-        country_holidays_frame([2020], "Atlantis")
+        make_holidays_df([2020], "Atlantis")
 
 
 def test_the_turkey_code_substitution_is_carried():
     """[fc] the one substitution in get_country_holidays_class."""
     assert COUNTRY_CODE_SUBSTITUTIONS == {"TU": "TR"}
-    assert country_holiday_names("TU") == country_holiday_names("TR")
+    assert get_holiday_names("TU") == get_holiday_names("TR")
 
 
 # -- registering --------------------------------------------------------
@@ -207,7 +215,7 @@ def test_design_matrix_and_posterior_match_prophets(prophet_comparison,
     t_change = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = CustomProphet().add_country_holidays("US")
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     _, X_ours = ours._design_matrices()

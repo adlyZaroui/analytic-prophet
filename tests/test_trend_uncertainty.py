@@ -118,7 +118,7 @@ def test_the_number_of_new_changepoints_follows_the_poisson_rate(fitted):
     assert len(rates) == 1, "the rate must not vary between draws"
     rate = rates.pop()
 
-    expected = len(fitted.change_points) * (t_scaled.max() - 1.0)
+    expected = len(fitted.t_change) * (t_scaled.max() - 1.0)
     assert rate == pytest.approx(expected)
 
     drawn = np.array([count for _, count in recording.counts])

@@ -46,7 +46,7 @@ def posterior_comparison(df, lib_path):
 
     # our fit, on Prophet's changepoints so delta indexes the same breakpoints
     ours = CustomProphet()
-    ours._generate_change_points = lambda: setattr(ours, "change_points", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
     ours.fit_cpp(df, lib_path=lib_path)
 
     X_ours = seasonality_design_matrix(ours.t_seasonality, ours.seasonalities)

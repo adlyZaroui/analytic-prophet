@@ -15,11 +15,11 @@ namespace py = pybind11;
 
 // Column-for-column identical to Prophet's fourier_series: sin(order i) at
 // column 2i, cos(order i) at 2i+1, with t_days measured from the Unix epoch.
-// Must stay in lockstep with fourier_components() in customProphet.py --
+// Must stay in lockstep with fourier_series() in customProphet.py --
 // tests/test_prophet_agreement.py compares both against Prophet's own matrix.
-Eigen::MatrixXd fourier_components(const Eigen::VectorXd& t_days, double period, int n) {
+Eigen::MatrixXd fourier_series(const Eigen::VectorXd& t_days, double period, int n) {
     // `2*pi/period` folded into one constant, matching
-    // customProphet.fourier_components rather than Prophet's operation order.
+    // customProphet.fourier_series rather than Prophet's operation order.
     // Deliberate -- see README, "Where this deviates on purpose".
     Eigen::VectorXd orders = Eigen::VectorXd::LinSpaced(n, 1, n) * (2 * M_PI / period);
     Eigen::MatrixXd angles = t_days * orders.transpose();
@@ -159,7 +159,7 @@ Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
     for (std::size_t i = 0; i < fourier_orders.size(); ++i) {
         const int width = 2 * fourier_orders[i];
         Eigen::MatrixXd block =
-            fourier_components(t_seasonality_vec, periods[i], fourier_orders[i]);
+            fourier_series(t_seasonality_vec, periods[i], fourier_orders[i]);
         // [fc] features[~df[condition_name]] = 0 -- the columns stay, so beta
         // keeps its width and only the excluded rows stop contributing.
         if (conditioned) {
@@ -180,7 +180,7 @@ Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
 // Jacobian is accumulated forward alongside gamma rather than written down.
 void logistic_gamma_and_jacobian(double k, double m,
                                  const Eigen::VectorXd& delta,
-                                 const Eigen::VectorXd& change_points,
+                                 const Eigen::VectorXd& t_change,
                                  Eigen::VectorXd& gamma,
                                  Eigen::MatrixXd& dgamma) {
     const int S = static_cast<int>(delta.size());
@@ -212,8 +212,8 @@ void logistic_gamma_and_jacobian(double k, double m,
             -(dk_s.row(i).transpose() * k_s(i + 1) - dk_s.row(i + 1).transpose() * k_s(i))
             / (k_s(i + 1) * k_s(i + 1));
 
-        gamma(i) = (change_points(i) - m_pr) * c;
-        dgamma.row(i) = (-dm_pr * c + (change_points(i) - m_pr) * dc).transpose();
+        gamma(i) = (t_change(i) - m_pr) * c;
+        dgamma.row(i) = (-dm_pr * c + (t_change(i) - m_pr) * dc).transpose();
 
         m_pr += gamma(i);
         dm_pr += dgamma.row(i).transpose();
@@ -229,7 +229,7 @@ void logistic_trend_and_jacobian(double k, double m,
                                  const Eigen::VectorXd& t_scaled,
                                  const Eigen::VectorXd& cap_scaled,
                                  const Eigen::MatrixXd& A,
-                                 const Eigen::VectorXd& change_points,
+                                 const Eigen::VectorXd& t_change,
                                  Eigen::VectorXd& trend,
                                  Eigen::MatrixXd& jacobian) {
     const int T = static_cast<int>(t_scaled.size());
@@ -237,7 +237,7 @@ void logistic_trend_and_jacobian(double k, double m,
 
     Eigen::VectorXd gamma;
     Eigen::MatrixXd dgamma;
-    logistic_gamma_and_jacobian(k, m, delta, change_points, gamma, dgamma);
+    logistic_gamma_and_jacobian(k, m, delta, t_change, gamma, dgamma);
 
     const Eigen::VectorXd rate = (k * Eigen::VectorXd::Ones(T) + A * delta);
     const Eigen::VectorXd offset = (m * Eigen::VectorXd::Ones(T) + A * gamma);
@@ -295,7 +295,7 @@ void validate_inputs(const Eigen::VectorXd& t_scaled_vec,
     }
     if (normalized_y_vec.size() != T) {
         throw std::invalid_argument(
-            "normalized_y has " + std::to_string(normalized_y_vec.size()) +
+            "y_scaled has " + std::to_string(normalized_y_vec.size()) +
             " entries but t_scaled has " + std::to_string(T) + "; they index the "
             "same observations and must be the same length");
     }
@@ -303,7 +303,7 @@ void validate_inputs(const Eigen::VectorXd& t_scaled_vec,
         throw std::invalid_argument(
             "the changepoint matrix is " + std::to_string(A.rows()) + "x" +
             std::to_string(A.cols()) + " but t_scaled has " + std::to_string(T) +
-            " entries and change_points has " +
+            " entries and t_change has " +
             std::to_string(change_points_vec.size()));
     }
     if (x.rows() != T) {
@@ -595,12 +595,12 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
 
 struct SplitObjective {
     const Eigen::VectorXd& t_scaled;
-    const Eigen::VectorXd& change_points;
+    const Eigen::VectorXd& t_change;
     // Built once by optimize() before the solver loop: constant for the whole
     // fit, and rebuilding them was the bulk of every evaluation (#28).
     Eigen::MatrixXd A;
     Eigen::MatrixXd x;
-    const Eigen::VectorXd& normalized_y;
+    const Eigen::VectorXd& y_scaled;
     double sigma_obs_prior_scale;
     double sigma_k;
     double sigma_m;
@@ -634,8 +634,8 @@ struct SplitObjective {
 
         double value = 0.0;
         Eigen::VectorXd natural_grad(natural.size());
-        minus_log_posterior_and_gradient(natural, t_scaled, change_points, A, x,
-                                         normalized_y, sigma_obs_prior_scale, sigma_k,
+        minus_log_posterior_and_gradient(natural, t_scaled, t_change, A, x,
+                                         y_scaled, sigma_obs_prior_scale, sigma_k,
                                          sigma_m, sigmas, s_m, cap_scaled, trend_indicator,
                                          tau, value, natural_grad,
                                          // the split form supplies the L1 term itself
@@ -672,9 +672,9 @@ struct OptimizeResult {
 
 OptimizeResult optimize(Eigen::VectorXd params,
                         const Eigen::Ref<const Eigen::VectorXd>& t_scaled,
-                        const Eigen::Ref<const Eigen::VectorXd>& change_points,
+                        const Eigen::Ref<const Eigen::VectorXd>& t_change,
                         const Eigen::Ref<const Eigen::VectorXd>& t_seasonality,
-                        const Eigen::Ref<const Eigen::VectorXd>& normalized_y,
+                        const Eigen::Ref<const Eigen::VectorXd>& y_scaled,
                         double sigma_obs_prior_scale,
                         double sigma_k,
                         double sigma_m,
@@ -690,7 +690,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
                         bool verbose) {
 
         const int params_size = static_cast<int>(params.size());
-        const int S = static_cast<int>(change_points.size());
+        const int S = static_cast<int>(t_change.size());
         const int K = params_size - 3 - S;
 
         // 2 + S + K + 1 with K >= 0: a model with every seasonality disabled
@@ -710,12 +710,12 @@ OptimizeResult optimize(Eigen::VectorXd params,
         // the shared checks can run against the real matrices before any
         // setup work -- a caller gets the error from the call, not from the
         // first objective evaluation inside it.
-        const Eigen::MatrixXd A = changepoint_matrix(t_scaled, change_points);
+        const Eigen::MatrixXd A = changepoint_matrix(t_scaled, t_change);
         const Eigen::MatrixXd x = seasonality_matrix(t_seasonality, fourier_orders,
                                                      seasonality_periods,
                                                      seasonality_conditions,
                                                      data_columns);
-        validate_inputs(t_scaled, change_points, A, x, normalized_y,
+        validate_inputs(t_scaled, t_change, A, x, y_scaled,
                         sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, s_m, tau);
 
         // Specific to this entry point: the split vector is laid out from K,
@@ -765,8 +765,8 @@ OptimizeResult optimize(Eigen::VectorXd params,
         param.delta = stan_convergence::TOL_REL_F * stan_convergence::EPS;
         param.max_linesearch = 60;
 
-        SplitObjective objective{t_scaled, change_points, A, x,
-                                 normalized_y, sigma_obs_prior_scale,
+        SplitObjective objective{t_scaled, t_change, A, x,
+                                 y_scaled, sigma_obs_prior_scale,
                                  sigma_k, sigma_m, sigmas, s_m, cap_scaled,
                                  trend_indicator, tau, S, K, {}};
         LBFGSpp::LBFGSBSolver<double> solver(param);
@@ -808,9 +808,9 @@ OptimizeResult optimize(Eigen::VectorXd params,
 std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         const Eigen::Ref<const Eigen::VectorXd>& params,
         const Eigen::Ref<const Eigen::VectorXd>& t_scaled,
-        const Eigen::Ref<const Eigen::VectorXd>& change_points,
+        const Eigen::Ref<const Eigen::VectorXd>& t_change,
         const Eigen::Ref<const Eigen::VectorXd>& t_seasonality,
-        const Eigen::Ref<const Eigen::VectorXd>& normalized_y,
+        const Eigen::Ref<const Eigen::VectorXd>& y_scaled,
         double sigma_obs_prior_scale,
         double sigma_k,
         double sigma_m,
@@ -826,8 +826,8 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         bool include_l1_prior) {
     double mlp = 0.0;
     Eigen::VectorXd gradient(params.size());
-    minus_log_posterior_and_gradient(params, t_scaled, change_points, t_seasonality,
-                                     normalized_y, sigma_obs_prior_scale, sigma_k, sigma_m, sigmas,
+    minus_log_posterior_and_gradient(params, t_scaled, t_change, t_seasonality,
+                                     y_scaled, sigma_obs_prior_scale, sigma_k, sigma_m, sigmas,
                                      s_m, cap_scaled, trend_indicator, tau, fourier_orders, seasonality_periods,
                                      seasonality_conditions, data_columns,
                                      mlp, gradient,
@@ -863,9 +863,9 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
     m.def("optimize", &optimize,
           py::arg("params"),
           py::arg("t_scaled"),
-          py::arg("change_points"),
+          py::arg("t_change"),
           py::arg("t_seasonality"),
-          py::arg("normalized_y"),
+          py::arg("y_scaled"),
           py::arg("sigma_obs_prior_scale"),
           py::arg("sigma_k"),
           py::arg("sigma_m"),
@@ -888,9 +888,9 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
     m.def("minus_log_posterior_and_gradient", &minus_log_posterior_and_gradient_py,
           py::arg("params"),
           py::arg("t_scaled"),
-          py::arg("change_points"),
+          py::arg("t_change"),
           py::arg("t_seasonality"),
-          py::arg("normalized_y"),
+          py::arg("y_scaled"),
           py::arg("sigma_obs_prior_scale"),
           py::arg("sigma_k"),
           py::arg("sigma_m"),

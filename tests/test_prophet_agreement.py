@@ -73,10 +73,10 @@ def data(request):
     return benchmark_common
 
 
-def fit_ours(df, lib_path, change_points=None):
+def fit_ours(df, lib_path, t_change=None):
     model = CustomProphet()
-    if change_points is not None:
-        model._generate_change_points = lambda: setattr(model, "change_points", change_points.copy())
+    if t_change is not None:
+        model._generate_change_points = lambda: setattr(model, "t_change", t_change.copy())
     model.fit_cpp(df, lib_path=lib_path)
     return model
 
@@ -104,7 +104,7 @@ def test_posterior_at_least_as_good_as_prophet(prophet_comparison, compiled_opti
     t_change = np.asarray(stan_data["t_change"], dtype=float)
     X_stan = np.asarray(stan_data["X"], dtype=float)
 
-    ours = fit_ours(df, compiled_optimizer_module, change_points=t_change)
+    ours = fit_ours(df, compiled_optimizer_module, t_change=t_change)
     X_ours = seasonality_design_matrix(ours.t_seasonality, ours.seasonalities)
     beta_in_stan, residual = bridge.transfer_seasonality(
         ours.opt_params[ours.layout.beta], X_ours, X_stan)
@@ -224,7 +224,7 @@ def test_seasonality_coefficients_agree(prophet_comparison, compiled_optimizer_m
     _, stan_data, prophet_params = bridge.capture_stan_model(prophet_model, df)
     t_change = np.asarray(stan_data["t_change"], dtype=float)
 
-    ours = fit_ours(df, compiled_optimizer_module, change_points=t_change)
+    ours = fit_ours(df, compiled_optimizer_module, t_change=t_change)
 
     beta_ours = ours.opt_params[ours.layout.beta]
     beta_prophet = prophet_params["beta"]
@@ -263,7 +263,7 @@ def test_fitted_noise_level_agrees(prophet_comparison, compiled_optimizer_module
     _, stan_data, prophet_params = bridge.capture_stan_model(prophet_model, df)
     t_change = np.asarray(stan_data["t_change"], dtype=float)
 
-    ours = fit_ours(df, compiled_optimizer_module, change_points=t_change)
+    ours = fit_ours(df, compiled_optimizer_module, t_change=t_change)
 
     relative = abs(ours.sigma_obs - prophet_params["sigma_obs"][0]) / prophet_params["sigma_obs"][0]
     # measured 1.060% at T=1000 and 0.090% at T=2905, ours the smaller of the

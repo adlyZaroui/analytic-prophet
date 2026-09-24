@@ -22,7 +22,7 @@ from customProphet import (AUTO_SEASONALITY_RULES, CustomProphet, history_spacin
 
 
 def model_for(ds):
-    """A model with just enough state for _set_auto_seasonalities()."""
+    """A model with just enough state for set_auto_seasonalities()."""
     model = CustomProphet()
     model.ds = pd.to_datetime(pd.Series(ds))
     model.y = np.arange(len(model.ds), dtype=float)
@@ -33,7 +33,7 @@ def selected(ds, **overrides):
     model = model_for(ds)
     for key, value in overrides.items():
         setattr(model, key, value)
-    model._set_auto_seasonalities()
+    model.set_auto_seasonalities()
     return {name: props["fourier_order"] for name, props in model.seasonalities.items()}
 
 
@@ -161,7 +161,7 @@ def test_a_registered_component_suppresses_its_built_in(caplog):
 
     model = model_for(daily(1000))
     model.seasonalities = {"weekly": seasonality(7.0, 8)}
-    model._set_auto_seasonalities()
+    model.set_auto_seasonalities()
 
     assert model.seasonalities["weekly"]["fourier_order"] == 8   # not overwritten
     assert list(model.seasonalities) == ["weekly", "yearly"]

@@ -46,9 +46,9 @@ def call_kwargs(prepared_model):
     return {
         "params": _valid_params(),
         "t_scaled": prepared_model.t_scaled,
-        "change_points": prepared_model.change_points,
+        "t_change": prepared_model.t_change,
         "t_seasonality": prepared_model.t_seasonality,
-        "normalized_y": prepared_model.normalized_y,
+        "y_scaled": prepared_model.y_scaled,
         "sigma_obs_prior_scale": SIGMA_OBS_PRIOR_SCALE,
         "sigma_k": prepared_model.sigma_k,
         "sigma_m": prepared_model.sigma_m,
@@ -104,7 +104,7 @@ def test_optimize_does_not_mutate_the_callers_array(cpp_module, call_kwargs):
     [
         ({"tau": 0.0}, "tau must be positive"),
         ({"sigma_obs_prior_scale": -1.0}, "sigma_obs_prior_scale must be positive"),
-        ({"normalized_y": np.zeros(7)}, "same length"),
+        ({"y_scaled": np.zeros(7)}, "same length"),
         ({"params": np.zeros(3)}, "too short"),
     ],
 )

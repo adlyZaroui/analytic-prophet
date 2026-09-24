@@ -18,7 +18,7 @@ import pytest
 
 from customProphet import (CustomProphet, BETA_SLICE, DELTA_SLICE, N_CHANGE_POINTS,
                            SIGMA_OBS_IDX, canonical_to_cpp, cpp_to_canonical,
-                           fourier_components, n_yearly, YEARLY_PERIOD)
+                           fourier_series, n_yearly, YEARLY_PERIOD)
 from conftest import pin_yearly_only
 
 CPP_PARAM_SIZE = 2 + N_CHANGE_POINTS + 2 * n_yearly + 1
@@ -82,12 +82,12 @@ def test_fitted_sigma_obs_approaches_the_gaussian_mle(peyton_manning_df, compile
     delta = model.opt_params[DELTA_SLICE]
     beta = model.opt_params[BETA_SLICE]
 
-    A = (model.t_scaled[:, None] >= model.change_points) * 1
-    gamma = -model.change_points * delta
+    A = (model.t_scaled[:, None] >= model.t_change) * 1
+    gamma = -model.t_change * delta
     trend = (k + A.dot(delta)) * model.t_scaled + (m + A.dot(gamma))
-    seasonality = fourier_components(
+    seasonality = fourier_series(
         model.t_seasonality, YEARLY_PERIOD, n_yearly).dot(beta)
-    residuals = model.normalized_y - trend - seasonality
+    residuals = model.y_scaled - trend - seasonality
 
     mle = np.sqrt(np.sum(residuals**2) / model.T)
     assert model.sigma_obs == pytest.approx(mle, rel=1e-3)

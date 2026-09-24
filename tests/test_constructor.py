@@ -216,7 +216,7 @@ def test_the_draws_come_from_the_models_own_generator(peyton_manning_df,
 
 def test_the_uncertainty_trend_follows_the_fitted_growth_mode(
         peyton_manning_df, compiled_optimizer_module):
-    """The sampler called compute_trend without the growth mode, so a logistic
+    """The sampler called predict_trend without the growth mode, so a logistic
     fit got a linear interval -- a band around a curve the model never
     produced. It also could not see the capacity, which is per row."""
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)

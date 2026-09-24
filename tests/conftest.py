@@ -58,7 +58,7 @@ def peyton_manning_df():
 @pytest.fixture
 def prepared_model(peyton_manning_df):
     """A CustomProphet with data loaded and preprocessed but not yet fit --
-    gives direct access to t_scaled / change_points / normalized_y without
+    gives direct access to t_scaled / t_change / y_scaled without
     paying for a full optimize() run in every test.
 
     Yearly seasonality is registered by hand rather than by the auto rule of
@@ -204,9 +204,9 @@ def cpp_mlp_and_gradient(cpp_module):
         return cpp_module.minus_log_posterior_and_gradient(
             params=cpp_params,
             t_scaled=model.t_scaled,
-            change_points=model.change_points,
+            t_change=model.t_change,
             t_seasonality=model.t_seasonality,
-            normalized_y=model.normalized_y,
+            y_scaled=model.y_scaled,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE,
             sigma_k=model.sigma_k,
             sigma_m=model.sigma_m,

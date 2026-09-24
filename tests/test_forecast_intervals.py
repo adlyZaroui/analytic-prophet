@@ -3,7 +3,7 @@ Issue #63: what `yhat`'s interval is made of.
 
 It used to be the trend's band, shifted by a deterministic seasonality:
 
-    forecast['yhat_lower'] = forecast['trend_lower'] * multiplier + seasonality * y_absmax
+    forecast['yhat_lower'] = forecast['trend_lower'] * multiplier + seasonality * y_scale
 
 so `yhat_upper - yhat_lower` was exactly `trend_upper - trend_lower`. It
 contained no observation noise, which is the term that dominates it — measured
@@ -96,7 +96,7 @@ def test_the_width_matches_the_normal_interval_it_should_be(peyton_manning_df,
     forecast = model.predict(model.make_future_dataframe(periods=0))
     band = (forecast["yhat_upper"] - forecast["yhat_lower"]).values.mean()
 
-    expected = 2 * norm.ppf(0.9) * model.sigma_obs * model.y_absmax
+    expected = 2 * norm.ppf(0.9) * model.sigma_obs * model.y_scale
     assert band == pytest.approx(expected, rel=0.05)
 
 
