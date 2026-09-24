@@ -76,6 +76,14 @@ STAN_TOL_GRAD = 1e-8               # tol_grad
 STAN_TOL_PARAM = 1e-8              # tol_param
 STAN_MAX_ITERATIONS = 10000        # Prophet passes iter=int(1e4)
 
+# fit()'s one remaining deviation from those settings (#24), named so it can be
+# referred to rather than buried as a literal. Stan's relative-objective
+# threshold is STAN_TOL_REL_OBJ * STAN_EPS = 2.22e-12; scipy's iterate sequence
+# on this objective takes single steps well below that while still nats from
+# the optimum, and adopting the number would put this path *below* Prophet on
+# the full series. The long form of the argument is in fit(), with the numbers.
+SCIPY_TOL_REL_OBJ = 1e-16
+
 # INIT -- Prophet overrides Stan's random init with explicit values, so Stan's
 # `init_r * N(0, 1)` default is never reached. [fc] calculate_initial_params
 # returns sigma_obs=1.0, delta=zeros(S), beta=zeros(K), and k/m from
@@ -1957,8 +1965,15 @@ class CustomProphet:
         design = self._design_matrices()
 
         def callback(z):
-            fobj = self._minus_log_posterior(split_to_canonical(z, self.layout.n_changepoints), design=design)
-            loss_over_iterations.append(fobj)
+            # The *split* objective, which is what scipy is minimizing. It used
+            # to record the canonical one, which is a different function away
+            # from the optimum -- |d+ - d-| against d+ + d-, equal only when at
+            # most one of each pair is non-zero. The two agree at the answer, so
+            # the final value was right and the defect stayed invisible, but the
+            # recorded trajectory could rise (0.031 at T=1000) where the run
+            # itself descends monotonically, and it was not comparable with
+            # fit_cpp's trace, which is the split objective throughout.
+            loss_over_iterations.append(self._split_minus_log_posterior(z, design=design))
 
         initial_params_array = from_dict_to_array(initial_params_dict, self.layout)
 
@@ -1985,29 +2000,51 @@ class CustomProphet:
 
         options = {'maxiter': STAN_MAX_ITERATIONS}
         if optimizer == 'L-BFGS-B':
-            # Stan's iteration cap applies directly. Its tolerances do not
-            # transfer as cleanly here as they do in the C++ core, for two
-            # measured reasons -- both consequences of this path optimizing the
-            # split reformulation rather than Stan's parameterization:
+            # Stan's iteration cap and gradient tolerance apply directly. One
+            # parameter does not, and #24 is the record of why.
             #
-            # gtol is disabled rather than set to Stan's tol_grad. scipy tests
-            # the inf-norm of the *projected* gradient, Stan the 2-norm of the
-            # full gradient. On the split problem most delta_pos/delta_neg sit
-            # at their zero bound, so the projected norm is far smaller than
-            # the real one and tol_grad=1e-8 fires at iteration 147 on the
-            # 2905-point series, 1.1e-3 short in loss.
+            # gtol carries Stan's tol_grad. It used to be disabled, on the
+            # reading that scipy tests the inf-norm of the *projected* gradient
+            # while Stan tests the 2-norm of the full one, and that on the split
+            # problem the projected norm is the far smaller of the two. Whatever
+            # that was worth when it was written, it is now a no-op: enabling it
+            # changes neither the iteration count nor the fitted point at T =
+            # 300, 1000 or 2905, or at any short size. Prophet's changepoint
+            # placement (#15) is the likely reason -- index-spaced changepoints
+            # land on observations, and the problem is better conditioned for it.
             #
-            # ftol stays tighter than Stan's tol_rel_obj * eps = 2.22e-12. The
-            # split space has long shallow ridges where per-iteration progress
-            # falls below that while the fit is still 1.1e-3 from the optimum
-            # (measured at T=1000 and T=2905); Stan's own parameterization does
-            # not stall there, and the C++ core, which uses it, converges
-            # normally under the real tolerance. Loosening this to match Stan
-            # numerically would mean a worse fit than Prophet produces, not a
-            # closer one.
+            # ftol stays tighter than Stan's tol_rel_obj * eps = 2.22e-12, and
+            # this one is real. scipy's iterate sequence on this objective has
+            # single steps that barely move followed by steps that move a lot:
+            # at T=2905 it takes a step with a relative decrease of 6.8e-16 --
+            # four orders below Stan's threshold -- while still 4.80 nats from
+            # the optimum, then resumes descending. 37% of its steps are below
+            # the threshold. Stan's test is a one-step test, so it fires on the
+            # first of them, and the fit lands 4.80 nats short.
+            #
+            # That is not an artefact of scipy's own stopping rule: the same
+            # thing happens when Stan's test is evaluated by hand on the true
+            # objective. It is also not the line search (maxls 20/60/100 give
+            # the identical trajectory) and not the parameterization (moving
+            # sigma_obs to zeta = log(sigma_obs), which is what the C++ core
+            # optimizes, fixes T=300 and T=2905 and breaks T=1000 instead). The
+            # C++ core runs the same split reformulation under Stan's real
+            # tolerance and converges, so what differs is the iterate sequence,
+            # not the problem or the test.
+            #
+            # The deciding measurement is against Prophet itself, which is what
+            # #24 said it was blocked on. Under Stan's ftol, fit() scores
+            # lp__ = 8000.371 at T=2905 against Prophet's 8004.798: matching
+            # Stan's number numerically would put this path 4.43 nats *below*
+            # the model it is reproducing. Tightening instead costs iterations
+            # and nothing else.
+            #
+            # maxfun is Stan's cap expressed the other way round: Stan limits
+            # iterations only, and scipy's default of 15000 evaluations would
+            # otherwise end the run before maxiter does.
             options.update({
-                'ftol': 1e-16,
-                'gtol': 0.0,
+                'ftol': SCIPY_TOL_REL_OBJ,
+                'gtol': STAN_TOL_GRAD,
                 'maxfun': STAN_MAX_ITERATIONS * 10,
             })
 

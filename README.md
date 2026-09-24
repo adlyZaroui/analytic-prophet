@@ -562,6 +562,65 @@ gradient buys.
 
 The two agree to **1.5e-8** relative on the full series.
 
+### What Stan's tolerance costs on the Python path
+
+Prophet sets no tolerances — `optimize(algorithm='LBFGS', iter=int(1e4))` — so CmdStan's
+defaults apply, and [#21](https://github.com/adlyZaroui/analytic-prophet/issues/21) put
+them in the C++ core. It deliberately left `fit()` out, with three overrides. Two of
+them are gone ([#24](https://github.com/adlyZaroui/analytic-prophet/issues/24)):
+
+| setting | Stan | `fit()` |
+|---|---|---|
+| `maxiter` | `iter = 1e4` | same |
+| `gtol` | `tol_grad = 1e-8` | same — the override was a no-op |
+| `maxfun` | no such cap | `10 × maxiter`, so scipy's default of 15000 cannot end the run first |
+| `ftol` | `tol_rel_obj × eps = 2.22e-12` | **`1e-16`** |
+
+`gtol` was disabled because scipy tests the inf-norm of the *projected* gradient where
+Stan tests the 2-norm of the full one, and on the split problem the projected norm is
+far the smaller. Whatever that was worth when it was written, it is now unmeasurable:
+enabling Stan's value leaves the run **bit-identical** — same iteration count, same
+fitted vector — at T = 30 through 2905. Prophet's changepoint placement
+([#15](https://github.com/adlyZaroui/analytic-prophet/issues/15)) is the likely reason;
+index-spaced changepoints land on observations, and the problem is better conditioned
+for it.
+
+`ftol` is the one that stays, and the reason is not that Stan's number is wrong but that
+**scipy's iterate sequence has plateaus**. On the full series it takes a step with a
+relative decrease of **6.8e-16** — four orders below Stan's threshold — while still
+**4.80 nats** from the optimum, and then goes on descending for another 3800 iterations.
+37% of its steps are below the threshold. Stan's test is a one-step test, so it fires on
+the first of them.
+
+Three explanations were checked and ruled out:
+
+- **Not scipy's own stopping rule.** Evaluating Stan's test by hand on the trajectory
+  fires at the same step.
+- **Not the line search.** The C++ core allows 60 tries where scipy's default is 20;
+  `maxls` of 20, 60 and 100 give the identical trajectory.
+- **Not the parameterization.** Moving `sigma_obs` to `zeta = log(sigma_obs)`, which is
+  what the C++ core optimizes, fixes T = 300 and T = 2905 and breaks T = 1000 instead
+  (2.58 nats short). The C++ core runs the *same* split reformulation under Stan's real
+  tolerance and converges, so what differs between the two is the iterate sequence, not
+  the problem and not the test.
+
+What settles it is the comparison #24 was waiting on — what Prophet itself reaches:
+
+| T | Prophet `lp__` | `fit()` as shipped | `fit()` under Stan's `ftol` |
+|---|---|---|---|
+| 300 | 813.35084 | **815.33726** | 815.11242 |
+| 1000 | 2852.76760 | **2855.52800** | 2855.52800 |
+| 2905 | 8004.79800 | **8005.15920** | **8000.37110** |
+
+Matching Stan's number would put the reference path **4.43 nats below the model it
+reproduces**. Tightening instead costs iterations and nothing else. `fit_cpp`, the
+deliverable, uses Stan's values unchanged.
+
+`tests/test_convergence_tolerances.py` pins every number above, including the ones that
+would reopen the question: if Stan's `gtol` ever stops being a no-op, or if Stan's `ftol`
+ever stops scoring below Prophet, the tests fail rather than the reasoning quietly going
+stale.
+
 ---
 
 ## Where this deviates on purpose
@@ -660,9 +719,13 @@ point of the check.
 
 Tracked, deliberate, and not yet closed:
 
-- **The Python path's convergence tolerances**
-  ([#24](https://github.com/adlyZaroui/analytic-prophet/issues/24)) deviate from Stan's,
-  because Stan's values make scipy stall on the split reformulation.
+- **One convergence tolerance on the Python path**
+  ([#24](https://github.com/adlyZaroui/analytic-prophet/issues/24)). `fit()` runs under
+  Stan's iteration cap and Stan's `tol_grad`; its relative-objective tolerance is
+  **tighter** than Stan's `2.22e-12`, at `1e-16`. Taking Stan's number would put this
+  path 4.43 nats *below* Prophet on the full series — see
+  [What Stan's tolerance costs on the Python path](#what-stans-tolerance-costs-on-the-python-path).
+  `fit_cpp`, the deliverable, uses Stan's values unchanged.
 - **Refitting is allowed** ([#41](https://github.com/adlyZaroui/analytic-prophet/issues/41)).
   `Prophet.fit` refuses a second call; this implementation accepts one. Neither the
   divergence nor the contract is currently written down, and it has already produced one
@@ -735,6 +798,7 @@ numbers rather than errors.
 | | [#23](https://github.com/adlyZaroui/analytic-prophet/issues/23) | OWL-QN replaced by the split reformulation with L-BFGS-B: 5.4× faster and a better optimum |
 | | [#28](https://github.com/adlyZaroui/analytic-prophet/issues/28) | The changepoint and Fourier matrices, constant for a whole fit, were rebuilt on every objective evaluation — 57% of each. Built once: `fit_cpp` reached parity with Prophet |
 | | [#13](https://github.com/adlyZaroui/analytic-prophet/issues/13) | `fit_cpp` returned NaN while reporting `LBFGS_SUCCESS`. Resolved by the solver change |
+| | [#24](https://github.com/adlyZaroui/analytic-prophet/issues/24) | `fit()`'s loss trace recorded the *canonical* objective while scipy minimized the *split* one. Equal at the optimum, so the final value was right and nothing caught it — but the recorded trajectory rose on a run that descends, and was not comparable with `fit_cpp`'s |
 | Modelling | [#36](https://github.com/adlyZaroui/analytic-prophet/issues/36) | Fourier basis measured days from the series start, not the 1970 epoch, and emitted all `cos` then all `sin` rather than interleaving. A pure reparameterization — but until it was fixed, `beta` could not be compared with Prophet's at all |
 | | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
 | | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
