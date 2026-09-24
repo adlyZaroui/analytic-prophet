@@ -85,8 +85,8 @@ def test_fit_estimates_sigma_obs_away_from_init(prepared_model, peyton_manning_d
 
     model.fit(small_df)
 
-    assert len(model.opt_params) == model.layout.size
-    fitted_sigma_obs = model.opt_params[SIGMA_OBS_IDX]
+    assert len(model.get_parameters()) == model.layout.size
+    fitted_sigma_obs = model.params["sigma_obs"][0][0]
 
     assert fitted_sigma_obs > 0
     assert fitted_sigma_obs == pytest.approx(model.sigma_obs)
@@ -102,4 +102,4 @@ def test_fit_keeps_sigma_obs_positive(prepared_model, peyton_manning_df):
 
     model.fit(small_df)
 
-    assert model.opt_params[SIGMA_OBS_IDX] > 0
+    assert model.params["sigma_obs"][0][0] > 0

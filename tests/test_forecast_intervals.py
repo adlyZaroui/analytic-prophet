@@ -71,7 +71,7 @@ def test_the_band_collapses_to_the_trend_band_without_noise(peyton_manning_df,
     # exactly zero, not merely small: the first few horizon points have no
     # sampled changepoints yet, so their trend band is exactly 0 and any
     # residual noise there fails a relative comparison
-    model.opt_params[model.layout.sigma_obs_idx] = 0.0
+    model.params["sigma_obs"][0][0] = 0.0
 
     forecast = model.predict(model.make_future_dataframe(periods=90))
     horizon = slice(model.T, None)

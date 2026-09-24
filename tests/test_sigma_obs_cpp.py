@@ -72,19 +72,19 @@ def test_fitted_sigma_obs_approaches_the_gaussian_mle(peyton_manning_df, compile
     # the prior scale became per column, so setting it here made an unused
     # attribute and left beta's prior at its real 10.0 -- defeating the premise
     # above while the test went on passing.
-    model.tau = model.sigma_k = model.sigma_m = 1e4
+    model.changepoint_prior_scale = model.sigma_k = model.sigma_m = 1e4
     model.seasonality_prior_scale = 1e4
 
     model.fit_cpp(peyton_manning_df.iloc[:600].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
-    k, m = model.opt_params[0], model.opt_params[1]
-    delta = model.opt_params[DELTA_SLICE]
-    beta = model.opt_params[BETA_SLICE]
+    k, m = model.params["k"][0][0], model.params["m"][0][0]
+    delta = model.params["delta"][0]
+    beta = model.params["beta"][0]
 
-    A = (model.t_scaled[:, None] >= model.t_change) * 1
-    gamma = -model.t_change * delta
-    trend = (k + A.dot(delta)) * model.t_scaled + (m + A.dot(gamma))
+    A = (model.t[:, None] >= model.changepoints_t) * 1
+    gamma = -model.changepoints_t * delta
+    trend = (k + A.dot(delta)) * model.t + (m + A.dot(gamma))
     seasonality = fourier_series(
         model.t_seasonality, YEARLY_PERIOD, n_yearly).dot(beta)
     residuals = model.y_scaled - trend - seasonality

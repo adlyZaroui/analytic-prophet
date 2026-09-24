@@ -8,7 +8,7 @@ at a time, which is how it reached fourteen pairs before anyone counted.
 The rule settled on: **match Prophet's name, unless the Stan model uses a
 different one, in which case match Stan's.** Stan wins because every derivation
 in this repository is written against `prophet.stan`, and a comment explaining
-`tau`'s gradient should use the symbol the model does.
+`changepoint_prior_scale`'s gradient should use the symbol the model does.
 
 What this module is for is the third part of #54, and the part that matters:
 the mapping is enumerated here, so a rename on either side fails a test instead
@@ -31,6 +31,7 @@ from customProphet import CustomProphet
 
 # ours -> Prophet's, for things that now share a name
 SHARED_ATTRIBUTES = ["growth", "n_changepoints", "changepoint_range", "seasonalities",
+                     "changepoint_prior_scale", "changepoints_t",
                      "extra_regressors", "holidays", "holidays_prior_scale",
                      "holidays_mode", "seasonality_mode", "seasonality_prior_scale",
                      "country_holidays", "train_holiday_names", "interval_width",
@@ -46,29 +47,15 @@ SHARED_CALLABLES = ["add_seasonality", "add_regressor", "add_country_holidays",
 
 # ours -> (theirs, why it stays different)
 DELIBERATE = {
-    "tau": ("changepoint_prior_scale",
-            "[stan] tau. Every derivation here is written against prophet.stan, "
-            "and the gradient comments would be harder to follow under the "
-            "other name. The constructor takes Prophet's name (#52)."),
-    "t_change": ("changepoints_t",
-                 "[stan] t_change. Stan's name wins by the rule."),
-    "t_scaled": ("history['t']",
-                 "[stan] calls it `t`, but this class already has `T` for the "
-                 "observation count, and `self.t` beside `self.T` is a typo "
-                 "waiting to happen -- one is an array, the other an int, and "
-                 "most operations accept either."),
-    "opt_params": ("params",
-                   "Prophet's `params` is a dict of arrays; this is one flat "
-                   "vector. Sharing the name would promise an interchangeability "
-                   "that is not there."),
-    "seasonality_design_matrix": ("make_seasonality_features",
-                                  "Prophet's builds one component; this builds "
-                                  "every seasonal one. Neither its name nor "
-                                  "make_all_seasonality_features (which also "
-                                  "covers holidays and regressors) is accurate."),
-    "fit_cpp": (None, "No counterpart. It is the point of the project."),
-    "sigma_k": (None, "[stan] the prior scale on k, which Stan gives no data name."),
-    "sigma_m": (None, "[stan] the prior scale on m, likewise."),
+    "fit_cpp": (None, "No counterpart in Prophet. It is the point of the project: "
+                      "the compiled path with the hand-derived gradient."),
+    "sigma_k": (None, "[stan] the prior scale on k. Stan writes it as a literal "
+                      "in `k ~ normal(0, 5)` rather than naming it in the data "
+                      "block, and Prophet does not expose it at all."),
+    "sigma_m": (None, "[stan] the prior scale on m, likewise a literal there and "
+                      "absent from Prophet's API."),
+    "T": (None, "[stan] T, the observation count. Prophet reads it off "
+                "`history.shape[0]` rather than keeping an attribute."),
 }
 
 
@@ -142,12 +129,12 @@ def test_the_renamed_quantities_hold_what_prophet_holds(prophet_comparison,
     np.testing.assert_allclose(ours.y_scaled,
                                prophet_model.history["y_scaled"].to_numpy())
 
-    # t_scaled against Stan's `t`, which is Prophet's history column too
-    np.testing.assert_allclose(ours.t_scaled, np.asarray(stan_data["t"], dtype=float))
+    # t against Stan's `t`, which is Prophet's history column too
+    np.testing.assert_allclose(ours.t, np.asarray(stan_data["t"], dtype=float))
 
-    # tau against Stan's own, under Prophet's constructor name
-    assert ours.tau == pytest.approx(float(stan_data["tau"]))
-    assert ours.tau == pytest.approx(prophet_model.changepoint_prior_scale)
+    # changepoint_prior_scale against Stan's own, under Prophet's constructor name
+    assert ours.changepoint_prior_scale == pytest.approx(float(stan_data["tau"]))
+    assert ours.changepoint_prior_scale == pytest.approx(prophet_model.changepoint_prior_scale)
 
 
 def test_fourier_series_matches_prophets_under_the_shared_name(prophet_class,

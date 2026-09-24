@@ -34,28 +34,28 @@ logging.getLogger("cmdstanpy").setLevel(logging.ERROR)
 def posterior_comparison(df, lib_path):
     """Score both optima under Stan's log density, same model specification."""
     from prophet import Prophet
-    from customProphet import CustomProphet, seasonality_design_matrix
+    from customProphet import CustomProphet
 
     prophet_model = Prophet(**common.PROPHET_KWARGS)
     stan_model, stan_data, prophet_params = bridge.capture_stan_model(prophet_model, df)
     reported = float(np.asarray(prophet_model.params["lp__"]).ravel()[0])
     lp_prophet = bridge.validate_bridge(stan_model, stan_data, prophet_params, reported)
 
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
     X_stan = np.asarray(stan_data["X"], dtype=float)
 
     # our fit, on Prophet's changepoints so delta indexes the same breakpoints
     ours = CustomProphet()
-    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=lib_path)
 
-    X_ours = seasonality_design_matrix(ours.t_seasonality, ours.seasonalities)
-    beta_ours = ours.opt_params[ours.layout.beta]
+    X_ours = np.ascontiguousarray(ours.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
+    beta_ours = ours.params["beta"][0]
     beta_in_stan, residual = bridge.transfer_seasonality(beta_ours, X_ours, X_stan)
 
     lp_ours = bridge.stan_log_prob(stan_model, stan_data,
-                                   ours.opt_params[0], ours.opt_params[1],
-                                   ours.opt_params[2:2 + len(t_change)],
+                                   ours.params["k"][0][0], ours.params["m"][0][0],
+                                   ours.params["delta"][0],
                                    ours.sigma_obs, beta_in_stan)
     return lp_prophet, lp_ours, residual
 

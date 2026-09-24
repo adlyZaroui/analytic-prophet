@@ -153,7 +153,7 @@ def test_country_holidays_extend_the_design_matrix(peyton_manning_df,
     assert with_country.layout.n_holiday_columns > 0
     assert plain.layout.n_holiday_columns == 0
     assert with_country.layout.n_seasonality_columns == plain.layout.n_seasonality_columns
-    assert np.all(np.isfinite(with_country.opt_params))
+    assert np.all(np.isfinite(with_country.get_parameters()))
 
 
 def test_a_country_and_a_frame_combine(peyton_manning_df, compiled_optimizer_module):
@@ -212,10 +212,10 @@ def test_design_matrix_and_posterior_match_prophets(prophet_comparison,
     lp_prophet = bridge.validate_bridge(
         stan_model, stan_data, prophet_params,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = CustomProphet().add_country_holidays("US")
-    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     _, X_ours = ours._design_matrices()
@@ -231,7 +231,7 @@ def test_design_matrix_and_posterior_match_prophets(prophet_comparison,
 
     np.testing.assert_array_equal(ours.sigmas, np.asarray(stan_data["sigmas"], dtype=float))
 
-    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.opt_params[0],
-                                   ours.opt_params[1], ours.opt_params[ours.layout.delta],
-                                   ours.sigma_obs, ours.opt_params[ours.layout.beta])
+    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
+                                   ours.params["m"][0][0], ours.params["delta"][0],
+                                   ours.sigma_obs, ours.params["beta"][0])
     assert lp_ours >= lp_prophet - 1e-6

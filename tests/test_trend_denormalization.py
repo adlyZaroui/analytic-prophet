@@ -3,7 +3,7 @@ predict() de-normalizes by combining the slope and intercept terms in
 normalized-y space FIRST, then multiplying the whole trend by y_scale
 once:
 
-    trend = (k + A.dot(delta)) * t_scaled + (m + A.dot(gamma))
+    trend = (k + A.dot(delta)) * t + (m + A.dot(gamma))
     forecast["trend"] = trend * self.y_scale
 
 trend_forecast_uncertainty currently multiplies y_scale onto only the
@@ -31,21 +31,21 @@ import numpy as np
 import pytest
 
 
-def _compute_trend(k, m, delta, t_change, t_scaled, y_scale):
-    A = (t_scaled[:, None] > t_change) * 1
-    gamma = -t_change * delta
-    trend_normalized = (k + np.dot(A, delta)) * t_scaled + (m + np.dot(A, gamma))
+def _compute_trend(k, m, delta, changepoints_t, t, y_scale):
+    A = (t[:, None] > changepoints_t) * 1
+    gamma = -changepoints_t * delta
+    trend_normalized = (k + np.dot(A, delta)) * t + (m + np.dot(A, gamma))
     return trend_normalized * y_scale
 
 
 def test_trend_denormalization_is_uniform(prepared_model):
     k, m = 0.4, -0.1
     delta = np.zeros(25)
-    t_scaled = prepared_model.t_scaled
-    t_change = prepared_model.t_change
+    t = prepared_model.t
+    changepoints_t = prepared_model.changepoints_t
 
-    trend_scale_1 = _compute_trend(k, m, delta, t_change, t_scaled, y_scale=1.0)
-    trend_scale_10 = _compute_trend(k, m, delta, t_change, t_scaled, y_scale=10.0)
+    trend_scale_1 = _compute_trend(k, m, delta, changepoints_t, t, y_scale=1.0)
+    trend_scale_10 = _compute_trend(k, m, delta, changepoints_t, t, y_scale=10.0)
 
     np.testing.assert_allclose(trend_scale_10, trend_scale_1 * 10.0)
 
@@ -60,9 +60,10 @@ def test_predict_trend_bounds_are_correctly_scaled(prepared_model, param_size):
     _compute_trend (or equivalent) with predict().
     """
     model = prepared_model
-    opt_params = np.zeros(param_size)
-    opt_params[0] = 0.4  # k, nonzero; m / delta / beta stay 0
-    model.opt_params = opt_params
+    vector = np.zeros(param_size)
+    vector[0] = 0.4  # k, nonzero; m / delta / beta stay 0
+    vector[model.layout.sigma_obs_idx] = 1.0   # positive, so log_prob is defined
+    model._store_params(vector)
 
     future_df = model.make_future_dataframe(periods=30, include_history=True)
     forecast = model.predict(future_df)

@@ -39,7 +39,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from customProphet import CustomProphet, seasonality_design_matrix
+from customProphet import CustomProphet
 
 # Prophet's own threshold for yearly seasonality being identifiable, and the
 # point at which its auto rule switches yearly on. [fc] set_auto_seasonalities.
@@ -72,11 +72,24 @@ def data(request):
     import _common as benchmark_common
     return benchmark_common
 
+def seasonal_block(seasonalities, df):
+    """The seasonal columns for a registry, through the model's own builder.
 
-def fit_ours(df, lib_path, t_change=None):
+    [fc] make_all_seasonality_features is a method because it reads the
+    holiday and regressor registries too, so a test wanting only the seasonal
+    part goes through a model configured with just that.
+    """
+    model = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
+                          daily_seasonality=False)
+    model.seasonalities = seasonalities
+    return np.ascontiguousarray(model.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
+
+
+
+def fit_ours(df, lib_path, changepoints_t=None):
     model = CustomProphet()
-    if t_change is not None:
-        model._generate_change_points = lambda: setattr(model, "t_change", t_change.copy())
+    if changepoints_t is not None:
+        model._generate_change_points = lambda: setattr(model, "changepoints_t", changepoints_t.copy())
     model.fit_cpp(df, lib_path=lib_path)
     return model
 
@@ -101,21 +114,21 @@ def test_posterior_at_least_as_good_as_prophet(prophet_comparison, compiled_opti
     # built on it means anything
     lp_prophet = bridge.validate_bridge(stan_model, stan_data, prophet_params, reported)
 
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
     X_stan = np.asarray(stan_data["X"], dtype=float)
 
-    ours = fit_ours(df, compiled_optimizer_module, t_change=t_change)
-    X_ours = seasonality_design_matrix(ours.t_seasonality, ours.seasonalities)
+    ours = fit_ours(df, compiled_optimizer_module, changepoints_t=changepoints_t)
+    X_ours = seasonal_block(ours.seasonalities, pd.DataFrame({"ds": ours.ds}))
     beta_in_stan, residual = bridge.transfer_seasonality(
-        ours.opt_params[ours.layout.beta], X_ours, X_stan)
+        ours.params["beta"][0], X_ours, X_stan)
 
     # the two Fourier bases span the same space, so this transfer is exact;
     # if it were not, the comparison below would be meaningless
     assert residual < 1e-8
 
     lp_ours = bridge.stan_log_prob(stan_model, stan_data,
-                                   ours.opt_params[0], ours.opt_params[1],
-                                   ours.opt_params[2:2 + len(t_change)],
+                                   ours.params["k"][0][0], ours.params["m"][0][0],
+                                   ours.params["delta"][0],
                                    ours.sigma_obs, beta_in_stan)
 
     assert lp_ours >= lp_prophet - 1e-6, (
@@ -222,11 +235,11 @@ def test_seasonality_coefficients_agree(prophet_comparison, compiled_optimizer_m
 
     prophet_model = Prophet(**common.PROPHET_KWARGS)
     _, stan_data, prophet_params = bridge.capture_stan_model(prophet_model, df)
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
-    ours = fit_ours(df, compiled_optimizer_module, t_change=t_change)
+    ours = fit_ours(df, compiled_optimizer_module, changepoints_t=changepoints_t)
 
-    beta_ours = ours.opt_params[ours.layout.beta]
+    beta_ours = ours.params["beta"][0]
     beta_prophet = prophet_params["beta"]
     assert beta_ours.shape == beta_prophet.shape
 
@@ -261,9 +274,9 @@ def test_fitted_noise_level_agrees(prophet_comparison, compiled_optimizer_module
 
     prophet_model = Prophet(**common.PROPHET_KWARGS)
     _, stan_data, prophet_params = bridge.capture_stan_model(prophet_model, df)
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
-    ours = fit_ours(df, compiled_optimizer_module, t_change=t_change)
+    ours = fit_ours(df, compiled_optimizer_module, changepoints_t=changepoints_t)
 
     relative = abs(ours.sigma_obs - prophet_params["sigma_obs"][0]) / prophet_params["sigma_obs"][0]
     # measured 1.060% at T=1000 and 0.090% at T=2905, ours the smaller of the

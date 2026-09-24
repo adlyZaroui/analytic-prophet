@@ -9,7 +9,7 @@ method.
 Two rules decide the shape of this:
 
   * **Prophet's name on the argument, Stan's on the attribute.**
-    `changepoint_prior_scale` is what a user writes; `tau` is what
+    `changepoint_prior_scale` is what a user writes; `changepoint_prior_scale` is what
     `prophet.stan` calls it and what every derivation in this repository calls
     it. Renaming the attribute would make the gradient comments harder to
     follow than the API mismatch was worth.
@@ -48,7 +48,7 @@ def test_the_defaults_match_prophets(prophet_comparison):
     theirs = inspect.signature(Prophet.__init__).parameters
     ours = inspect.signature(CustomProphet.__init__).parameters
 
-    # changepoint_prior_scale is Prophet's name for tau; the default is the
+    # changepoint_prior_scale is Prophet's name for changepoint_prior_scale; the default is the
     # same value, checked below with the rest
     for name, parameter in theirs.items():
         if name == "self":
@@ -82,13 +82,19 @@ def test_an_argument_reaches_its_attribute(argument, value, attribute):
     assert getattr(CustomProphet(**{argument: value}), attribute) == value
 
 
-def test_changepoint_prior_scale_is_prophets_name_for_tau():
-    """The one rename. Prophet's name on the argument, Stan's on the
-    attribute, so the derivations keep reading the way they were written."""
+def test_changepoint_prior_scale_is_the_name_on_both_sides():
+    """The argument and the attribute are both Prophet's name.
+
+    This briefly kept Stan's `tau` on the attribute, on the grounds that the
+    derivations in this repository are written against `prophet.stan`. That was
+    reversed in #54: a user porting a script, or reading a traceback beside
+    Prophet's, meets the attribute far more often than the derivations do.
+    `[stan] tau` is now a comment where the arithmetic needs it.
+    """
     model = CustomProphet(changepoint_prior_scale=0.01)
 
-    assert model.tau == 0.01
-    assert not hasattr(model, "changepoint_prior_scale"), (
+    assert model.changepoint_prior_scale == 0.01
+    assert not hasattr(model, "tau"), (
         "keeping both would give two names for one number, which is how they "
         "drift apart")
 

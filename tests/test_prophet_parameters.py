@@ -24,9 +24,9 @@ from customProphet import (CustomProphet, CHANGEPOINT_RANGE, N_CHANGE_POINTS, SI
 def test_prior_scales_match_prophet_stan():
     """SCALE constants. [stan] model block:
         k ~ normal(0, 5); m ~ normal(0, 5);
-        delta ~ double_exponential(0, tau);
+        delta ~ double_exponential(0, changepoint_prior_scale);
         sigma_obs ~ normal(0, 0.5); beta ~ normal(0, sigmas)
-    tau and sigmas are Prophet's changepoint_prior_scale / seasonality_prior_scale
+    changepoint_prior_scale and sigmas are Prophet's changepoint_prior_scale / seasonality_prior_scale
     defaults; the other three are hardcoded in the Stan file.
     """
     assert sigma_k == 5
@@ -49,14 +49,14 @@ def test_scaling_conventions(prepared_model):
     assert prepared_model.y_scale == np.max(np.abs(prepared_model.y))
     np.testing.assert_allclose(prepared_model.y_scaled,
                                prepared_model.y / prepared_model.y_scale)
-    assert prepared_model.t_scaled.min() == pytest.approx(0.0)
-    assert prepared_model.t_scaled.max() == pytest.approx(1.0)
+    assert prepared_model.t.min() == pytest.approx(0.0)
+    assert prepared_model.t.max() == pytest.approx(1.0)
 
 
 def test_linear_growth_init_passes_through_first_and_last_points(prepared_model):
     """[fc] linear_growth_init: the line through the first and last points of
     the scaled series, so it reproduces both exactly."""
-    t, y = prepared_model.t_scaled, prepared_model.y_scaled
+    t, y = prepared_model.t, prepared_model.y_scaled
     k, m = linear_growth_init(t, y)
 
     i0, i1 = int(np.argmin(t)), int(np.argmax(t))
@@ -80,7 +80,7 @@ def test_fit_starts_from_prophets_deterministic_initialization(prepared_model, p
     model = CustomProphet()
     model.fit(peyton_manning_df.iloc[:200].reset_index(drop=True), analytic=True)
 
-    expected_k, expected_m = linear_growth_init(model.t_scaled, model.y_scaled)
+    expected_k, expected_m = linear_growth_init(model.t, model.y_scaled)
     assert seen["k"] == pytest.approx(expected_k)
     assert seen["m"] == pytest.approx(expected_m)
     np.testing.assert_array_equal(seen["delta"], np.zeros(N_CHANGE_POINTS))
@@ -101,7 +101,7 @@ def test_fit_cpp_is_deterministic(peyton_manning_df, compiled_optimizer_module):
     for _ in range(2):
         model = CustomProphet()
         model.fit_cpp(small_df, lib_path=compiled_optimizer_module)
-        runs.append(model.opt_params)
+        runs.append(model.get_parameters())
 
     np.testing.assert_array_equal(runs[0], runs[1])
 
@@ -117,18 +117,18 @@ def test_both_fit_paths_start_from_the_same_point(peyton_manning_df, compiled_op
     cpp_model = CustomProphet()
     cpp_model.fit_cpp(small_df, lib_path=compiled_optimizer_module)
 
-    expected = linear_growth_init(python_model.t_scaled, python_model.y_scaled)
-    assert linear_growth_init(cpp_model.t_scaled, cpp_model.y_scaled) == expected
+    expected = linear_growth_init(python_model.t, python_model.y_scaled)
+    assert linear_growth_init(cpp_model.t, cpp_model.y_scaled) == expected
 
     # and they land on the same optimum from there
-    python_loss = python_model._minus_log_posterior(python_model.opt_params)
-    cpp_loss = python_model._minus_log_posterior(cpp_model.opt_params)
+    python_loss = python_model._minus_log_posterior(python_model.get_parameters())
+    cpp_loss = python_model._minus_log_posterior(cpp_model.get_parameters())
     assert cpp_loss == pytest.approx(python_loss, rel=1e-6)
 
 
 def test_trend_is_continuous_at_changepoints():
     """The code now uses `>=` to match [stan] get_changepoint_matrix
-    (`t[i] >= t_change[cp_idx]`). That alignment provably changes nothing
+    (`t[i] >= changepoints_t[cp_idx]`). That alignment provably changes nothing
     numerically, and this pins down why.
 
     Changepoint j contributes `a_j(t) * delta_j * (t - s_j)` to the trend --
@@ -139,17 +139,17 @@ def test_trend_is_continuous_at_changepoints():
     If someone changes the trend parameterization so continuity no longer
     holds, this fails and the choice of comparison starts to matter.
     """
-    t_change = np.array([0.25, 0.5, 0.75])
+    changepoints_t = np.array([0.25, 0.5, 0.75])
     delta = np.array([1.3, -0.7, 2.0])
-    t_at_changepoints = t_change.copy()
+    t_at_changepoints = changepoints_t.copy()
 
     inclusive = customProphet.predict_trend(
-        k=0.4, m=0.1, delta=delta, t_change=t_change,
-        t_scaled=t_at_changepoints, y_scale=1.0)
+        k=0.4, m=0.1, delta=delta, changepoints_t=changepoints_t,
+        t=t_at_changepoints, y_scale=1.0)
 
     # The same trend under the exclusive convention.
-    A = (t_at_changepoints[:, None] > t_change) * 1
-    gamma = -t_change * delta
+    A = (t_at_changepoints[:, None] > changepoints_t) * 1
+    gamma = -changepoints_t * delta
     exclusive = ((0.4 + customProphet.det_dot(A, delta)) * t_at_changepoints
                  + (0.1 + customProphet.det_dot(A, gamma)))
 
@@ -162,8 +162,8 @@ def test_trend_is_continuous_at_changepoints():
     # and the trend really is continuous across a changepoint
     eps = 1e-9
     around = customProphet.predict_trend(
-        k=0.4, m=0.1, delta=delta, t_change=t_change,
-        t_scaled=np.array([0.5 - eps, 0.5, 0.5 + eps]), y_scale=1.0)
+        k=0.4, m=0.1, delta=delta, changepoints_t=changepoints_t,
+        t=np.array([0.5 - eps, 0.5, 0.5 + eps]), y_scale=1.0)
     assert around[1] == pytest.approx(around[0], abs=1e-6)
     assert around[1] == pytest.approx(around[2], abs=1e-6)
 
@@ -220,10 +220,10 @@ def test_cpp_core_accepts_any_dimensions(prepared_model, cpp_module, n_changepoi
     sigmas = np.full(2 * fourier_order, SIGMA, dtype=float)
 
     value, gradient = cpp_module.minus_log_posterior_and_gradient(
-        params=params, t_scaled=model.t_scaled, t_change=model.t_change,
+        params=params, t=model.t, changepoints_t=model.changepoints_t,
         t_seasonality=model.t_seasonality, y_scaled=model.y_scaled,
         sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=model.sigma_k,
-        sigma_m=model.sigma_m, sigmas=sigmas, tau=model.tau,
+        sigma_m=model.sigma_m, sigmas=sigmas, changepoint_prior_scale=model.changepoint_prior_scale,
         fourier_orders=[fourier_order], seasonality_periods=[YEARLY_PERIOD])
 
     assert np.isfinite(value)
@@ -236,13 +236,13 @@ def test_mismatched_parameter_length_is_rejected(prepared_model, cpp_module):
 
     with pytest.raises(ValueError, match="params has length"):
         cpp_module.minus_log_posterior_and_gradient(
-            params=np.zeros(47), t_scaled=prepared_model.t_scaled,
-            t_change=prepared_model.t_change,
+            params=np.zeros(47), t=prepared_model.t,
+            changepoints_t=prepared_model.changepoints_t,
             t_seasonality=prepared_model.t_seasonality,
             y_scaled=prepared_model.y_scaled,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE, sigma_k=prepared_model.sigma_k,
             sigma_m=prepared_model.sigma_m, sigmas=prepared_model.sigmas,
-            tau=prepared_model.tau, fourier_orders=[10], seasonality_periods=[YEARLY_PERIOD])
+            changepoint_prior_scale=prepared_model.changepoint_prior_scale, fourier_orders=[10], seasonality_periods=[YEARLY_PERIOD])
 
 
 @pytest.mark.parametrize("n_changepoints", [5, 10, 40])
@@ -260,6 +260,6 @@ def test_non_default_changepoint_count_fits(peyton_manning_df, compiled_optimize
                   lib_path=compiled_optimizer_module)
 
     assert model.layout.n_changepoints == n_changepoints
-    assert model.opt_params.shape == (model.layout.size,)
-    assert np.all(np.isfinite(model.opt_params))
+    assert model.get_parameters().shape == (model.layout.size,)
+    assert np.all(np.isfinite(model.get_parameters()))
     assert model.sigma_obs > 0

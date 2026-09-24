@@ -61,8 +61,8 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
     # Both sides share the exact same (k, m, delta, beta) objective for a
     # fixed sigma_obs, so evaluate both parameter vectors on the Python
     # reference posterior to get a loss that's directly comparable.
-    python_loss = python_model._minus_log_posterior(python_model.opt_params)
-    cpp_loss = python_model._minus_log_posterior(cpp_model.opt_params)
+    python_loss = python_model._minus_log_posterior(python_model.get_parameters())
+    cpp_loss = python_model._minus_log_posterior(cpp_model.get_parameters())
 
     # Back to 1e-6, the value #21 had to loosen to 1e-4. That loosening was
     # forced by the paths optimizing *different* problems -- scipy on the split

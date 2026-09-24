@@ -451,25 +451,29 @@ The two agree to **1.5e-8** relative on the full series.
 Two deviations are decisions rather than outstanding gaps. Both were measured before
 being settled.
 
-### A handful of names stay different
+### Three names stay different
 
-Names follow Prophet's, unless `prophet.stan` uses a different one — then Stan's wins,
-because every derivation in this repository is written against the Stan model and a
-comment explaining `tau`'s gradient should use the symbol the model does. Ten names were
-brought into line in [#54](https://github.com/adlyZaroui/analytic-prophet/issues/54);
-these stay different, each for a reason:
+Names follow Prophet's. `tests/test_prophet_naming.py` enumerates the mapping and fails
+if one moves on either side — including if an exception stops being an exception, since a
+silent convergence is as much a surprise as a silent divergence. It checks values too: a
+matching name on a different quantity would be worse than no match.
 
-| here | Prophet | why |
-|---|---|---|
-| `tau` | `changepoint_prior_scale` | `[stan] tau`. The constructor takes Prophet's name. |
-| `t_change` | `changepoints_t` | `[stan] t_change`. |
-| `t_scaled` | `history['t']` | Stan calls it `t`, but this class already has `T` for the observation count, and `self.t` beside `self.T` is a typo waiting to happen. |
-| `opt_params` | `params` | Prophet's is a dict of arrays; this is one flat vector. |
-| `seasonality_design_matrix` | `make_seasonality_features` | Prophet's builds one component, this builds all the seasonal ones. Neither their name nor `make_all_seasonality_features` is accurate. |
+Only these have no counterpart to match:
 
-`tests/test_prophet_naming.py` enumerates both the matches and these exceptions, and
-fails if a name moves on either side — including if one of these ever stops being
-different, since a silent convergence is as much a surprise as a silent divergence.
+| here | why |
+|---|---|
+| `fit_cpp` | Prophet has nothing like it. It is the point of the project. |
+| `sigma_k`, `sigma_m` | `[stan]` writes these as literals in `k ~ normal(0, 5)` rather than naming them in the data block, and Prophet does not expose them. |
+| `T` | `[stan] T`. Prophet reads the count off `history.shape[0]` rather than keeping an attribute. |
+
+Everything else that used to differ now matches, including the five that were argued for
+in an earlier revision of this section — `changepoint_prior_scale` (was `tau`),
+`changepoints_t` (was `t_change`), `t` (was `t_scaled`), `params` (was `opt_params`, and
+now a dict of arrays shaped as Prophet's) and `make_all_seasonality_features` (was
+`seasonality_design_matrix`, and now returns a named frame whose columns are Prophet's
+`{component}_delim_{i}`). The case for keeping them was internal consistency; the case
+against was that anyone porting a script or reading a traceback beside Prophet's meets
+these far more often than the derivations do.
 
 ### A model with no seasonality fits `K = 0`, where Prophet fits `K = 1`
 
@@ -591,7 +595,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -r requirements-dev.txt
-pytest tests/                        # 509 tests
+pytest tests/                        # 507 tests
 ```
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite

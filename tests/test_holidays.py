@@ -214,8 +214,8 @@ def test_holiday_columns_extend_the_parameter_vector(peyton_manning_df,
     assert layout.n_holiday_columns > 0
     assert layout.n_regressor_columns == (layout.n_seasonality_columns
                                           + layout.n_holiday_columns)
-    assert with_holidays.opt_params.shape == (layout.size,)
-    assert np.all(np.isfinite(with_holidays.opt_params))
+    assert with_holidays.get_parameters().shape == (layout.size,)
+    assert np.all(np.isfinite(with_holidays.get_parameters()))
 
 
 def test_the_holiday_prior_scale_lands_on_the_holiday_columns(peyton_manning_df,
@@ -286,7 +286,7 @@ def test_a_holiday_effect_is_actually_fitted(peyton_manning_df, compiled_optimiz
     model = CustomProphet().add_holidays(frame)
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    coefficients = model.opt_params[model.layout.holidays]
+    coefficients = model.params["beta"][0][model.layout.holiday_block]
     assert coefficients.shape == (1,)
     # the bump is +4 on a series scaled by max|y|; the coefficient is in
     # normalized units, so compare there
@@ -351,10 +351,10 @@ def test_design_matrix_and_sigmas_match_prophets(prophet_comparison,
 
     prophet_model = Prophet(holidays=frame, **common.PROPHET_KWARGS)
     _, stan_data, _ = bridge.capture_stan_model(prophet_model, df)
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = CustomProphet().add_holidays(frame)
-    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     _, X_ours = ours._design_matrices()
@@ -390,16 +390,16 @@ def test_our_objective_is_stans_with_holidays(prophet_comparison,
     lp_prophet = bridge.validate_bridge(
         stan_model, stan_data, prophet_params,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = CustomProphet().add_holidays(frame)
-    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)
     sums = []
     for scale in (0.0, 0.05, 0.3):
-        point = ours.opt_params.copy()
+        point = ours.get_parameters().copy()
         if scale:
             point[:2] += rng.normal(scale=scale, size=2)
             point[ours.layout.delta] += rng.normal(scale=scale * 0.1, size=25)
@@ -415,7 +415,7 @@ def test_our_objective_is_stans_with_holidays(prophet_comparison,
     assert abs(sums[0]) < 1e-3, f"objectives differ by {sums[0]} at the optimum"
     assert max(sums) - min(sums) < 1e-2, f"the difference varies across points: {sums}"
 
-    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.opt_params[0],
-                                   ours.opt_params[1], ours.opt_params[ours.layout.delta],
-                                   ours.sigma_obs, ours.opt_params[ours.layout.beta])
+    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
+                                   ours.params["m"][0][0], ours.params["delta"][0],
+                                   ours.sigma_obs, ours.params["beta"][0])
     assert lp_ours >= lp_prophet - 1e-6

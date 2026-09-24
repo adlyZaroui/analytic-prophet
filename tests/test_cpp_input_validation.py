@@ -10,7 +10,7 @@ was guarded individually afterwards, which left `optimize()` well defended and
 the core objective almost undefended, even though the core is a public entry
 point that the fixtures in conftest.py call directly.
 
-A second, quieter family does not abort at all: a non-positive `tau` or prior
+A second, quieter family does not abort at all: a non-positive `changepoint_prior_scale` or prior
 scale divides into the objective and returns a plausible wrong number, and a
 zero or non-finite period fills the design matrix with NaN.
 
@@ -40,14 +40,14 @@ CASES = {
     "period_zero": "kw['seasonality_periods'] = [0.0]",
     "period_nan": "kw['seasonality_periods'] = [float('nan')]",
     "period_inf": "kw['seasonality_periods'] = [float('inf')]",
-    "empty_series": "kw['t_scaled'] = np.zeros(0); kw['y_scaled'] = np.zeros(0); kw['t_seasonality'] = np.zeros(0)",
+    "empty_series": "kw['t'] = np.zeros(0); kw['y_scaled'] = np.zeros(0); kw['t_seasonality'] = np.zeros(0)",
     "orders_periods_mismatched": "kw['fourier_orders'] = [10, 3]",
     "sigmas_short": "kw['sigmas'] = np.full(19, 10.0)",
     "sigmas_non_positive": "kw['sigmas'] = np.r_[np.full(19, 10.0), 0.0]",
     "params_too_long": "kw['params'] = np.zeros(60)",
     "params_too_short": "kw['params'] = np.zeros(20)",
-    "tau_negative": "kw['tau'] = -0.05",
-    "tau_zero": "kw['tau'] = 0.0",
+    "tau_negative": "kw['changepoint_prior_scale'] = -0.05",
+    "tau_zero": "kw['changepoint_prior_scale'] = 0.0",
     "sigma_obs_prior_scale_zero": "kw['sigma_obs_prior_scale'] = 0.0",
     "sigma_k_zero": "kw['sigma_k'] = 0.0",
 }
@@ -70,16 +70,16 @@ model.yearly_seasonality = model.weekly_seasonality = model.daily_seasonality = 
 model.seasonalities = {{"yearly": seasonality(365.25, 10)}}
 model.y = df["y"].values
 model.ds = pd.to_datetime(df["ds"])
-model.t_scaled = np.array((model.ds - model.ds.min()) / (model.ds.max() - model.ds.min()))
+model.t = np.array((model.ds - model.ds.min()) / (model.ds.max() - model.ds.min()))
 model.T = len(df)
 model.t_seasonality = seasonal_time(model.ds)
 model._normalize_y(); model._build_layout(); model._generate_change_points()
 
 def fresh():
-    return dict(params=np.zeros(model.layout.size), t_scaled=model.t_scaled,
-                t_change=model.t_change, t_seasonality=model.t_seasonality,
+    return dict(params=np.zeros(model.layout.size), t=model.t,
+                changepoints_t=model.changepoints_t, t_seasonality=model.t_seasonality,
                 y_scaled=model.y_scaled, sigma_obs_prior_scale=0.5,
-                sigma_k=5.0, sigma_m=5.0, sigmas=np.full(20, 10.0), tau=0.05,
+                sigma_k=5.0, sigma_m=5.0, sigmas=np.full(20, 10.0), changepoint_prior_scale=0.05,
                 fourier_orders=[10], seasonality_periods=[365.25])
 
 for entry in {entries!r}:
@@ -156,8 +156,8 @@ def test_every_bad_input_raises(outcomes, entry, case):
 
 @pytest.mark.parametrize("entry", ENTRY_POINTS)
 @pytest.mark.parametrize("case,fragment", [
-    ("t_seasonality_short", "same observations as t_scaled"),
-    ("t_seasonality_long", "same observations as t_scaled"),
+    ("t_seasonality_short", "same observations as t"),
+    ("t_seasonality_long", "same observations as t"),
     ("normalized_y_short", "same length"),
     ("fourier_order_negative", "Fourier order must be positive"),
     ("fourier_order_zero", "Fourier order must be positive"),
@@ -169,8 +169,8 @@ def test_every_bad_input_raises(outcomes, entry, case):
     ("orders_periods_mismatched", "one period per seasonality"),
     ("sigmas_short", "one prior scale per column"),
     ("sigmas_non_positive", "sigmas must be positive"),
-    ("tau_negative", "tau must be positive"),
-    ("tau_zero", "tau must be positive"),
+    ("tau_negative", "changepoint_prior_scale must be positive"),
+    ("tau_zero", "changepoint_prior_scale must be positive"),
     ("sigma_obs_prior_scale_zero", "sigma_obs_prior_scale must be positive"),
     ("sigma_k_zero", "sigma_k and sigma_m must be positive"),
 ])
@@ -190,12 +190,12 @@ def test_valid_inputs_are_still_accepted(prepared_model, cpp_module):
     import numpy as np
 
     value, gradient = cpp_module.minus_log_posterior_and_gradient(
-        params=np.zeros(prepared_model.layout.size), t_scaled=prepared_model.t_scaled,
-        t_change=prepared_model.t_change,
+        params=np.zeros(prepared_model.layout.size), t=prepared_model.t,
+        changepoints_t=prepared_model.changepoints_t,
         t_seasonality=prepared_model.t_seasonality,
         y_scaled=prepared_model.y_scaled, sigma_obs_prior_scale=0.5,
         sigma_k=prepared_model.sigma_k, sigma_m=prepared_model.sigma_m,
-        sigmas=prepared_model.sigmas, tau=prepared_model.tau,
+        sigmas=prepared_model.sigmas, changepoint_prior_scale=prepared_model.changepoint_prior_scale,
         fourier_orders=[10], seasonality_periods=[365.25])
 
     assert np.isfinite(value)

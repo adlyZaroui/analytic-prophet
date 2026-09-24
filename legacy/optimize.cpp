@@ -13,6 +13,11 @@
 
 namespace py = pybind11;
 
+// Argument names follow Prophet's Python API rather than prophet.stan's data
+// block, so a call site reads `name=self.name` on the Python side. Where the
+// two differ, Stan's is noted at the declaration: `changepoints_t` is Stan's
+// `t_change`, and `changepoint_prior_scale` is its `tau`.
+
 // Column-for-column identical to Prophet's fourier_series: sin(order i) at
 // column 2i, cos(order i) at 2i+1, with t_days measured from the Unix epoch.
 // Must stay in lockstep with fourier_series() in customProphet.py --
@@ -69,14 +74,14 @@ ModelParams extract_params(const Eigen::Ref<const Eigen::VectorXd>& params, int 
     return p;
 }
 
-// The changepoint indicator. Depends only on t_scaled and the changepoint
+// The changepoint indicator. Depends only on t and the changepoint
 // locations, so it is constant for a whole fit -- optimize() builds it once
 // before the solver loop rather than on every evaluation (issue #28).
-// >= , not > : Stan's get_changepoint_matrix uses t[i] >= t_change[j].
-Eigen::MatrixXd changepoint_matrix(const Eigen::VectorXd& t_scaled_vec,
+// >= , not > : Stan's get_changepoint_matrix uses t[i] >= changepoints_t[j].
+Eigen::MatrixXd changepoint_matrix(const Eigen::VectorXd& t_vec,
                                    const Eigen::VectorXd& change_points_vec) {
-    return (t_scaled_vec.replicate(1, change_points_vec.size()).array()
-            >= change_points_vec.transpose().replicate(t_scaled_vec.size(), 1).array())
+    return (t_vec.replicate(1, change_points_vec.size()).array()
+            >= change_points_vec.transpose().replicate(t_vec.size(), 1).array())
            .cast<double>();
 }
 
@@ -180,7 +185,7 @@ Eigen::MatrixXd seasonality_matrix(const Eigen::VectorXd& t_seasonality_vec,
 // Jacobian is accumulated forward alongside gamma rather than written down.
 void logistic_gamma_and_jacobian(double k, double m,
                                  const Eigen::VectorXd& delta,
-                                 const Eigen::VectorXd& t_change,
+                                 const Eigen::VectorXd& changepoints_t,
                                  Eigen::VectorXd& gamma,
                                  Eigen::MatrixXd& dgamma) {
     const int S = static_cast<int>(delta.size());
@@ -212,8 +217,8 @@ void logistic_gamma_and_jacobian(double k, double m,
             -(dk_s.row(i).transpose() * k_s(i + 1) - dk_s.row(i + 1).transpose() * k_s(i))
             / (k_s(i + 1) * k_s(i + 1));
 
-        gamma(i) = (t_change(i) - m_pr) * c;
-        dgamma.row(i) = (-dm_pr * c + (t_change(i) - m_pr) * dc).transpose();
+        gamma(i) = (changepoints_t(i) - m_pr) * c;
+        dgamma.row(i) = (-dm_pr * c + (changepoints_t(i) - m_pr) * dc).transpose();
 
         m_pr += gamma(i);
         dm_pr += dgamma.row(i).transpose();
@@ -226,22 +231,22 @@ void logistic_gamma_and_jacobian(double k, double m,
 // be applied outside exactly as it is for the linear trend.
 void logistic_trend_and_jacobian(double k, double m,
                                  const Eigen::VectorXd& delta,
-                                 const Eigen::VectorXd& t_scaled,
+                                 const Eigen::VectorXd& t,
                                  const Eigen::VectorXd& cap_scaled,
                                  const Eigen::MatrixXd& A,
-                                 const Eigen::VectorXd& t_change,
+                                 const Eigen::VectorXd& changepoints_t,
                                  Eigen::VectorXd& trend,
                                  Eigen::MatrixXd& jacobian) {
-    const int T = static_cast<int>(t_scaled.size());
+    const int T = static_cast<int>(t.size());
     const int S = static_cast<int>(delta.size());
 
     Eigen::VectorXd gamma;
     Eigen::MatrixXd dgamma;
-    logistic_gamma_and_jacobian(k, m, delta, t_change, gamma, dgamma);
+    logistic_gamma_and_jacobian(k, m, delta, changepoints_t, gamma, dgamma);
 
     const Eigen::VectorXd rate = (k * Eigen::VectorXd::Ones(T) + A * delta);
     const Eigen::VectorXd offset = (m * Eigen::VectorXd::Ones(T) + A * gamma);
-    const Eigen::VectorXd z = rate.array() * (t_scaled - offset).array();
+    const Eigen::VectorXd z = rate.array() * (t - offset).array();
 
     // exp(-|z|) form: the naive 1/(1+exp(-z)) overflows for z very negative
     Eigen::VectorXd sigmoid(T);
@@ -257,7 +262,7 @@ void logistic_trend_and_jacobian(double k, double m,
     d_rate.col(0).setOnes();
     d_rate.rightCols(S) = A;
 
-    Eigen::MatrixXd dz = d_rate.array().colwise() * (t_scaled - offset).array();
+    Eigen::MatrixXd dz = d_rate.array().colwise() * (t - offset).array();
     dz -= (d_offset.array().colwise() * rate.array()).matrix();
     jacobian = dz.array().colwise()
                * (cap_scaled.array() * sigmoid.array() * (1.0 - sigmoid.array()));
@@ -271,14 +276,14 @@ void logistic_trend_and_jacobian(double k, double m,
 // reached that state during #16 before this was consolidated (#43), each found
 // by tripping over it rather than by a test.
 //
-// The scale checks are here for a different reason: a non-positive tau or
+// The scale checks are here for a different reason: a non-positive changepoint_prior_scale or
 // prior scale does not abort, it divides into the objective and returns a
 // plausible-looking wrong number, which is worse.
 //
 // Called on every objective evaluation, so it has to stay cheap: the only
 // non-scalar work is one pass over `sigmas`, which is O(K) against the
 // O(T*K) matrix products that follow.
-void validate_inputs(const Eigen::VectorXd& t_scaled_vec,
+void validate_inputs(const Eigen::VectorXd& t_vec,
                      const Eigen::VectorXd& change_points_vec,
                      const Eigen::MatrixXd& A,
                      const Eigen::MatrixXd& x,
@@ -288,29 +293,29 @@ void validate_inputs(const Eigen::VectorXd& t_scaled_vec,
                      double sigma_m,
                      const Eigen::Ref<const Eigen::VectorXd>& sigmas,
                      const Eigen::Ref<const Eigen::VectorXd>& s_m,
-                     double tau) {
-    const Eigen::Index T = t_scaled_vec.size();
+                     double changepoint_prior_scale) {
+    const Eigen::Index T = t_vec.size();
     if (T == 0) {
-        throw std::invalid_argument("t_scaled is empty; there is nothing to fit");
+        throw std::invalid_argument("t is empty; there is nothing to fit");
     }
     if (normalized_y_vec.size() != T) {
         throw std::invalid_argument(
             "y_scaled has " + std::to_string(normalized_y_vec.size()) +
-            " entries but t_scaled has " + std::to_string(T) + "; they index the "
+            " entries but t has " + std::to_string(T) + "; they index the "
             "same observations and must be the same length");
     }
     if (A.rows() != T || A.cols() != change_points_vec.size()) {
         throw std::invalid_argument(
             "the changepoint matrix is " + std::to_string(A.rows()) + "x" +
-            std::to_string(A.cols()) + " but t_scaled has " + std::to_string(T) +
-            " entries and t_change has " +
+            std::to_string(A.cols()) + " but t has " + std::to_string(T) +
+            " entries and changepoints_t has " +
             std::to_string(change_points_vec.size()));
     }
     if (x.rows() != T) {
         throw std::invalid_argument(
             "the seasonality matrix has " + std::to_string(x.rows()) + " rows but "
-            "t_scaled has " + std::to_string(T) + "; t_seasonality must cover the "
-            "same observations as t_scaled");
+            "t has " + std::to_string(T) + "; t_seasonality must cover the "
+            "same observations as t");
     }
     if (sigmas.size() != x.cols()) {
         throw std::invalid_argument(
@@ -333,8 +338,8 @@ void validate_inputs(const Eigen::VectorXd& t_scaled_vec,
         throw std::invalid_argument(
             "s_m must hold only 0 (additive) or 1 (multiplicative)");
     }
-    if (!(tau > 0.0)) {
-        throw std::invalid_argument("tau must be positive");
+    if (!(changepoint_prior_scale > 0.0)) {
+        throw std::invalid_argument("changepoint_prior_scale must be positive");
     }
     if (!(sigma_obs_prior_scale > 0.0)) {
         throw std::invalid_argument("sigma_obs_prior_scale must be positive");
@@ -351,7 +356,7 @@ void validate_inputs(const Eigen::VectorXd& t_scaled_vec,
 // A and x are taken as arguments rather than rebuilt: see #28. The overload
 // below keeps the standalone entry point self-contained.
 void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
-                                      const Eigen::VectorXd& t_scaled_vec,
+                                      const Eigen::VectorXd& t_vec,
                                       const Eigen::VectorXd& change_points_vec,
                                       const Eigen::MatrixXd& A,
                                       const Eigen::MatrixXd& x,
@@ -363,12 +368,12 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       const Eigen::Ref<const Eigen::VectorXd>& s_m,
                                       const Eigen::Ref<const Eigen::VectorXd>& cap_scaled,
                                       int trend_indicator,
-                                      double tau,
+                                      double changepoint_prior_scale,
                                       double& mlp_out,
                                       Eigen::Ref<Eigen::VectorXd> grad_out,
                                       bool include_l1_prior = true) {
-    validate_inputs(t_scaled_vec, change_points_vec, A, x, normalized_y_vec,
-                    sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, s_m, tau);
+    validate_inputs(t_vec, change_points_vec, A, x, normalized_y_vec,
+                    sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, s_m, changepoint_prior_scale);
     const ModelParams p = extract_params(params_vec,
                                          static_cast<int>(change_points_vec.size()),
                                          static_cast<int>(x.cols()));
@@ -377,7 +382,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
     const Eigen::VectorXd& delta = p.delta;
     const Eigen::VectorXd& beta = p.beta;
     const double sigma_obs = p.sigma_obs;
-    const double T = static_cast<double>(t_scaled_vec.size());
+    const double T = static_cast<double>(t_vec.size());
 
     // Trend component. Linear keeps its own expression rather than going
     // through the Jacobian form: it is the common case, and its fits are
@@ -393,22 +398,22 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
     Eigen::VectorXd g;
     Eigen::MatrixXd trend_jacobian;
     if (logistic) {
-        if (cap_scaled.size() != t_scaled_vec.size()) {
+        if (cap_scaled.size() != t_vec.size()) {
             throw std::invalid_argument(
                 "cap_scaled has " + std::to_string(cap_scaled.size()) + " entries "
-                "but t_scaled has " + std::to_string(t_scaled_vec.size()) +
+                "but t has " + std::to_string(t_vec.size()) +
                 "; logistic growth needs one capacity per observation");
         }
-        logistic_trend_and_jacobian(k, m, delta, t_scaled_vec, cap_scaled, A,
+        logistic_trend_and_jacobian(k, m, delta, t_vec, cap_scaled, A,
                                     change_points_vec, g, trend_jacobian);
     } else if (flat) {
         // [stan] flat_trend: rep_vector(m, T). k and delta stay parameters and
         // keep their priors; the likelihood does not see them.
-        g = Eigen::VectorXd::Constant(t_scaled_vec.size(), m);
+        g = Eigen::VectorXd::Constant(t_vec.size(), m);
     } else {
-        Eigen::VectorXd ones = Eigen::VectorXd::Ones(t_scaled_vec.size());
+        Eigen::VectorXd ones = Eigen::VectorXd::Ones(t_vec.size());
         Eigen::VectorXd gamma = -delta.array() * change_points_vec.array();
-        g = (k * ones + A * delta).array() * t_scaled_vec.array() + (m * ones + A * gamma).array();
+        g = (k * ones + A * delta).array() * t_vec.array() + (m * ones + A * gamma).array();
     }
 
     // [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...):
@@ -426,7 +431,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
     if (multiplicative) {
         x_sm = x * s_m.asDiagonal();
         x_sa = x - x_sm;
-        multiplier = Eigen::VectorXd::Ones(t_scaled_vec.size()) + x_sm * beta;
+        multiplier = Eigen::VectorXd::Ones(t_vec.size()) + x_sm * beta;
         y_pred = g.array() * multiplier.array() + (x_sa * beta).array();
     } else {
         y_pred = g + x * beta;
@@ -454,7 +459,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                         (2 * sigmas.array().square())).sum();
 
     if (include_l1_prior) {
-        minus_log_posterior_value += delta.array().abs().sum() / tau;
+        minus_log_posterior_value += delta.array().abs().sum() / changepoint_prior_scale;
     }
 
     // Set minus log posterior value
@@ -478,16 +483,16 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
         grad_out(1) = d_trend(1) + m / (sigma_m * sigma_m);
         ddelta = d_trend.tail(delta.size());
     } else {
-        grad_out(0) = -r_scaled.dot(t_scaled_vec) / (sigma_obs * sigma_obs) + k / (sigma_k * sigma_k);
+        grad_out(0) = -r_scaled.dot(t_vec) / (sigma_obs * sigma_obs) + k / (sigma_k * sigma_k);
         grad_out(1) = -r_scaled.sum() / (sigma_obs * sigma_obs) + m / (sigma_m * sigma_m);
 
-        Eigen::MatrixXd t_diff = t_scaled_vec.replicate(1, change_points_vec.size()).array().rowwise() - change_points_vec.transpose().array();
+        Eigen::MatrixXd t_diff = t_vec.replicate(1, change_points_vec.size()).array().rowwise() - change_points_vec.transpose().array();
         Eigen::MatrixXd delta_contrib = t_diff.array() * A.array();
         ddelta = -(r_scaled.transpose() * delta_contrib).transpose() / (sigma_obs * sigma_obs);
     }
 
     if (include_l1_prior) {
-        ddelta += (delta.array().sign() / tau).matrix();
+        ddelta += (delta.array().sign() / changepoint_prior_scale).matrix();
     }
 
     grad_out.segment(2, delta.size()) = ddelta;
@@ -539,7 +544,7 @@ namespace stan_convergence {
 }
 
 
-// The Laplace prior puts |delta|/tau in the objective, which is not
+// The Laplace prior puts |delta|/changepoint_prior_scale in the objective, which is not
 // differentiable at delta = 0 -- and that is where the optimum sits, since the
 // prior is what drives changepoint rates to zero. Splitting delta into
 // non-negative parts,
@@ -562,7 +567,7 @@ namespace stan_convergence {
 // exposed minus_log_posterior_and_gradient entry point, where there is no fit
 // to amortize the construction over.
 void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
-                                      const Eigen::VectorXd& t_scaled_vec,
+                                      const Eigen::VectorXd& t_vec,
                                       const Eigen::VectorXd& change_points_vec,
                                       const Eigen::VectorXd& t_seasonality_vec,
                                       const Eigen::VectorXd& normalized_y_vec,
@@ -573,7 +578,7 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       const Eigen::Ref<const Eigen::VectorXd>& s_m,
                                       const Eigen::Ref<const Eigen::VectorXd>& cap_scaled,
                                       int trend_indicator,
-                                      double tau,
+                                      double changepoint_prior_scale,
                                       const std::vector<int>& fourier_orders,
                                       const std::vector<double>& seasonality_periods,
                                       const Eigen::Ref<const Eigen::MatrixXd>& seasonality_conditions,
@@ -581,21 +586,21 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
                                       double& mlp_out,
                                       Eigen::Ref<Eigen::VectorXd> grad_out,
                                       bool include_l1_prior = true) {
-    minus_log_posterior_and_gradient(params_vec, t_scaled_vec, change_points_vec,
-                                     changepoint_matrix(t_scaled_vec, change_points_vec),
+    minus_log_posterior_and_gradient(params_vec, t_vec, change_points_vec,
+                                     changepoint_matrix(t_vec, change_points_vec),
                                      seasonality_matrix(t_seasonality_vec, fourier_orders,
                                                         seasonality_periods,
                                                         seasonality_conditions,
                                                         data_columns),
                                      normalized_y_vec, sigma_obs_prior_scale, sigma_k,
                                      sigma_m, sigmas, s_m, cap_scaled, trend_indicator,
-                                     tau, mlp_out, grad_out,
+                                     changepoint_prior_scale, mlp_out, grad_out,
                                      include_l1_prior);
 }
 
 struct SplitObjective {
-    const Eigen::VectorXd& t_scaled;
-    const Eigen::VectorXd& t_change;
+    const Eigen::VectorXd& t;
+    const Eigen::VectorXd& changepoints_t;
     // Built once by optimize() before the solver loop: constant for the whole
     // fit, and rebuilding them was the bulk of every evaluation (#28).
     Eigen::MatrixXd A;
@@ -608,7 +613,7 @@ struct SplitObjective {
     Eigen::VectorXd s_m;
     Eigen::VectorXd cap_scaled;
     int trend_indicator;
-    double tau;
+    double changepoint_prior_scale;
     int S;
     int K;
 
@@ -634,24 +639,24 @@ struct SplitObjective {
 
         double value = 0.0;
         Eigen::VectorXd natural_grad(natural.size());
-        minus_log_posterior_and_gradient(natural, t_scaled, t_change, A, x,
+        minus_log_posterior_and_gradient(natural, t, changepoints_t, A, x,
                                          y_scaled, sigma_obs_prior_scale, sigma_k,
                                          sigma_m, sigmas, s_m, cap_scaled, trend_indicator,
-                                         tau, value, natural_grad,
+                                         changepoint_prior_scale, value, natural_grad,
                                          // the split form supplies the L1 term itself
                                          /*include_l1_prior=*/false);
 
         // |delta| == delta_pos + delta_neg on the feasible set, so the Laplace
         // prior becomes linear here.
-        value += (z.segment(2, S).sum() + z.segment(2 + S, S).sum()) / tau;
+        value += (z.segment(2, S).sum() + z.segment(2 + S, S).sum()) / changepoint_prior_scale;
 
-        // d/d(delta_pos) = d/d(delta) + 1/tau,  d/d(delta_neg) = -d/d(delta) + 1/tau
+        // d/d(delta_pos) = d/d(delta) + 1/changepoint_prior_scale,  d/d(delta_neg) = -d/d(delta) + 1/changepoint_prior_scale
         const Eigen::VectorXd ddelta = natural_grad.segment(2, S);
         grad.resize(z.size());
         grad(0) = natural_grad(0);
         grad(1) = natural_grad(1);
-        grad.segment(2, S) = ddelta.array() + 1.0 / tau;
-        grad.segment(2 + S, S) = -ddelta.array() + 1.0 / tau;
+        grad.segment(2, S) = ddelta.array() + 1.0 / changepoint_prior_scale;
+        grad.segment(2 + S, S) = -ddelta.array() + 1.0 / changepoint_prior_scale;
         grad.segment(2 + 2 * S, K) = natural_grad.segment(2 + S, K);
         grad(grad.size() - 1) = natural_grad(natural_grad.size() - 1);
 
@@ -671,8 +676,8 @@ struct OptimizeResult {
 };
 
 OptimizeResult optimize(Eigen::VectorXd params,
-                        const Eigen::Ref<const Eigen::VectorXd>& t_scaled,
-                        const Eigen::Ref<const Eigen::VectorXd>& t_change,
+                        const Eigen::Ref<const Eigen::VectorXd>& t,
+                        const Eigen::Ref<const Eigen::VectorXd>& changepoints_t,
                         const Eigen::Ref<const Eigen::VectorXd>& t_seasonality,
                         const Eigen::Ref<const Eigen::VectorXd>& y_scaled,
                         double sigma_obs_prior_scale,
@@ -682,7 +687,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
                         const Eigen::Ref<const Eigen::VectorXd>& s_m,
                         const Eigen::Ref<const Eigen::VectorXd>& cap_scaled,
                         int trend_indicator,
-                        double tau,
+                        double changepoint_prior_scale,
                         const std::vector<int>& fourier_orders,
                         const std::vector<double>& seasonality_periods,
                         const Eigen::Ref<const Eigen::MatrixXd>& seasonality_conditions,
@@ -690,7 +695,7 @@ OptimizeResult optimize(Eigen::VectorXd params,
                         bool verbose) {
 
         const int params_size = static_cast<int>(params.size());
-        const int S = static_cast<int>(t_change.size());
+        const int S = static_cast<int>(changepoints_t.size());
         const int K = params_size - 3 - S;
 
         // 2 + S + K + 1 with K >= 0: a model with every seasonality disabled
@@ -710,13 +715,13 @@ OptimizeResult optimize(Eigen::VectorXd params,
         // the shared checks can run against the real matrices before any
         // setup work -- a caller gets the error from the call, not from the
         // first objective evaluation inside it.
-        const Eigen::MatrixXd A = changepoint_matrix(t_scaled, t_change);
+        const Eigen::MatrixXd A = changepoint_matrix(t, changepoints_t);
         const Eigen::MatrixXd x = seasonality_matrix(t_seasonality, fourier_orders,
                                                      seasonality_periods,
                                                      seasonality_conditions,
                                                      data_columns);
-        validate_inputs(t_scaled, t_change, A, x, y_scaled,
-                        sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, s_m, tau);
+        validate_inputs(t, changepoints_t, A, x, y_scaled,
+                        sigma_obs_prior_scale, sigma_k, sigma_m, sigmas, s_m, changepoint_prior_scale);
 
         // Specific to this entry point: the split vector is laid out from K,
         // which is read off `params` rather than from the design matrix.
@@ -765,10 +770,10 @@ OptimizeResult optimize(Eigen::VectorXd params,
         param.delta = stan_convergence::TOL_REL_F * stan_convergence::EPS;
         param.max_linesearch = 60;
 
-        SplitObjective objective{t_scaled, t_change, A, x,
+        SplitObjective objective{t, changepoints_t, A, x,
                                  y_scaled, sigma_obs_prior_scale,
                                  sigma_k, sigma_m, sigmas, s_m, cap_scaled,
-                                 trend_indicator, tau, S, K, {}};
+                                 trend_indicator, changepoint_prior_scale, S, K, {}};
         LBFGSpp::LBFGSBSolver<double> solver(param);
 
         double fx = 0.0;
@@ -807,8 +812,8 @@ OptimizeResult optimize(Eigen::VectorXd params,
 
 std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         const Eigen::Ref<const Eigen::VectorXd>& params,
-        const Eigen::Ref<const Eigen::VectorXd>& t_scaled,
-        const Eigen::Ref<const Eigen::VectorXd>& t_change,
+        const Eigen::Ref<const Eigen::VectorXd>& t,
+        const Eigen::Ref<const Eigen::VectorXd>& changepoints_t,
         const Eigen::Ref<const Eigen::VectorXd>& t_seasonality,
         const Eigen::Ref<const Eigen::VectorXd>& y_scaled,
         double sigma_obs_prior_scale,
@@ -818,7 +823,7 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         const Eigen::Ref<const Eigen::VectorXd>& s_m,
         const Eigen::Ref<const Eigen::VectorXd>& cap_scaled,
         int trend_indicator,
-        double tau,
+        double changepoint_prior_scale,
         const std::vector<int>& fourier_orders,
         const std::vector<double>& seasonality_periods,
         const Eigen::Ref<const Eigen::MatrixXd>& seasonality_conditions,
@@ -826,9 +831,9 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
         bool include_l1_prior) {
     double mlp = 0.0;
     Eigen::VectorXd gradient(params.size());
-    minus_log_posterior_and_gradient(params, t_scaled, t_change, t_seasonality,
+    minus_log_posterior_and_gradient(params, t, changepoints_t, t_seasonality,
                                      y_scaled, sigma_obs_prior_scale, sigma_k, sigma_m, sigmas,
-                                     s_m, cap_scaled, trend_indicator, tau, fourier_orders, seasonality_periods,
+                                     s_m, cap_scaled, trend_indicator, changepoint_prior_scale, fourier_orders, seasonality_periods,
                                      seasonality_conditions, data_columns,
                                      mlp, gradient,
                                      include_l1_prior);
@@ -862,8 +867,8 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
 
     m.def("optimize", &optimize,
           py::arg("params"),
-          py::arg("t_scaled"),
-          py::arg("t_change"),
+          py::arg("t"),
+          py::arg("changepoints_t"),
           py::arg("t_seasonality"),
           py::arg("y_scaled"),
           py::arg("sigma_obs_prior_scale"),
@@ -873,7 +878,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("s_m") = Eigen::VectorXd(),
           py::arg("cap_scaled") = Eigen::VectorXd(),
           py::arg("trend_indicator") = 0,
-          py::arg("tau"),
+          py::arg("changepoint_prior_scale"),
           py::arg("fourier_orders"),
           py::arg("seasonality_periods"),
           py::arg("seasonality_conditions") = Eigen::MatrixXd(),
@@ -887,8 +892,8 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
 
     m.def("minus_log_posterior_and_gradient", &minus_log_posterior_and_gradient_py,
           py::arg("params"),
-          py::arg("t_scaled"),
-          py::arg("t_change"),
+          py::arg("t"),
+          py::arg("changepoints_t"),
           py::arg("t_seasonality"),
           py::arg("y_scaled"),
           py::arg("sigma_obs_prior_scale"),
@@ -898,7 +903,7 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("s_m") = Eigen::VectorXd(),
           py::arg("cap_scaled") = Eigen::VectorXd(),
           py::arg("trend_indicator") = 0,
-          py::arg("tau"),
+          py::arg("changepoint_prior_scale"),
           py::arg("fourier_orders"),
           py::arg("seasonality_periods"),
           py::arg("seasonality_conditions") = Eigen::MatrixXd(),

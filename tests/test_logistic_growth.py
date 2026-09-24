@@ -11,10 +11,10 @@ This is much harder to differentiate than the linear trend, and for one reason:
 changes, is defined by a *recursion*.
 
     k_s        = [k, k + cumsum(delta)]
-    gamma[i]   = (t_change[i] - m_pr_i) * (1 - k_s[i]/k_s[i+1])
+    gamma[i]   = (changepoints_t[i] - m_pr_i) * (1 - k_s[i]/k_s[i+1])
     m_pr_{i+1} = m_pr_i + gamma[i]
 
-In the linear case gamma is just `-t_change * delta` and each entry is
+In the linear case gamma is just `-changepoints_t * delta` and each entry is
 independent. Here gamma[i] depends on every earlier gamma through `m_pr`, so
 d(gamma)/d(k, m, delta) is accumulated forward alongside gamma itself rather
 than written down -- an S x (2 + S) Jacobian, which the trend's own chain rule
@@ -50,16 +50,16 @@ def test_gamma_matches_stans_recursion():
     rng = np.random.default_rng(0)
     k, m = 1.7, 0.3
     delta = rng.normal(scale=0.08, size=6)
-    t_change = np.sort(rng.uniform(0.05, 0.9, 6))
+    changepoints_t = np.sort(rng.uniform(0.05, 0.9, 6))
 
     k_s = np.concatenate(([k], k + np.cumsum(delta)))
     expected = np.empty(6)
     m_pr = m
     for i in range(6):
-        expected[i] = (t_change[i] - m_pr) * (1 - k_s[i] / k_s[i + 1])
+        expected[i] = (changepoints_t[i] - m_pr) * (1 - k_s[i] / k_s[i + 1])
         m_pr += expected[i]
 
-    gamma, _ = logistic_gamma_and_jacobian(k, m, delta, t_change)
+    gamma, _ = logistic_gamma_and_jacobian(k, m, delta, changepoints_t)
     np.testing.assert_allclose(gamma, expected, rtol=0, atol=0)
 
 
@@ -68,9 +68,9 @@ def test_gamma_jacobian_matches_finite_differences():
     gamma, so a Jacobian that forgot the carry would still look plausible."""
     rng = np.random.default_rng(1)
     theta = np.concatenate(([1.7], [0.3], rng.normal(scale=0.08, size=6)))
-    t_change = np.sort(rng.uniform(0.05, 0.9, 6))
+    changepoints_t = np.sort(rng.uniform(0.05, 0.9, 6))
 
-    _, analytic = logistic_gamma_and_jacobian(theta[0], theta[1], theta[2:], t_change)
+    _, analytic = logistic_gamma_and_jacobian(theta[0], theta[1], theta[2:], changepoints_t)
 
     step = 1e-7
     numerical = np.empty_like(analytic)
@@ -79,8 +79,8 @@ def test_gamma_jacobian_matches_finite_differences():
         up[j] += step
         down[j] -= step
         numerical[:, j] = (
-            logistic_gamma_and_jacobian(up[0], up[1], up[2:], t_change)[0]
-            - logistic_gamma_and_jacobian(down[0], down[1], down[2:], t_change)[0]) / (2 * step)
+            logistic_gamma_and_jacobian(up[0], up[1], up[2:], changepoints_t)[0]
+            - logistic_gamma_and_jacobian(down[0], down[1], down[2:], changepoints_t)[0]) / (2 * step)
 
     np.testing.assert_allclose(analytic, numerical, rtol=1e-5, atol=1e-7)
 
@@ -89,16 +89,16 @@ def test_the_trend_is_continuous_at_every_changepoint():
     """What gamma exists for. A discontinuity would mean the offsets are being
     computed independently rather than carried forward."""
     rng = np.random.default_rng(2)
-    t_change = np.array([0.2, 0.5, 0.75])
+    changepoints_t = np.array([0.2, 0.5, 0.75])
     delta = rng.normal(scale=0.3, size=3)
-    t = np.sort(np.concatenate([np.linspace(0, 1, 400), t_change - 1e-9,
-                                t_change + 1e-9]))
-    A = (t[:, None] >= t_change) * 1.0
+    t = np.sort(np.concatenate([np.linspace(0, 1, 400), changepoints_t - 1e-9,
+                                changepoints_t + 1e-9]))
+    A = (t[:, None] >= changepoints_t) * 1.0
 
     trend, _ = logistic_trend_and_jacobian(1.5, 0.4, delta, t, np.full(len(t), 1.3),
-                                           A, t_change)
+                                           A, changepoints_t)
 
-    for breakpoint in t_change:
+    for breakpoint in changepoints_t:
         before = trend[np.searchsorted(t, breakpoint) - 1]
         after = trend[np.searchsorted(t, breakpoint)]
         assert abs(after - before) < 1e-6
@@ -256,13 +256,13 @@ def test_compute_trend_agrees_with_the_fitted_trend(peyton_manning_df,
     model = logistic_model()
     model.fit_cpp(df, lib_path=compiled_optimizer_module)
 
-    k, m = model.opt_params[0], model.opt_params[1]
-    delta = model.opt_params[model.layout.delta]
+    k, m = model.params["k"][0][0], model.params["m"][0][0]
+    delta = model.params["delta"][0]
     A, _ = model._design_matrices()
 
-    direct, _ = logistic_trend_and_jacobian(k, m, delta, model.t_scaled,
-                                            model.cap_scaled, A, model.t_change)
-    shared = predict_trend(k, m, delta, model.t_change, model.t_scaled,
+    direct, _ = logistic_trend_and_jacobian(k, m, delta, model.t,
+                                            model.cap_scaled, A, model.changepoints_t)
+    shared = predict_trend(k, m, delta, model.changepoints_t, model.t,
                            model.y_scale, model.cap_scaled, model.floor)
 
     np.testing.assert_allclose(shared, direct * model.y_scale, rtol=1e-12)
@@ -323,10 +323,10 @@ def test_objective_and_posterior_agree_with_prophet(prophet_comparison,
     lp_prophet = bridge.validate_bridge(
         stan_model, stan_data, prophet_params,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = logistic_model()
-    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     np.testing.assert_allclose(ours.cap_scaled,
@@ -335,7 +335,7 @@ def test_objective_and_posterior_agree_with_prophet(prophet_comparison,
     rng = np.random.default_rng(0)
     sums = []
     for scale in (0.0, 0.02, 0.1):
-        point = ours.opt_params.copy()
+        point = ours.get_parameters().copy()
         if scale:
             point[:2] += rng.normal(scale=scale, size=2)
             point[ours.layout.delta] += rng.normal(scale=scale * 0.05, size=25)
@@ -351,7 +351,7 @@ def test_objective_and_posterior_agree_with_prophet(prophet_comparison,
     assert abs(sums[0]) < 1e-3, f"objectives differ by {sums[0]} at the optimum"
     assert max(sums) - min(sums) < 1e-2, f"the difference varies across points: {sums}"
 
-    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.opt_params[0],
-                                   ours.opt_params[1], ours.opt_params[ours.layout.delta],
-                                   ours.sigma_obs, ours.opt_params[ours.layout.beta])
+    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
+                                   ours.params["m"][0][0], ours.params["delta"][0],
+                                   ours.sigma_obs, ours.params["beta"][0])
     assert lp_ours >= lp_prophet - 1e-6

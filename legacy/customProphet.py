@@ -40,7 +40,7 @@ CHANGEPOINT_RANGE = 0.8
 # and this only sets what the default registry puts in the yearly slot.
 n_yearly = 10
 
-# SCALE on delta, the changepoint rate adjustments: delta ~ double_exponential(0, tau).
+# SCALE on delta, the changepoint rate adjustments: delta ~ double_exponential(0, changepoint_prior_scale).
 # [stan] model block; [fc] Prophet.__init__ changepoint_prior_scale=0.05 (user-configurable)
 TAU = 0.05
 # SCALE on beta, the seasonality coefficients: beta ~ normal(0, sigmas).
@@ -119,7 +119,8 @@ class ParameterLayout:
     def holidays(self):
         """The holiday coefficients' slice of the *parameter vector*.
 
-        Indexed like `beta` and `delta`, so it applies to `opt_params`. For the
+        Indexed like `beta` and `delta`, so it applies to the optimizer's
+        flat vector. For the
         design matrix and `sigmas` -- which are indexed by column, from 0 -- use
         `holiday_block`. The two differ by the 3 + S offset, and mixing them
         silently returns the wrong slice rather than raising.
@@ -319,26 +320,16 @@ def condition_masks(seasonalities, df):
     return masks
 
 
-def seasonality_design_matrix(t_seasonality, seasonalities, masks=None):
-    """Fourier features for every registered component, concatenated.
+def make_seasonality_features(dates, period, series_order, prefix):
+    """Fourier features for one seasonal component, as a named frame.
 
-    Column order follows the registry's insertion order, and within a component
-    Prophet's own interleaving. With one yearly component this is exactly the
-    matrix built before the registry existed.
-
-    A component named in `masks` has the rows where its mask is False zeroed --
-    [fc] `features[~df[props['condition_name']]] = 0`. The columns stay in the
-    matrix, so `beta` keeps its width and only the rows the condition excludes
-    stop contributing.
+    [fc] Prophet.make_seasonality_features, including the `{prefix}_delim_{i}`
+    column names -- they carry no meaning for the fit, which sees an array, but
+    they are what makes a design matrix here readable beside one from there.
     """
-    masks = masks or {}
-    blocks = []
-    for name, props in seasonalities.items():
-        block = fourier_series(t_seasonality, props["period"], props["fourier_order"])
-        if name in masks:
-            block = np.where(np.asarray(masks[name], dtype=bool)[:, None], block, 0.0)
-        blocks.append(block)
-    return np.concatenate(blocks, axis=1) if blocks else np.empty((len(t_seasonality), 0))
+    features = fourier_series(seasonal_time(dates), period, series_order)
+    columns = [f"{prefix}_delim_{i + 1}" for i in range(features.shape[1])]
+    return pd.DataFrame(features, columns=columns)
 
 
 def condition_matrix(seasonalities, masks, n_rows):
@@ -499,9 +490,9 @@ def validate_holidays_frame(holidays, validate_name):
 def make_holiday_features(dates, holidays, default_prior_scale):
     """Indicator columns for every holiday occurrence and window offset.
 
-    [fc] Prophet.make_holiday_features. Returns (features, prior_scales, names):
-    a T x H float array, one prior scale per column, and the holiday names in
-    the order they were first seen.
+    [fc] Prophet.make_holiday_features. Returns (features, prior_scales,
+    names): a DataFrame with Prophet's own column names, one prior scale per
+    column, and the holiday names in the order they were first seen.
 
     One column per (holiday, offset) pair, named `holiday_delim_+n` or
     `holiday_delim_-n`, and the columns are **sorted by name** -- Prophet sorts
@@ -514,7 +505,7 @@ def make_holiday_features(dates, holidays, default_prior_scale):
     """
     dates = pd.to_datetime(pd.Series(np.asarray(dates)))
     if holidays is None or len(holidays) == 0:
-        return np.empty((len(dates), 0)), [], []
+        return pd.DataFrame(index=range(len(dates))), [], []
 
     # a holiday's date matched to the day, not the timestamp
     row_index = pd.DatetimeIndex(dates.dt.date)
@@ -551,10 +542,10 @@ def make_holiday_features(dates, holidays, default_prior_scale):
             column[matches] = 1.0
 
     if not columns:
-        return np.empty((len(dates), 0)), [], list(prior_scales)
+        return pd.DataFrame(index=range(len(dates))), [], list(prior_scales)
 
     names = sorted(columns)
-    features = np.column_stack([columns[name] for name in names])
+    features = pd.DataFrame({name: columns[name] for name in names}, columns=names)
     scales = [prior_scales[name.split("_delim_")[0]] for name in names]
     return features, scales, list(prior_scales)
 
@@ -596,17 +587,17 @@ def flat_growth_init(y_scaled):
     return 0.0, float(np.mean(y_scaled))
 
 
-def logistic_gamma_and_jacobian(k, m, delta, t_change):
+def logistic_gamma_and_jacobian(k, m, delta, changepoints_t):
     """Piecewise offsets for the logistic trend, and their Jacobian.
 
     [stan] logistic_gamma. Each segment's offset is chosen so the curve stays
     continuous where the rate changes:
 
         k_s        = [k, k + cumsum(delta)]                 S+1 segment rates
-        gamma[i]   = (t_change[i] - m_pr_i) * (1 - k_s[i]/k_s[i+1])
+        gamma[i]   = (changepoints_t[i] - m_pr_i) * (1 - k_s[i]/k_s[i+1])
         m_pr_{i+1} = m_pr_i + gamma[i],   m_pr_1 = m
 
-    Unlike the linear case, where gamma is just `-t_change * delta`, this is a
+    Unlike the linear case, where gamma is just `-changepoints_t * delta`, this is a
     recursion: gamma[i] depends on every earlier gamma through `m_pr`. So its
     Jacobian is accumulated forward alongside it rather than written down.
 
@@ -634,15 +625,15 @@ def logistic_gamma_and_jacobian(k, m, delta, t_change):
         c = 1.0 - k_s[i] / k_s[i + 1]
         dc = -(dk_s[i] * k_s[i + 1] - k_s[i] * dk_s[i + 1]) / k_s[i + 1] ** 2
 
-        gamma[i] = (t_change[i] - m_pr) * c
-        dgamma[i] = -dm_pr * c + (t_change[i] - m_pr) * dc
+        gamma[i] = (changepoints_t[i] - m_pr) * c
+        dgamma[i] = -dm_pr * c + (changepoints_t[i] - m_pr) * dc
 
         m_pr = m_pr + gamma[i]
         dm_pr = dm_pr + dgamma[i]
     return gamma, dgamma
 
 
-def logistic_trend_and_jacobian(k, m, delta, t_scaled, cap_scaled, A, t_change):
+def logistic_trend_and_jacobian(k, m, delta, t, cap_scaled, A, changepoints_t):
     """The logistic trend and d(trend)/d(k, m, delta).
 
     [stan] logistic_trend: cap .* inv_logit((k + A*delta) .* (t - (m + A*gamma))).
@@ -652,10 +643,10 @@ def logistic_trend_and_jacobian(k, m, delta, t_scaled, cap_scaled, A, t_change):
     the contracted gradient is what lets the multiplicative multiplier be
     applied outside, exactly as it is for the linear trend.
     """
-    gamma, dgamma = logistic_gamma_and_jacobian(k, m, delta, t_change)
+    gamma, dgamma = logistic_gamma_and_jacobian(k, m, delta, changepoints_t)
     rate = k + np.dot(A, delta)
     offset = m + np.dot(A, gamma)
-    z = rate * (t_scaled - offset)
+    z = rate * (t - offset)
 
     # exp(-|z|) form: the naive 1/(1+exp(-z)) overflows for z very negative
     sigmoid = np.where(z >= 0, 1.0 / (1.0 + np.exp(-np.abs(z))),
@@ -664,20 +655,20 @@ def logistic_trend_and_jacobian(k, m, delta, t_scaled, cap_scaled, A, t_change):
 
     d_offset = np.dot(A, dgamma)
     d_offset[:, 1] += 1.0                      # offset = m + A*gamma
-    d_rate = np.zeros((len(t_scaled), 2 + len(delta)))
+    d_rate = np.zeros((len(t), 2 + len(delta)))
     d_rate[:, 0] = 1.0
     d_rate[:, 2:] = A
 
-    dz = d_rate * (t_scaled - offset)[:, None] - rate[:, None] * d_offset
+    dz = d_rate * (t - offset)[:, None] - rate[:, None] * d_offset
     jacobian = (cap_scaled * sigmoid * (1.0 - sigmoid))[:, None] * dz
     return trend, jacobian
 
 
-def logistic_growth_init(t_scaled, y_scaled, cap_scaled):
+def logistic_growth_init(t, y_scaled, cap_scaled):
     """[fc] logistic_growth_init: put the curve through the first and last
     points, clamping y into (0, cap) first so the logs are defined."""
-    i0, i1 = int(np.argmin(t_scaled)), int(np.argmax(t_scaled))
-    span = t_scaled[i1] - t_scaled[i0]
+    i0, i1 = int(np.argmin(t)), int(np.argmax(t))
+    span = t[i1] - t[i0]
 
     c0, c1 = cap_scaled[i0], cap_scaled[i1]
     y0 = max(0.01 * c0, min(0.99 * c0, y_scaled[i0]))
@@ -691,12 +682,12 @@ def logistic_growth_init(t_scaled, y_scaled, cap_scaled):
     return (l0 - l1) / span, l0 * span / (l0 - l1)
 
 
-def linear_growth_init(t_scaled, y_scaled):
+def linear_growth_init(t, y_scaled):
     """Prophet's deterministic starting point for (k, m): the line through the
     first and last points of the scaled series.
 
     [fc] Prophet.linear_growth_init -- it indexes by argmin/argmax of ds rather
-    than assuming the frame is sorted, so this does the same via t_scaled.
+    than assuming the frame is sorted, so this does the same via t.
 
         k = (y_scaled[i1] - y_scaled[i0]) / (t[i1] - t[i0])
         m = y_scaled[i0] - k * t[i0]
@@ -704,11 +695,11 @@ def linear_growth_init(t_scaled, y_scaled):
     Prophet always passes this in explicitly, which is why Stan's random
     `init_r * N(0, 1)` default never applies.
     """
-    i0 = int(np.argmin(t_scaled))
-    i1 = int(np.argmax(t_scaled))
-    span = t_scaled[i1] - t_scaled[i0]
+    i0 = int(np.argmin(t))
+    i1 = int(np.argmax(t))
+    span = t[i1] - t[i0]
     k = (y_scaled[i1] - y_scaled[i0]) / span
-    m = y_scaled[i0] - k * t_scaled[i0]
+    m = y_scaled[i0] - k * t[i0]
     return float(k), float(m)
 
 def det_dot(a, b):
@@ -842,7 +833,7 @@ def cpp_to_canonical(params, layout=DEFAULT_LAYOUT):
 def canonical_to_split(params, layout=DEFAULT_LAYOUT):
     """(k, m, delta, sigma_obs, beta) -> (k, m, delta_pos, delta_neg, sigma_obs, beta).
 
-    The Laplace prior on delta puts |delta|/tau in the objective, which is not
+    The Laplace prior on delta puts |delta|/changepoint_prior_scale in the objective, which is not
     differentiable at delta=0 -- and that is exactly where the optimum sits,
     since the prior is what drives most changepoint rates to zero. L-BFGS-B
     assumes a smooth objective and stalls on those kinks well short of the
@@ -866,7 +857,7 @@ def split_to_canonical(z, n_delta=N_CHANGE_POINTS):
     beta = z[3 + 2 * n_delta:]
     return np.concatenate(([k], [m], delta_pos - delta_neg, [sigma_obs], beta))
 
-def predict_trend(k, m, delta, t_change, t_scaled, y_scale,
+def predict_trend(k, m, delta, changepoints_t, t, y_scale,
                   cap_scaled=None, floor=None, growth='linear'):
     """The trend in normalized-y space, de-normalized once at the end.
 
@@ -874,15 +865,15 @@ def predict_trend(k, m, delta, t_change, t_scaled, y_scale,
     de-normalization can't drift apart between the two again. `cap_scaled`
     selects logistic growth; without it the trend is piecewise linear.
     """
-    A = (t_scaled[:, None] >= t_change) * 1
+    A = (t[:, None] >= changepoints_t) * 1
     if growth == 'flat':
-        trend_normalized = np.full(len(t_scaled), m)
+        trend_normalized = np.full(len(t), m)
     elif cap_scaled is None:
-        gamma = -t_change * delta
-        trend_normalized = (k + det_dot(A, delta)) * t_scaled + (m + det_dot(A, gamma))
+        gamma = -changepoints_t * delta
+        trend_normalized = (k + det_dot(A, delta)) * t + (m + det_dot(A, gamma))
     else:
         trend_normalized = logistic_trend_and_jacobian(
-            k, m, delta, t_scaled, cap_scaled, A, t_change)[0]
+            k, m, delta, t, cap_scaled, A, changepoints_t)[0]
     trend = trend_normalized * y_scale
     return trend if floor is None else trend + floor
 
@@ -903,12 +894,12 @@ class CustomProphet:
         for something that would have been ignored anyway.
 
         `changepoint_prior_scale` is Prophet's name for what the Stan model and
-        every derivation in this repository call `tau`. The argument takes
+        every derivation in this repository call `changepoint_prior_scale`. The argument takes
         Prophet's name and the attribute keeps Stan's.
         """
         self.rng = np.random.default_rng()
 
-        self.t_scaled = None
+        self.t = None
         self.y = None
         self.y_scaled = None
         self.y_scale = None
@@ -919,7 +910,7 @@ class CustomProphet:
         self.cap_scaled = None
         self.floor = None
         self.n_changepoints = n_changepoints
-        self.t_change = None
+        self.changepoints_t = None
         self.changepoint_range = changepoint_range
 
         self.yearly_seasonality = yearly_seasonality
@@ -933,6 +924,8 @@ class CustomProphet:
         self.holidays_prior_scale = holidays_prior_scale
         self.holidays_mode = holidays_mode
         self.train_holiday_names = None
+        self.train_holiday_column_names = None
+        self._fit_design_matrix = None
         self.country_holidays = None
         self._fitted_with_cpp = False
         self._fit_lib_path = None
@@ -951,7 +944,7 @@ class CustomProphet:
         self.layout = DEFAULT_LAYOUT
 
         # Prophet's name on the argument, Stan's on the attribute.
-        self.tau = changepoint_prior_scale
+        self.changepoint_prior_scale = changepoint_prior_scale
         self.sigmas = seasonality_prior_scales({})
         self.s_m = np.empty(0)
         self.s_a = np.empty(0)
@@ -966,7 +959,12 @@ class CustomProphet:
         self.delta = None
         self.beta = None
 
-        self.opt_params = None
+        # [fc] Prophet.params: a dict of arrays, each with a leading sample
+        # axis of length 1 for a MAP fit. The optimizer works in a flat vector,
+        # which stays private -- `params` is the fitted result, not the thing
+        # being optimized.
+        self.params = None
+        self._params_vector = None
         self.loss_over_iterations = None
         self.opt = None
 
@@ -1006,7 +1004,38 @@ class CustomProphet:
                 f"implemented.")
 
     def get_parameters(self) -> np.array:
-        return self.opt_params
+        return self._params_vector
+
+    def _store_params(self, vector):
+        """Unpack the optimizer's flat vector into Prophet's `params` dict.
+
+        [fc] the shapes carry a leading axis of length 1, which is the MCMC
+        sample dimension -- one row for a MAP fit. Keeping it means
+        `params['k'][0]` reads the same here as there.
+        """
+        k, m, delta, sigma_obs, beta = extract_params(vector, self.layout)
+        self._params_vector = vector
+        self.params = {
+            "k": np.array([[k]]),
+            "m": np.array([[m]]),
+            "delta": np.asarray(delta, dtype=float).reshape(1, -1),
+            "sigma_obs": np.array([[sigma_obs]]),
+            "beta": np.asarray(beta, dtype=float).reshape(1, -1),
+        }
+        # [fc] the fitted trend over the history, which Prophet carries here too
+        self.params["trend"] = predict_trend(
+            k, m, delta, self.changepoints_t, self.t, self.y_scale,
+            self.cap_scaled, self.floor, self.growth).reshape(1, -1)
+        # [fc] Prophet carries Stan's log posterior here; ours is the negative
+        # of the objective the optimizer minimised.
+        self.params["lp__"] = np.array([[-self._minus_log_posterior(vector)]])
+
+    def _fitted(self):
+        """(k, m, delta, sigma_obs, beta) from `params`, in the shapes the
+        arithmetic wants rather than the ones the dict carries."""
+        return (float(self.params["k"][0][0]), float(self.params["m"][0][0]),
+                self.params["delta"][0], float(self.params["sigma_obs"][0][0]),
+                self.params["beta"][0])
         
     def _normalize_y(self) -> None:
         self.y_scale = np.max(np.abs(self.y))
@@ -1068,7 +1097,7 @@ class CustomProphet:
         each becoming its own column) and `prior_scale` (per holiday, and it
         must be consistent across that holiday's rows).
         """
-        if self.opt_params is not None:
+        if self.params is not None:
             raise RuntimeError(
                 "holidays must be added before fitting; this model has already "
                 "been fit. Add them to a fresh model.")
@@ -1096,7 +1125,7 @@ class CustomProphet:
         Only one country at a time, as in Prophet; setting a second replaces
         the first and says so.
         """
-        if self.opt_params is not None:
+        if self.params is not None:
             raise RuntimeError(
                 "country holidays must be added before fitting; this model has "
                 "already been fit. Add them to a fresh model.")
@@ -1142,6 +1171,52 @@ class CustomProphet:
                                   sort=False, ignore_index=True)
         return frame
 
+    def make_all_seasonality_features(self, df):
+        """The whole design matrix, its prior scales and its modes.
+
+        [fc] Prophet.make_all_seasonality_features, which returns the same
+        first two and a `component_cols` frame this implementation has no use
+        for -- it exists there for plotting and the component decomposition,
+        neither of which is implemented here.
+
+        Column order is Prophet's: every seasonal component in registry order,
+        then holidays, then extra regressors. That order is what `beta`,
+        `sigmas` and `s_m` are all indexed by.
+        """
+        dates = df['ds']
+        masks = condition_masks(self.seasonalities, df)
+
+        blocks, prior_scales, modes = [], [], []
+        for name, props in self.seasonalities.items():
+            block = make_seasonality_features(dates, props["period"],
+                                              props["fourier_order"], name)
+            if name in masks:
+                # [fc] features[~df[condition_name]] = 0
+                block = pd.DataFrame(
+                    np.where(np.asarray(masks[name], dtype=bool)[:, None],
+                             block.to_numpy(dtype=float), 0.0),
+                    columns=block.columns)
+            blocks.append(block)
+            prior_scales.extend([props["prior_scale"]] * block.shape[1])
+            modes.extend([props["mode"]] * block.shape[1])
+
+        data_columns, data_scales, data_modes = self._data_design(dates, df)
+        if data_columns is not None and data_columns.shape[1]:
+            names = self._data_column_names()
+            blocks.append(pd.DataFrame(data_columns, columns=names))
+            prior_scales.extend(data_scales)
+            modes.extend(data_modes)
+
+        if not blocks:
+            return pd.DataFrame(index=range(len(df))), [], []
+        features = pd.concat([b.reset_index(drop=True) for b in blocks], axis=1)
+        return features, prior_scales, modes
+
+    def _data_column_names(self):
+        """Names for the holiday and regressor columns, [fc]'s own."""
+        names = list(self.train_holiday_column_names or [])
+        return names + list(self.extra_regressors)
+
     def _data_design(self, dates, df, holidays_block=None):
         """(columns, prior_scales, modes) for the holiday and regressor blocks.
 
@@ -1154,24 +1229,31 @@ class CustomProphet:
             holidays_block, holiday_scales = self._holiday_design(dates)
         else:
             holiday_scales = self._holiday_prior_scales
-        holidays_block = np.empty((len(df), 0)) if holidays_block is None else holidays_block
+        holidays_array = (np.empty((len(df), 0)) if holidays_block is None
+                          else np.asarray(holidays_block, dtype=float))
 
         holiday_mode = self.holidays_mode or self.seasonality_mode
-        modes = [holiday_mode] * holidays_block.shape[1]
+        modes = [holiday_mode] * holidays_array.shape[1]
         modes += [props["mode"] for props in self.extra_regressors.values()]
 
         scales = list(holiday_scales) + [props["prior_scale"]
                                          for props in self.extra_regressors.values()]
-        columns = np.concatenate([holidays_block, regressor_columns(self.extra_regressors, df)],
-                                 axis=1)
+        columns = np.concatenate([holidays_array,
+                                  regressor_columns(self.extra_regressors, df)], axis=1)
         return columns, scales, modes
 
     def _holiday_design(self, dates):
-        """(features, prior_scales) for `dates`, in the fit's column order."""
+        """(features, prior_scales) for `dates`, as an array.
+
+        make_holiday_features returns a named frame, matching Prophet's; the
+        arithmetic downstream wants the values, so the conversion happens here
+        rather than at every use.
+        """
         frame = self.construct_holiday_dataframe(dates)
         if frame is None:
             return None, []
-        return make_holiday_features(dates, frame, self.holidays_prior_scale)[:2]
+        features, scales, _ = make_holiday_features(dates, frame, self.holidays_prior_scale)
+        return features.to_numpy(dtype=float), scales
 
     def validate_column_name(self, name, check_holidays=True,
                              check_seasonalities=True, check_regressors=True) -> None:
@@ -1220,7 +1302,7 @@ class CustomProphet:
         scales the trend rather than adding to it, so its contribution grows
         with the level of the series.
         """
-        if self.opt_params is not None:
+        if self.params is not None:
             raise RuntimeError(
                 "seasonality must be added before fitting; this model has "
                 "already been fit. Add it to a fresh model, or register it "
@@ -1328,27 +1410,35 @@ class CustomProphet:
         index-spacing follows observation density and time-spacing does not.
         Left as-is deliberately -- see the follow-up issue.
         """
-        max_t_scaled = np.max(self.t_scaled)
-        self.t_change = np.linspace(0, self.changepoint_range * max_t_scaled, self.n_changepoints + 1)[1:]
+        max_t_scaled = np.max(self.t)
+        self.changepoints_t = np.linspace(0, self.changepoint_range * max_t_scaled, self.n_changepoints + 1)[1:]
 
         
     def _design_matrices(self):
         """The changepoint indicator A (T x S) and the Fourier design matrix
         (T x K).
 
-        Both depend only on t_scaled and t_change, so they are constant
+        Both depend only on t and changepoints_t, so they are constant
         for a whole fit -- yet rebuilding them was 57% of every objective
         evaluation (issue #28). fit() computes them once and threads them
         through; callers that pass nothing still get correct results, which is
         what keeps the objective usable on its own.
         """
-        A = (self.t_scaled[:, None] >= self.t_change) * 1
+        A = (self.t[:, None] >= self.changepoints_t) * 1
         # [fc] make_all_seasonality_features appends holiday columns after the
         # seasonal ones; `beta` and `sigmas` follow that order.
-        x = seasonality_design_matrix(self.t_seasonality, self.seasonalities,
-                                      self.condition_masks)
-        if self._data_column_count:
-            x = np.concatenate([x, self._data_columns], axis=1)
+        # built once by the fit (#28); rebuilt here only for a model that has
+        # been prepared but not fitted, which is what the test fixtures use
+        x = self._fit_design_matrix
+        if x is None:
+            # A model prepared but not fitted, which is what the test fixtures
+            # use. Condition columns are reconstructed from the stored masks,
+            # since make_all_seasonality_features reads them off the frame.
+            frame = pd.DataFrame({"ds": np.asarray(self.ds)})
+            for name, mask in self.condition_masks.items():
+                frame[self.seasonalities[name]["condition_name"]] = np.asarray(mask)
+            x = np.ascontiguousarray(
+                self.make_all_seasonality_features(frame)[0].to_numpy(dtype=float))
         return A, x
 
     def _minus_log_posterior(self, params: np.array, include_l1_prior: bool=True, design=None) -> float:
@@ -1361,7 +1451,7 @@ class CustomProphet:
         # sensitive to the last bits (see the note on the additive branch).
         if self.growth == 'logistic':
             g, trend_jacobian = logistic_trend_and_jacobian(
-                k, m, delta, self.t_scaled, self.cap_scaled, A, self.t_change)
+                k, m, delta, self.t, self.cap_scaled, A, self.changepoints_t)
         elif self.growth == 'flat':
             # [stan] flat_trend: rep_vector(m, T). k and delta remain
             # parameters and keep their priors, but the likelihood does not see
@@ -1370,8 +1460,8 @@ class CustomProphet:
             g = np.full(self.T, m)
         else:
             trend_jacobian = None
-            gamma = -self.t_change * delta
-            g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
+            gamma = -self.changepoints_t * delta
+            g = (k + np.dot(A, delta)) * self.t + (m + np.dot(A, gamma))
 
         # [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...)
         # -- additive columns add to the trend, multiplicative ones scale it.
@@ -1389,7 +1479,7 @@ class CustomProphet:
                       np.sum(beta**2 / (2 * self.sigmas**2))
 
         if include_l1_prior:
-            minus_log_posterior += np.sum(np.abs(delta)) / self.tau
+            minus_log_posterior += np.sum(np.abs(delta)) / self.changepoint_prior_scale
 
         return minus_log_posterior
 
@@ -1403,7 +1493,7 @@ class CustomProphet:
         # sensitive to the last bits (see the note on the additive branch).
         if self.growth == 'logistic':
             g, trend_jacobian = logistic_trend_and_jacobian(
-                k, m, delta, self.t_scaled, self.cap_scaled, A, self.t_change)
+                k, m, delta, self.t, self.cap_scaled, A, self.changepoints_t)
         elif self.growth == 'flat':
             # [stan] flat_trend: rep_vector(m, T). k and delta remain
             # parameters and keep their priors, but the likelihood does not see
@@ -1412,8 +1502,8 @@ class CustomProphet:
             g = np.full(self.T, m)
         else:
             trend_jacobian = None
-            gamma = -self.t_change * delta
-            g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
+            gamma = -self.changepoints_t * delta
+            g = (k + np.dot(A, delta)) * self.t + (m + np.dot(A, gamma))
 
         # [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...).
         # The all-additive case takes its own branch rather than multiplying by
@@ -1439,9 +1529,9 @@ class CustomProphet:
             dm = np.array([-np.sum(r_scaled) / sigma_obs**2 + m / self.sigma_m**2])
             ddelta = np.zeros(len(delta))
         elif trend_jacobian is None:
-            dk = np.array([-np.sum(r_scaled * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
+            dk = np.array([-np.sum(r_scaled * self.t) / sigma_obs**2 + k / self.sigma_k**2])
             dm = np.array([-np.sum(r_scaled) / sigma_obs**2 + m / self.sigma_m**2])
-            ddelta = -np.sum(r_scaled[:, None] * (self.t_scaled[:, None] - self.t_change) * A, axis=0) / sigma_obs**2
+            ddelta = -np.sum(r_scaled[:, None] * (self.t[:, None] - self.changepoints_t) * A, axis=0) / sigma_obs**2
         else:
             # one contraction for all three blocks: the Jacobian already holds
             # d(trend)/d(k, m, delta), including gamma's recursion
@@ -1455,7 +1545,7 @@ class CustomProphet:
                 + beta / self.sigmas**2
 
         if include_l1_prior:
-            ddelta = ddelta + np.sign(delta) / self.tau
+            ddelta = ddelta + np.sign(delta) / self.changepoint_prior_scale
 
         gradient = np.concatenate([dk, dm, ddelta, dsigma_obs, dbeta])
 
@@ -1471,7 +1561,7 @@ class CustomProphet:
         # sensitive to the last bits (see the note on the additive branch).
         if self.growth == 'logistic':
             g, trend_jacobian = logistic_trend_and_jacobian(
-                k, m, delta, self.t_scaled, self.cap_scaled, A, self.t_change)
+                k, m, delta, self.t, self.cap_scaled, A, self.changepoints_t)
         elif self.growth == 'flat':
             # [stan] flat_trend: rep_vector(m, T). k and delta remain
             # parameters and keep their priors, but the likelihood does not see
@@ -1480,8 +1570,8 @@ class CustomProphet:
             g = np.full(self.T, m)
         else:
             trend_jacobian = None
-            gamma = -self.t_change * delta
-            g = (k + np.dot(A, delta)) * self.t_scaled + (m + np.dot(A, gamma))
+            gamma = -self.changepoints_t * delta
+            g = (k + np.dot(A, delta)) * self.t + (m + np.dot(A, gamma))
 
         # [stan] y ~ normal_id_glm(X_sa, trend .* (1 + X_sm * beta), beta, ...).
         # The all-additive case takes its own branch rather than multiplying by
@@ -1514,9 +1604,9 @@ class CustomProphet:
             dm = np.array([-np.sum(r_scaled) / sigma_obs**2 + m / self.sigma_m**2])
             ddelta = np.zeros(len(delta))
         elif trend_jacobian is None:
-            dk = np.array([-np.sum(r_scaled * self.t_scaled) / sigma_obs**2 + k / self.sigma_k**2])
+            dk = np.array([-np.sum(r_scaled * self.t) / sigma_obs**2 + k / self.sigma_k**2])
             dm = np.array([-np.sum(r_scaled) / sigma_obs**2 + m / self.sigma_m**2])
-            ddelta = -np.sum(r_scaled[:, None] * (self.t_scaled[:, None] - self.t_change) * A, axis=0) / sigma_obs**2
+            ddelta = -np.sum(r_scaled[:, None] * (self.t[:, None] - self.changepoints_t) * A, axis=0) / sigma_obs**2
         else:
             # one contraction for all three blocks: the Jacobian already holds
             # d(trend)/d(k, m, delta), including gamma's recursion
@@ -1530,8 +1620,8 @@ class CustomProphet:
                 + beta / self.sigmas**2
 
         if include_l1_prior:
-            minus_log_posterior += np.sum(np.abs(delta)) / self.tau
-            ddelta = ddelta + np.sign(delta) / self.tau
+            minus_log_posterior += np.sum(np.abs(delta)) / self.changepoint_prior_scale
+            ddelta = ddelta + np.sign(delta) / self.changepoint_prior_scale
 
         gradient = np.concatenate([dk, dm, ddelta, dsigma_obs, dbeta])
 
@@ -1539,12 +1629,12 @@ class CustomProphet:
 
     # --- split-space (delta = delta_pos - delta_neg) wrappers --------------
     # These are what fit() optimizes over. They evaluate the posterior without
-    # its L1 term and add (delta_pos + delta_neg)/tau instead, which is the
+    # its L1 term and add (delta_pos + delta_neg)/changepoint_prior_scale instead, which is the
     # same value but differentiable -- see canonical_to_split for why.
 
     def _split_l1_penalty(self, z):
         n_delta = self.layout.n_changepoints
-        return np.sum(z[2:2 + 2 * n_delta]) / self.tau
+        return np.sum(z[2:2 + 2 * n_delta]) / self.changepoint_prior_scale
 
     def _split_minus_log_posterior(self, z: np.array, design=None) -> float:
         smooth = self._minus_log_posterior(split_to_canonical(z, self.layout.n_changepoints),
@@ -1562,12 +1652,12 @@ class CustomProphet:
         return smooth + self._split_l1_penalty(z), self._canonical_gradient_to_split(gradient)
 
     def _canonical_gradient_to_split(self, gradient):
-        """d/d(delta_pos) = d/d(delta) + 1/tau, d/d(delta_neg) = -d/d(delta) + 1/tau."""
+        """d/d(delta_pos) = d/d(delta) + 1/changepoint_prior_scale, d/d(delta_neg) = -d/d(delta) + 1/changepoint_prior_scale."""
         ddelta = gradient[self.layout.delta]
         return np.concatenate((
             gradient[:2],
-            ddelta + 1 / self.tau,
-            -ddelta + 1 / self.tau,
+            ddelta + 1 / self.changepoint_prior_scale,
+            -ddelta + 1 / self.changepoint_prior_scale,
             [gradient[self.layout.sigma_obs_idx]],
             gradient[self.layout.beta],
         ))
@@ -1584,7 +1674,7 @@ class CustomProphet:
         else:
             self.ds = df['ds']
 
-        self.t_scaled = np.array((self.ds - self.ds.min()) / (self.ds.max() - self.ds.min()))
+        self.t = np.array((self.ds - self.ds.min()) / (self.ds.max() - self.ds.min()))
         self.T = df.shape[0]
 
         # Calculate the scale period coefficient
@@ -1614,19 +1704,26 @@ class CustomProphet:
         self._data_columns, self._data_prior_scales, self._data_modes = \
             self._data_design(self.ds, df, holidays_block)
         self._data_column_count = self._data_columns.shape[1]
+        if self._holiday_columns:
+            self.train_holiday_column_names = list(make_holiday_features(
+                self.ds, self.construct_holiday_dataframe(self.ds),
+                self.holidays_prior_scale)[0].columns)
         self._build_layout()
+        # built once here, not per objective evaluation (#28)
+        self._fit_design_matrix = np.ascontiguousarray(
+            self.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
         self._generate_change_points()
 
         # [fc] calculate_initial_params: k/m from linear_growth_init, delta and
         # beta at zero, sigma_obs at 1.0. Prophet passes these to Stan
         # explicitly, so Stan's random init is never used.
         if self.growth == 'logistic':
-            k_init, m_init = logistic_growth_init(self.t_scaled, self.y_scaled,
+            k_init, m_init = logistic_growth_init(self.t, self.y_scaled,
                                                   self.cap_scaled)
         elif self.growth == 'flat':
             k_init, m_init = flat_growth_init(self.y_scaled)
         else:
-            k_init, m_init = linear_growth_init(self.t_scaled, self.y_scaled)
+            k_init, m_init = linear_growth_init(self.t, self.y_scaled)
         initial_params_dict = {
             'k': k_init,
             'm': m_init,
@@ -1699,7 +1796,7 @@ class CustomProphet:
                 'maxfun': STAN_MAX_ITERATIONS * 10,
             })
 
-        opt_params = minimize(objective,
+        result = minimize(objective,
                         z0,
                         method=optimizer,
                         bounds=bounds,
@@ -1707,9 +1804,10 @@ class CustomProphet:
                         callback=callback,
                         jac=jac)
 
-        self.opt = opt_params
-        self.opt_params = split_to_canonical(opt_params.x, self.layout.n_changepoints)
-        self.sigma_obs = self.opt_params[self.layout.sigma_obs_idx]
+        self.opt = result
+        vector = split_to_canonical(result.x, self.layout.n_changepoints)
+        self.sigma_obs = vector[self.layout.sigma_obs_idx]
+        self._store_params(vector)
         self._fitted_with_cpp = False
         self._fit_regressor_models(df)
         self.loss_over_iterations = loss_over_iterations
@@ -1723,7 +1821,7 @@ class CustomProphet:
         else:
             self.ds = df['ds']
 
-        self.t_scaled = np.array((self.ds - self.ds.min()) / (self.ds.max() - self.ds.min()))
+        self.t = np.array((self.ds - self.ds.min()) / (self.ds.max() - self.ds.min()))
         self.T = df.shape[0]
 
         self.t_seasonality = seasonal_time(self.ds)
@@ -1751,7 +1849,14 @@ class CustomProphet:
         self._data_columns, self._data_prior_scales, self._data_modes = \
             self._data_design(self.ds, df, holidays_block)
         self._data_column_count = self._data_columns.shape[1]
+        if self._holiday_columns:
+            self.train_holiday_column_names = list(make_holiday_features(
+                self.ds, self.construct_holiday_dataframe(self.ds),
+                self.holidays_prior_scale)[0].columns)
         self._build_layout()
+        # built once here, not per objective evaluation (#28)
+        self._fit_design_matrix = np.ascontiguousarray(
+            self.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
         self._generate_change_points()
 
         # Same deterministic initialization as fit(), so both fit paths start
@@ -1762,12 +1867,12 @@ class CustomProphet:
         # Stan's random default is never reached. The draw also came from an
         # unseeded RNG, making fit_cpp() non-reproducible run to run.
         if self.growth == 'logistic':
-            k_init, m_init = logistic_growth_init(self.t_scaled, self.y_scaled,
+            k_init, m_init = logistic_growth_init(self.t, self.y_scaled,
                                                   self.cap_scaled)
         elif self.growth == 'flat':
             k_init, m_init = flat_growth_init(self.y_scaled)
         else:
-            k_init, m_init = linear_growth_init(self.t_scaled, self.y_scaled)
+            k_init, m_init = linear_growth_init(self.t, self.y_scaled)
         defaults = {
             'k': k_init,
             'm': m_init,
@@ -1788,8 +1893,8 @@ class CustomProphet:
         cpp = load_cpp_module(lib_path)
         result = cpp.optimize(
             params=params,
-            t_scaled=self.t_scaled,
-            t_change=self.t_change,
+            t=self.t,
+            changepoints_t=self.changepoints_t,
             t_seasonality=self.t_seasonality,
             y_scaled=self.y_scaled,
             sigma_obs_prior_scale=SIGMA_OBS_PRIOR_SCALE,
@@ -1800,7 +1905,7 @@ class CustomProphet:
             cap_scaled=(self.cap_scaled if self.growth == 'logistic'
                         else np.empty(0)),
             trend_indicator=TREND_INDICATORS[self.growth],
-            tau=self.tau,
+            changepoint_prior_scale=self.changepoint_prior_scale,
             fourier_orders=[props["fourier_order"] for props in self.seasonalities.values()],
             seasonality_periods=[props["period"] for props in self.seasonalities.values()],
             seasonality_conditions=condition_matrix(self.seasonalities,
@@ -1826,9 +1931,10 @@ class CustomProphet:
 
         # Back to the canonical (k, m, delta, sigma_obs, beta) layout, so
         # predict()/trend_forecast_uncertainty() work the same regardless of
-        # which fit method produced opt_params.
-        self.opt_params = cpp_to_canonical(result.params, self.layout)
-        self.sigma_obs = self.opt_params[self.layout.sigma_obs_idx]
+        # which fit method produced the parameters.
+        vector = cpp_to_canonical(result.params, self.layout)
+        self.sigma_obs = vector[self.layout.sigma_obs_idx]
+        self._store_params(vector)
         self._fitted_with_cpp = True
         self._fit_lib_path = lib_path
         self._fit_regressor_models(df)
@@ -1856,7 +1962,7 @@ class CustomProphet:
         unchanged at predict time, so a future frame with a different spread
         does not rescale the coefficient out from under itself.
         """
-        if self.opt_params is not None:
+        if self.params is not None:
             raise RuntimeError(
                 "regressors must be added before fitting; this model has "
                 "already been fit. Add them to a fresh model.")
@@ -2007,7 +2113,7 @@ class CustomProphet:
         """`n_samples` x T draws of this model's own yhat, for a nested model
         to hand its parent."""
         prepared = self._ensure_regressor_values(future_df).copy()
-        prepared['t_scaled'] = ((pd.to_datetime(prepared['ds']) - self.ds.min())
+        prepared['t'] = ((pd.to_datetime(prepared['ds']) - self.ds.min())
                                 / (self.ds.max() - self.ds.min()))
         cap_scaled, floor = self._future_capacity(prepared)
         _, _, _, yhat_draws = self._forecast_draws(prepared, cap_scaled, floor, n_samples)
@@ -2021,15 +2127,13 @@ class CustomProphet:
         uncertainty (#16 task 14a) and the observation noise (#63), the latter
         being the term that dominates the interval.
         """
-        _k, _m, _delta, sigma_obs, beta = extract_params(self.opt_params, self.layout)
-        t_scaled = future_df['t_scaled'].values
+        _k, _m, _delta, sigma_obs, beta = self._fitted()
+        t = future_df['t'].values
 
-        x = seasonality_design_matrix(seasonal_time(future_df['ds']), self.seasonalities,
-                                      condition_masks(self.seasonalities, future_df))
-        if self._data_column_count:
-            x = np.concatenate([x, self._data_design(future_df['ds'], future_df)[0]], axis=1)
+        x = np.ascontiguousarray(
+            self.make_all_seasonality_features(future_df)[0].to_numpy(dtype=float))
 
-        trend_draws = self._sample_trends(t_scaled, cap_scaled, floor, n_samples)
+        trend_draws = self._sample_trends(t, cap_scaled, floor, n_samples)
         regressor_draws = self._regressor_draws(future_df, n_samples)
 
         # the regressor columns are the last of the design matrix, in the order
@@ -2050,7 +2154,7 @@ class CustomProphet:
                         else x_draw.dot(beta))
             # [fc] sample_model adds normal(0, sigma_obs) per draw; without it
             # the interval is the trend's alone and ~18x too narrow (#63)
-            noise = self.rng.normal(0.0, sigma_obs * self.y_scale, len(t_scaled))
+            noise = self.rng.normal(0.0, sigma_obs * self.y_scale, len(t))
             yhat_draws[i] = trend_draws[i] * multiplier + seasonal * self.y_scale + noise
 
         multiplier = 1.0 + x.dot(self.s_m * beta) if self._multiplicative else 1.0
@@ -2064,16 +2168,16 @@ class CustomProphet:
         upper = 100 * (1.0 + self.interval_width) / 2
         return np.percentile(draws, [lower, upper], axis=0)
 
-    def _sample_trends(self, t_scaled, cap_scaled, floor, n_samples):
+    def _sample_trends(self, t, cap_scaled, floor, n_samples):
         """`n_samples` x T trend draws, in the series' own units.
 
         [fc] sample_predictive_trend. New changepoints come from a Poisson
         process on `(1, T]`, so they land strictly past the end of the history
         and there are none when the frame does not reach past it (#58).
         """
-        k, m, delta, _sigma_obs, _beta = extract_params(self.opt_params, self.layout)
-        horizon_scaled = float(np.max(t_scaled))
-        n_changepoints = len(self.t_change)
+        k, m, delta, _sigma_obs, _beta = self._fitted()
+        horizon_scaled = float(np.max(t))
+        n_changepoints = len(self.changepoints_t)
         # [fc] `+ 1e-8`: a fit with no active changepoints gives mean|delta| of
         # exactly zero, and Laplace(0, 0) is degenerate -- every draw would
         # return the same trend and the band would be identically zero rather
@@ -2092,12 +2196,12 @@ class CustomProphet:
 
             draws.append(predict_trend(
                 k, m, np.concatenate((delta, new_delta)),
-                np.concatenate((self.t_change, new_change_points)),
-                t_scaled, self.y_scale, cap_scaled, floor, self.growth))
+                np.concatenate((self.changepoints_t, new_change_points)),
+                t, self.y_scale, cap_scaled, floor, self.growth))
         return np.array(draws)
 
     def trend_forecast_uncertainty(self, horizon=30, n_samples=None,
-                                   t_scaled=None, cap_scaled=None, floor=None):
+                                   t=None, cap_scaled=None, floor=None):
         """Quantiles of the trend under future changepoints drawn from the
         fitted rate distribution.
 
@@ -2111,20 +2215,20 @@ class CustomProphet:
         sampled changepoints rewrote the fitted history before anything was
         extrapolated from it. The band came out ~170x Prophet's (#58).
 
-        `t_scaled`, `cap_scaled` and `floor` come from the caller: predict()
+        `t`, `cap_scaled` and `floor` come from the caller: predict()
         passes the grid and capacities it already built, since the capacity is
         per row and the frame this method builds for itself carries only `ds`.
         """
-        k, m, delta, _sigma_obs, beta = extract_params(self.opt_params, self.layout)
+        k, m, delta, _sigma_obs, beta = self._fitted()
         n_samples = self.uncertainty_samples if n_samples is None else n_samples
         future_df = self.make_future_dataframe(horizon)
 
-        if t_scaled is None:
+        if t is None:
             future_t_scaled = np.array(
                 (pd.to_datetime(future_df['ds']) - self.ds.min())
                 / (self.ds.max() - self.ds.min()))
         else:
-            future_t_scaled = np.asarray(t_scaled, dtype=float)
+            future_t_scaled = np.asarray(t, dtype=float)
 
         if self.growth == 'logistic' and cap_scaled is None:
             raise ValueError(
@@ -2133,7 +2237,7 @@ class CustomProphet:
         # [fc] the rate of the Poisson process is S per unit of scaled time,
         # so a frame reaching T sees S * (T - 1) new changepoints on average.
         horizon_scaled = float(future_t_scaled.max())
-        n_changepoints = len(self.t_change)
+        n_changepoints = len(self.changepoints_t)
         # [fc] `+ 1e-8`: a fit with no active changepoints gives mean|delta| = 0,
         # and Laplace(0, 0) is undefined. Without it a perfectly straight series
         # produced a zero-width band rather than a narrow one.
@@ -2145,22 +2249,22 @@ class CustomProphet:
         return future_df, quantiles
     
     def predict(self, future_df):
-        # A copy up front: `t_scaled` is added below, and writing a column into
+        # A copy up front: `t` is added below, and writing a column into
         # the caller's frame is theirs to be surprised by (#35).
         future_df = self._ensure_regressor_values(future_df).copy()
 
         # Extract optimal parameters
-        k, m, delta, _sigma_obs, beta = extract_params(self.opt_params, self.layout)
+        k, m, delta, _sigma_obs, beta = self._fitted()
         
         # Normalize future dates
-        future_df['t_scaled'] = (pd.to_datetime(future_df['ds']) - self.ds.min()) / (self.ds.max() - self.ds.min())
+        future_df['t'] = (pd.to_datetime(future_df['ds']) - self.ds.min()) / (self.ds.max() - self.ds.min())
         
         # Trend component calculation. Logistic growth needs the future frame's
         # own capacities -- they are data, and may well differ from the
         # history's. [fc] predict re-runs setup_dataframe for the same reason.
         cap_scaled, floor = self._future_capacity(future_df)
-        trend = predict_trend(k, m, delta, self.t_change,
-                              future_df['t_scaled'].values, self.y_scale,
+        trend = predict_trend(k, m, delta, self.changepoints_t,
+                              future_df['t'].values, self.y_scale,
                               cap_scaled, floor, self.growth)
 
         # Seasonality, the regressor draws and the yhat draws, all from one

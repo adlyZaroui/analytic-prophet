@@ -20,10 +20,24 @@ issue exists to avoid -- and refusing at the call site beats refusing three
 steps later at fit time.
 """
 import numpy as np
+import pandas as pd
 import pytest
 
 from customProphet import (BUILT_IN_NAMES, CustomProphet, RESERVED_COLUMN_NAMES,
-                           SIGMA, seasonality_design_matrix)
+                           SIGMA)
+
+def seasonal_block(seasonalities, df):
+    """The seasonal columns for a registry, through the model's own builder.
+
+    [fc] make_all_seasonality_features is a method because it reads the
+    holiday and regressor registries too, so a test wanting only the seasonal
+    part goes through a model configured with just that.
+    """
+    model = CustomProphet(yearly_seasonality=False, weekly_seasonality=False,
+                          daily_seasonality=False)
+    model.seasonalities = seasonalities
+    return np.ascontiguousarray(model.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
+
 
 
 def registered(model, name):
@@ -195,8 +209,8 @@ def test_a_custom_component_reaches_the_parameter_vector(peyton_manning_df,
     # registered first, so its block comes first -- auto-selection appends
     assert list(model.seasonalities) == ["monthly", "yearly", "weekly"]
     assert model.layout.n_seasonality_columns == 2 * (5 + 10 + 3)
-    assert model.opt_params.shape == (model.layout.size,)
-    assert np.any(np.abs(model.opt_params[model.layout.beta][:10]) > 1e-6)
+    assert model.get_parameters().shape == (model.layout.size,)
+    assert np.any(np.abs(model.params["beta"][0][:10]) > 1e-6)
 
 
 def test_a_custom_component_reaches_predict(peyton_manning_df, compiled_optimizer_module):
@@ -210,7 +224,7 @@ def test_a_custom_component_reaches_predict(peyton_manning_df, compiled_optimize
     assert np.all(np.isfinite(forecast["yhat"].values))
 
     # the design matrix predict() builds has to be the one that was fitted
-    x = seasonality_design_matrix(model.t_seasonality, model.seasonalities)
+    x = seasonal_block(model.seasonalities, pd.DataFrame({"ds": model.ds}))
     assert x.shape[1] == model.layout.n_seasonality_columns
 
 
@@ -264,11 +278,11 @@ def test_registry_and_posterior_agree_with_prophet(prophet_comparison,
     lp_prophet = bridge.validate_bridge(
         stan_model, stan_data, prophet_params,
         float(np.asarray(prophet_model.params["lp__"]).ravel()[0]))
-    t_change = np.asarray(stan_data["t_change"], dtype=float)
+    changepoints_t = np.asarray(stan_data["t_change"], dtype=float)
 
     ours = CustomProphet()
     configure(ours)
-    ours._generate_change_points = lambda: setattr(ours, "t_change", t_change.copy())
+    ours._generate_change_points = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
     ours.fit_cpp(df, lib_path=compiled_optimizer_module)
 
     assert list(ours.seasonalities) == list(prophet_model.seasonalities)
@@ -279,12 +293,12 @@ def test_registry_and_posterior_agree_with_prophet(prophet_comparison,
         assert float(props["period"]) == float(theirs["period"])
     np.testing.assert_array_equal(ours.sigmas, np.asarray(stan_data["sigmas"], dtype=float))
 
-    X_ours = seasonality_design_matrix(ours.t_seasonality, ours.seasonalities)
+    X_ours = seasonal_block(ours.seasonalities, pd.DataFrame({"ds": ours.ds}))
     beta_in_stan, residual = bridge.transfer_seasonality(
-        ours.opt_params[ours.layout.beta], X_ours, np.asarray(stan_data["X"], dtype=float))
+        ours.params["beta"][0], X_ours, np.asarray(stan_data["X"], dtype=float))
     assert residual < 1e-8
 
-    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.opt_params[0],
-                                   ours.opt_params[1], ours.opt_params[2:2 + len(t_change)],
+    lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
+                                   ours.params["m"][0][0], ours.params["delta"][0],
                                    ours.sigma_obs, beta_in_stan)
     assert lp_ours >= lp_prophet - 1e-6
