@@ -31,6 +31,7 @@ sparser trend. Settling that is the suite's centre of gravity.
 | 1 | who recovers the true parameters? | **done** |
 | 2 | **does the better MAP point forecast better?** | **done** |
 | 3 | what does it cost to fit and predict? | **done** |
+| — | the report | **done** |
 
 Tier 0 is a **gate**, not a measurement. If the two implementations are not
 fitting the same specification, every number the others produce is about
@@ -63,6 +64,19 @@ code usually live there.
 | `metrics.py` | the metrics more than one tier needs |
 | `corpora.py` | series loaders; M4 arrives with Tier 2 |
 | `run.py` | the runner, tier registry and the gate |
+
+## The report
+
+```bash
+python evaluation/run.py        # produce results/
+python evaluation/report.py     # produce results/report.md + figures/
+```
+
+[**results/report.md**](results/report.md) is generated from the committed CSVs
+and nothing else — it refits nothing, so regenerating it on another machine
+reproduces the same file and two reports diff to show what moved. A tier that
+has not been run is named in the report with the command that would produce it,
+rather than silently missing.
 
 ## Tier 0 — the gate
 
