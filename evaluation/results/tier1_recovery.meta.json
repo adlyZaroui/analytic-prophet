@@ -1,0 +1,19 @@
+{
+ "commit": "88f0c269abec053050fda31e1c07f0f4bd7d960a",
+ "machine": "arm64",
+ "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+ "processor": "arm",
+ "python": "3.14.7",
+ "recorded": "2026-09-25T01:16:38+00:00",
+ "seconds": 16.071,
+ "seed": 20260925,
+ "tier": 1,
+ "versions": {
+  "analytic-prophet": null,
+  "cmdstanpy": "1.3.0",
+  "numpy": "2.5.3",
+  "pandas": "3.0.5",
+  "prophet": "1.4.0",
+  "scipy": "1.18.1"
+ }
+}
