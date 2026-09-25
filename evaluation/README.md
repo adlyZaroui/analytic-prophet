@@ -100,7 +100,8 @@ The headlines, with the full treatment one link away:
   intervals at indistinguishable coverage. **Both** implementations under-cover
   badly, which is larger than anything separating them.
 - **Tier 3** — fitting is faster and the fit's memory is about a third of
-  Prophet's; predicting is the one thing we are slower at.
+  Prophet's. Predicting is faster than Prophet's *exact* sampler and slower than
+  the approximation it runs by default, which are different computations (#87).
 
 ---
 

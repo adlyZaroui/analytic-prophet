@@ -2,6 +2,7 @@ import copy
 import glob
 import importlib
 import importlib.util
+import collections
 import logging
 import os
 import numpy as np
@@ -33,6 +34,12 @@ from .models import (  # noqa: F401 -- re-exported, and the
     load_cpp_module, canonical_to_cpp, cpp_to_canonical, CPP_MODULE_NAME, BUILD_HINT, _cpp_module_cache)
 
 logger = logging.getLogger("analytic_prophet")
+
+# How many trend draws share one batched evaluation. The temporaries are
+# (chunk, T, S + new changepoints) doubles, so this trades memory against the
+# Python-level loop the draws used to be -- 64 keeps them in the tens of
+# megabytes on the longest series here (#87).
+TREND_DRAW_CHUNK = 64
 
 # Every attribute a fit derives from the data, as opposed to the configuration
 # the user set. `_reset_fit_state` restores each of these to the value the
@@ -1566,21 +1573,38 @@ class AnalyticProphet:
         positions = {name: x.shape[1] - len(self.extra_regressors) + i
                      for i, name in enumerate(self.extra_regressors)}
 
-        yhat_draws = np.empty_like(trend_draws)
-        x_draw = x
-        for i in range(n_samples):
-            if regressor_draws:
+        # [fc] sample_model adds normal(0, sigma_obs) per draw; without it the
+        # interval is the trend's alone and ~18x too narrow (#63). Drawn as one
+        # (n_samples, T) block rather than a row at a time: numpy fills it in C
+        # order, so the stream and the generator's end state are identical to
+        # the loop's, which a test asserts.
+        noise = self.rng.normal(0.0, sigma_obs * self.y_scale, (n_samples, len(t)))
+
+        def components(design):
+            multiplier = 1.0 + design.dot(self.s_m * beta) if self._multiplicative else 1.0
+            seasonal = (design.dot(self.s_a * beta) if self._multiplicative
+                        else design.dot(beta))
+            return multiplier, seasonal
+
+        if regressor_draws:
+            # the design matrix differs per draw, so this stays a loop
+            yhat_draws = np.empty_like(trend_draws)
+            for i in range(n_samples):
                 x_draw = x.copy()
                 for name, values in regressor_draws.items():
                     props = self.extra_regressors[name]
                     x_draw[:, positions[name]] = (values[i] - props["mu"]) / props["std"]
-            multiplier = 1.0 + x_draw.dot(self.s_m * beta) if self._multiplicative else 1.0
-            seasonal = (x_draw.dot(self.s_a * beta) if self._multiplicative
-                        else x_draw.dot(beta))
-            # [fc] sample_model adds normal(0, sigma_obs) per draw; without it
-            # the interval is the trend's alone and ~18x too narrow (#63)
-            noise = self.rng.normal(0.0, sigma_obs * self.y_scale, len(t))
-            yhat_draws[i] = trend_draws[i] * multiplier + seasonal * self.y_scale + noise
+                multiplier, seasonal = components(x_draw)
+                yhat_draws[i] = trend_draws[i] * multiplier + seasonal * self.y_scale + noise[i]
+        else:
+            # nothing in here varies with the draw: the design matrix is fixed,
+            # so the seasonal term and the multiplicative factor were being
+            # recomputed identically n_samples times -- a full (T, K) product
+            # each. Hoisted, the draws are one array expression, and every
+            # element is the same arithmetic in the same order as the loop did
+            # it (#87).
+            multiplier, seasonal = components(x)
+            yhat_draws = trend_draws * multiplier + seasonal * self.y_scale + noise
 
         multiplier = 1.0 + x.dot(self.s_m * beta) if self._multiplicative else 1.0
         seasonality = x.dot(self.s_a * beta) if self._multiplicative else x.dot(beta)
@@ -1592,6 +1616,48 @@ class AnalyticProphet:
         lower = 100 * (1.0 - self.interval_width) / 2
         upper = 100 * (1.0 + self.interval_width) / 2
         return np.percentile(draws, [lower, upper], axis=0)
+
+    def _trend_chunk(self, draws, chunk, sampled, k, m, delta, t, cap_scaled, floor):
+        """Fill `chunk` of `draws`, whose members all sampled the same count.
+
+        Same count means same shape, so the whole chunk is one array
+        expression. It stays **bit-identical** to evaluating each draw on its
+        own because `det_dot` reduces over the last axis, and batching adds a
+        leading axis without changing that axis's length or its contiguity --
+        the same 25 + n_new doubles, summed the same way. Splitting the sum
+        instead, into the fitted part plus the new part, would not: summing 25
+        terms and then n more is a different grouping from summing 25 + n.
+
+        Chunked so the (chunk, T, S + n_new) temporaries stay bounded; at the
+        default that is tens of megabytes rather than hundreds.
+        """
+        changepoints = np.stack([
+            np.concatenate((self.changepoints_t, sampled[i][1])) for i in chunk])
+        deltas = np.stack([np.concatenate((delta, sampled[i][2])) for i in chunk])
+
+        if self.growth == 'logistic':
+            # a different function of the same pieces, and rare enough not to
+            # be worth a second batched implementation
+            for i in chunk:
+                draws[i] = predict_trend(
+                    k, m, np.concatenate((delta, sampled[i][2])),
+                    np.concatenate((self.changepoints_t, sampled[i][1])),
+                    t, self.y_scale, cap_scaled, floor, self.growth)
+            return
+
+        # left as bool rather than `* 1`: the products are the same floats
+        # either way, and an int64 copy of a (chunk, T, S + n) indicator is
+        # eight bytes an element of pure memory traffic
+        indicator = t[None, :, None] >= changepoints[:, None, :]
+        if self.growth == 'flat':
+            trend_normalized = np.broadcast_to(m, (len(chunk), len(t)))
+        else:
+            gammas = -changepoints * deltas
+            rates = (indicator * deltas[:, None, :]).sum(axis=-1)
+            offsets = (indicator * gammas[:, None, :]).sum(axis=-1)
+            trend_normalized = (k + rates) * t + (m + offsets)
+        trend = trend_normalized * self.y_scale
+        draws[chunk] = trend if floor is None else trend + floor
 
     def _sample_trends(self, t, cap_scaled, floor, n_samples):
         """`n_samples` x T trend draws, in the series' own units.
@@ -1609,21 +1675,41 @@ class AnalyticProphet:
         # than narrow.
         lambda_mle = float(np.abs(delta).mean()) + 1e-8
 
-        draws = []
+        # The fitted changepoints are identical in every draw, so the trend
+        # they produce is evaluated once rather than a thousand times. A draw
+        # that samples no new changepoints *is* that trend -- same arrays, same
+        # summation -- so this is a hoist rather than an approximation (#87).
+        base = predict_trend(k, m, delta, self.changepoints_t, t, self.y_scale,
+                             cap_scaled, floor, self.growth)
+
+        # All the randomness first, in the order the loop drew it, so the
+        # generator ends in the same state and every draw is the same draw.
+        sampled = []
         for _ in range(n_samples):
             if horizon_scaled > 1.0:
                 n_new = self.rng.poisson(n_changepoints * (horizon_scaled - 1.0))
             else:
                 n_new = 0
+            # drawn even when n_new is 0, as the loop did
             new_change_points = np.sort(
                 1.0 + self.rng.random(n_new) * (horizon_scaled - 1.0))
             new_delta = self.rng.laplace(0, lambda_mle, n_new)
+            sampled.append((int(n_new), new_change_points, new_delta))
 
-            draws.append(predict_trend(
-                k, m, np.concatenate((delta, new_delta)),
-                np.concatenate((self.changepoints_t, new_change_points)),
-                t, self.y_scale, cap_scaled, floor, self.growth))
-        return np.array(draws)
+        draws = np.empty((n_samples, len(t)), dtype=base.dtype)
+        remaining = collections.defaultdict(list)
+        for index, (n_new, _, _) in enumerate(sampled):
+            if n_new == 0:
+                draws[index] = base
+            else:
+                remaining[n_new].append(index)
+
+        for n_new, indices in remaining.items():
+            for start in range(0, len(indices), TREND_DRAW_CHUNK):
+                chunk = indices[start:start + TREND_DRAW_CHUNK]
+                self._trend_chunk(draws, chunk, sampled, k, m, delta, t,
+                                  cap_scaled, floor)
+        return draws
 
     def trend_forecast_uncertainty(self, horizon=30, n_samples=None,
                                    t=None, cap_scaled=None, floor=None):

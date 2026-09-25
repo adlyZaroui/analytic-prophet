@@ -51,7 +51,9 @@ project. Reverse-mode autodiff tapes a forward pass and reverses over it; the mo
 small and entirely explicit, so the gradient can be written down instead. Both
 consequences are measured rather than assumed — fitting is **1.5–10× faster** than
 Prophet and the fit's peak memory is **about a third** of Prophet's at T = 2905, with the
-gap widening as the series grows, which is what a retained tape predicts.
+gap widening as the series grows, which is what a retained tape predicts. Predicting is
+**2.6× faster** than Prophet's exact sampler, and slower than the approximation it runs by
+default — which are different computations, and disagree by 1.4% on the interval bounds.
 → [cost](evaluation/results/report.md#tier-3--what-it-costs)
 
 **Prophet's non-differentiable objective, handled.** The Laplace prior on the changepoint

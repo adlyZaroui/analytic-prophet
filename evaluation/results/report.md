@@ -63,35 +63,45 @@ Negative means we are lower, which is better for every row but coverage. **The b
 
 | T | Prophet | `fit_cpp` | `fit(analytic=True)` |
 |---|---|---|---|
-| 50 | 0.171 s | **0.016 s** | 0.247 s |
-| 100 | 0.026 s | **0.005 s** | 0.025 s |
-| 300 | 0.042 s | **0.017 s** | 0.110 s |
-| 1000 | 0.156 s | **0.107 s** | 0.545 s |
-| 2905 | 0.580 s | **0.397 s** | 3.176 s |
+| 50 | 0.171 s | **0.017 s** | 0.250 s |
+| 100 | 0.028 s | **0.005 s** | 0.026 s |
+| 300 | 0.044 s | **0.018 s** | 0.112 s |
+| 1000 | 0.161 s | **0.107 s** | 0.551 s |
+| 2905 | 0.585 s | **0.400 s** | 3.336 s |
 
 Peak resident memory, **split into what the import cost and what the fit did**. The README's claim is about the fit — autodiff retains a tape and a closed-form gradient does not — so a baseline taken before the import measures something else.
 
 | T | Prophet fit | ours fit | Prophet import | ours import |
 |---|---|---|---|---|
-| 50 | 3.1 MiB | **2.0 MiB** | **38.2 MiB** | 57.8 MiB |
-| 100 | 3.2 MiB | **2.0 MiB** | **38.2 MiB** | 58.0 MiB |
-| 300 | 3.5 MiB | **2.0 MiB** | **38.2 MiB** | 57.8 MiB |
-| 1000 | 4.9 MiB | **2.2 MiB** | **38.1 MiB** | 57.7 MiB |
-| 2905 | 8.6 MiB | **3.0 MiB** | **38.3 MiB** | 57.8 MiB |
+| 50 | 3.1 MiB | **1.9 MiB** | **38.2 MiB** | 57.8 MiB |
+| 100 | 3.2 MiB | **2.0 MiB** | **38.0 MiB** | 57.8 MiB |
+| 300 | 3.3 MiB | **2.0 MiB** | **38.1 MiB** | 57.6 MiB |
+| 1000 | 4.9 MiB | **2.1 MiB** | **38.2 MiB** | 57.9 MiB |
+| 2905 | 8.7 MiB | **3.0 MiB** | **38.4 MiB** | 57.7 MiB |
 
 We win the fit and lose the import — the latter almost entirely scipy, which Prophet does not pull. A library that is expensive to merely import is still expensive to deploy.
 
-### The one thing we are slower at
+### Prediction, against both of Prophet's samplers
 
-`predict` at T=2905 takes **0.557 s** against Prophet's 0.223 s. Profiled, 85% of it is a Python loop over the uncertainty draws — see #87.
+`Prophet.predict(vectorized=True)` is its default and is **not** a faster form of its own sampler — it is a different one, and the two disagree on the interval bounds by about 1.4%. Ours is exact, so both are reported (#87).
+
+| T | Prophet, default | Prophet, exact | ours |
+|---|---|---|---|
+| 50 | 0.030 s | 0.280 s | **0.059 s** |
+| 100 | 0.032 s | 0.279 s | **0.056 s** |
+| 300 | 0.054 s | 0.307 s | **0.079 s** |
+| 1000 | 0.097 s | 0.462 s | **0.165 s** |
+| 2905 | 0.227 s | 0.802 s | **0.303 s** |
+
+Against the sampler that computes what ours computes we are faster at every size; against the approximation Prophet runs by default we are slower, by rather less than the 2.4× this tier reported before the comparison was made like-for-like.
 
 ### Scaling
 
 | implementation | d log wall / d log T |
 |---|---|
-| prophet | 0.46 |
+| prophet | 0.45 |
 | fit_cpp | 0.94 |
-| fit(analytic=True) | 0.84 |
+| fit(analytic=True) | 0.85 |
 
 Read these with the figure rather than on their own. Every implementation is *slower* at T=50 than at T=100, which is not noise and not subprocess overhead: below 100 observations Prophet's rule selects **Newton** (#25), and both sides follow it. Newton pays `2n` gradient evaluations an iteration for its Hessian. The exponents are fitted through that kink, so they understate the asymptotic slope — Prophet's 0.46 in particular is mostly the kink plus a fixed subprocess spawn, not a claim that its fit is sub-linear.
 
@@ -101,7 +111,7 @@ Read these with the figure rather than on their own. Every implementation is *sl
 
 ## How this was measured
 
-- seed `20260925`, commit `60fc143b0bb2`
+- seed `20260925`, commit `6047201bc6a0`
 - python 3.14.7 on macOS-26.5.2-arm64-arm-64bit-Mach-O
 - cmdstanpy 1.3.0, numpy 2.5.3, pandas 3.0.5, prophet 1.4.0, scipy 1.18.1
 
