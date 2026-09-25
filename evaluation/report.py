@@ -290,13 +290,23 @@ def tier3_section(rows, figures):
 
     predict = [k for k in sizes if ("prophet", "predict_wall") in table[k]]
     if predict:
-        last = predict[-1]
-        lines += ["### The one thing we are slower at", "",
-                  f"`predict` at T={_size_of(last[0])} takes "
-                  f"**{table[last][('fit_cpp','predict_wall')]:.3f} s** against "
-                  f"Prophet's {table[last][('prophet','predict_wall')]:.3f} s. "
-                  "Profiled, 85% of it is a Python loop over the uncertainty "
-                  "draws — see #87.", ""]
+        lines += ["### Prediction, against both of Prophet's samplers", "",
+                  "`Prophet.predict(vectorized=True)` is its default and is **not** a"
+                  " faster form of its own sampler — it is a different one, and the"
+                  " two disagree on the interval bounds by about 1.4%. Ours is exact,"
+                  " so both are reported (#87).", "",
+                  "| T | Prophet, default | Prophet, exact | ours |", "|---|---|---|---|"]
+        for key in predict:
+            cell = table[key]
+            exact = cell.get(("prophet(exact)", "predict_wall"))
+            lines.append(
+                f"| {_size_of(key[0])} | {cell[('prophet','predict_wall')]:.3f} s | "
+                + (f"{exact:.3f} s | " if exact else "— | ")
+                + f"**{cell[('fit_cpp','predict_wall')]:.3f} s** |")
+        lines += ["", "Against the sampler that computes what ours computes we are "
+                  "faster at every size; against the approximation Prophet runs by "
+                  "default we are slower, by rather less than the 2.4× this tier "
+                  "reported before the comparison was made like-for-like.", ""]
 
     scaling = table.get(("scaling", "default"), {})
     if scaling:
