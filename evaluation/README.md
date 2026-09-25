@@ -27,7 +27,7 @@ sparser trend. Settling that is the suite's centre of gravity.
 
 | tier | question | status |
 |---|---|---|
-| 0 | are we fitting the same model? | pending |
+| 0 | are we fitting the same model? | **done** |
 | 1 | who recovers the true parameters? | pending |
 | 2 | **does the better MAP point forecast better?** | pending |
 | 3 | what does it cost to fit and predict? | pending |
@@ -63,6 +63,30 @@ code usually live there.
 | `metrics.py` | the metrics more than one tier needs |
 | `corpora.py` | series loaders; M4 arrives with Tier 2 |
 | `run.py` | the runner, tier registry and the gate |
+
+## Tier 0 — the gate
+
+```
+tier  metric                       T=300      T=1000     T=2905
+0     design_matrix_max_abs_diff   7.3e-12    7.3e-12    7.3e-12
+0     prior_scales_max_abs_diff    0          0          0
+0     changepoints_max_abs_diff    0          0          0
+0     lp__  prophet                813.351    2852.768   8004.798
+0     lp__  analytic_prophet       815.337    2855.528   8005.159
+0     lp___difference             +1.986     +2.760     +0.361
+```
+
+Four checks, in the order of how fundamental they are: the design matrix
+element for element, the per-column prior scales, the changepoints, and only
+then the posterior. A difference in the first three is a *modelling*
+difference, and reporting only the posterior would let one hide inside the
+other. The 7.3e-12 is the Fourier basis being evaluated in a different order —
+arithmetic, not model.
+
+`beta` is passed straight into Stan's density rather than projected into its
+basis, which is only legitimate because the design matrices are identical. That
+is what the first check establishes; a projection step would otherwise absorb a
+real difference and report agreement.
 
 ### `metrics.quadratic_change`
 
