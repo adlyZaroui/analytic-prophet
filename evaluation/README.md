@@ -29,7 +29,7 @@ sparser trend. Settling that is the suite's centre of gravity.
 |---|---|---|
 | 0 | are we fitting the same model? | **done** |
 | 1 | who recovers the true parameters? | **done** |
-| 2 | **does the better MAP point forecast better?** | pending |
+| 2 | **does the better MAP point forecast better?** | **done** |
 | 3 | what does it cost to fit and predict? | pending |
 
 Tier 0 is a **gate**, not a measurement. If the two implementations are not
@@ -120,6 +120,43 @@ calibrated — we are consistently too sparse and Prophet consistently too dense
 The identified error is in **nats** and the curvature grows with the sample, so
 it compares two implementations on one series and does not pool across series of
 different lengths. The tier pairs per series for that reason.
+
+## Tier 2 — forecast accuracy, held out
+
+**The question the README refuses to answer, answered.** 36 M4 series (20 weekly,
+20 daily), rolling-origin evaluation on cutoffs from
+`prophet.diagnostics.generate_cutoffs`, scored by `prophet.diagnostics.performance_metrics`.
+Both sides get the same cutoffs and the same scorer.
+
+Paired per-series differences, negative meaning we are lower:
+
+| metric | median diff | wins | p |
+|---|---|---|---|
+| MAE | −1.914 | 26/36 | 0.0063 |
+| RMSE | −2.967 | 25/36 | 0.0183 |
+| MAPE | −0.0007 | 26/36 | 0.0013 |
+| sMAPE | −0.0004 | 24/36 | 0.0139 |
+| interval width | −2.711 | 30/36 | <0.0001 |
+| coverage | +0.0003 | 16/36 | 0.798 |
+| active changepoints | −5.0 | 36/36 | <0.0001 |
+
+**The better MAP point does forecast better**, on this corpus — and it does so
+with *narrower* intervals at statistically indistinguishable coverage. The
+mechanism is visible in the last row: we fit a sparser trend on every one of the
+36 series.
+
+This contradicts the only adjacent evidence the README had, which pointed the
+other way: Prophet fits the *training* data marginally better. Held out, that
+reverses.
+
+### The finding that is not about us
+
+**Both implementations badly under-cover.** Mean coverage of the nominal 80%
+interval is **0.353** for ours and **0.342** for Prophet's — the intervals
+contain about a third of the points they claim four fifths of. That is a
+property of the model on long horizons and volatile series, shared by both, and
+it is much larger than any difference between them. Anything that reads the
+accuracy table above without this line is reading it wrong.
 
 ### `metrics.quadratic_change`
 
