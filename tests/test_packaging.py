@@ -68,9 +68,14 @@ def test_the_package_is_named_rather_than_discovered(pyproject):
 
 def test_tests_run_without_an_install(pyproject):
     """`pythonpath` is what lets a fresh clone run `pytest` with no install and
-    no PYTHONPATH. benchmark/ is on it because the Prophet-comparison plumbing
-    lives there and conftest imports it."""
-    assert pyproject["tool"]["pytest"]["ini_options"]["pythonpath"] == [".", "benchmark"]
+    no PYTHONPATH.
+
+    `benchmark/` is on it because the Prophet-comparison plumbing lives there
+    and conftest imports it; `evaluation/` because its harness is tested like
+    any other code. Neither is a package -- they are directories of scripts, so
+    they are reached this way rather than by import."""
+    assert pyproject["tool"]["pytest"]["ini_options"]["pythonpath"] == [
+        ".", "benchmark", "evaluation"]
 
 
 def test_an_editable_install_actually_imports():

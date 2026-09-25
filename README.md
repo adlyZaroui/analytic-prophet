@@ -833,8 +833,9 @@ analytic_prophet/
     models.py         [fc] prophet/models.py — the backend's loader   82
     serialize.py      [fc] prophet/serialize.py — save and load          251
     optimize.cpp      that backend
-tests/                657 tests, plus the Peyton Manning series under data/
+tests/                673 tests, plus the Peyton Manning series under data/
 benchmark/            against the original: agreement, fit time, memory
+evaluation/           the claim-level study (#79); minutes to hours, not seconds
 ```
 
 `forecaster.py` and `models.py` take Prophet's own names, and `make_holidays.py` is the
@@ -891,7 +892,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -e '.[dev]'
-pytest                               # 657 tests
+pytest                               # 673 tests
 ```
 
 `pytest` alone is enough — `pyproject.toml` puts the repo root and `benchmark/` on

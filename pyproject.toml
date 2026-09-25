@@ -86,4 +86,4 @@ testpaths = ["tests"]
 # editable install makes the first entry redundant but not wrong; the second is
 # the Prophet-comparison plumbing, which lives with the benchmarks because that
 # is also where it is exercised interactively.
-pythonpath = [".", "benchmark"]
+pythonpath = [".", "benchmark", "evaluation"]
