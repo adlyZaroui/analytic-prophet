@@ -153,11 +153,14 @@ def _fitters(df, lib_path, **kwargs):
 def _predictors(df, lib_path, **kwargs):
     """Fitted models with a future frame ready, for the inference measurement.
 
-    **Prophet is measured twice, and the distinction is load-bearing.**
-    `predict(vectorized=True)` is its default and is not a faster form of its own
-    sampler -- it is a different one, and the two disagree on the interval bounds
-    by about 1.4%. Timing our exact sampler against Prophet's approximate one
-    said we were 2.4x slower and was not a like-for-like comparison (#87).
+    **Both implementations are measured twice, and the pairing is
+    load-bearing.** `predict(vectorized=True)` is the default on both sides and
+    is not a faster form of the exact sampler -- it is a different one, and the
+    two disagree on the interval bounds by about 1.4% in Prophet and a similar
+    amount here. Only the diagonal comparisons mean anything: approximate
+    against approximate, exact against exact. Timing our exact sampler against
+    Prophet's approximate one is what produced the "2.4x slower" claim of #87,
+    and #93 is why there are four entries here rather than three.
     """
     from prophet import Prophet
 
@@ -174,6 +177,7 @@ def _predictors(df, lib_path, **kwargs):
         "prophet(exact)": lambda: prophet_model.predict(prophet_future,
                                                         vectorized=False),
         "fit_cpp": lambda: ours.predict(our_future),
+        "fit_cpp(exact)": lambda: ours.predict(our_future, vectorized=False),
     }
 
 

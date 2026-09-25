@@ -290,23 +290,24 @@ def tier3_section(rows, figures):
 
     predict = [k for k in sizes if ("prophet", "predict_wall") in table[k]]
     if predict:
-        lines += ["### Prediction, against both of Prophet's samplers", "",
-                  "`Prophet.predict(vectorized=True)` is its default and is **not** a"
-                  " faster form of its own sampler — it is a different one, and the"
-                  " two disagree on the interval bounds by about 1.4%. Ours is exact,"
-                  " so both are reported (#87).", "",
-                  "| T | Prophet, default | Prophet, exact | ours |", "|---|---|---|---|"]
+        lines += ["### Prediction — four paths, and only two comparisons", "",
+                  "`predict(vectorized=True)` is the default on **both** sides and is"
+                  " not a faster form of the exact sampler — it is a different one,"
+                  " disagreeing with it by about 1.4% on the interval bounds (#93)."
+                  " `yhat` is identical either way; only the interval is sampled.", "",
+                  "| T | Prophet approx | **ours approx** | Prophet exact | **ours exact** |",
+                  "|---|---|---|---|---|"]
         for key in predict:
             cell = table[key]
-            exact = cell.get(("prophet(exact)", "predict_wall"))
-            lines.append(
-                f"| {_size_of(key[0])} | {cell[('prophet','predict_wall')]:.3f} s | "
-                + (f"{exact:.3f} s | " if exact else "— | ")
-                + f"**{cell[('fit_cpp','predict_wall')]:.3f} s** |")
-        lines += ["", "Against the sampler that computes what ours computes we are "
-                  "faster at every size; against the approximation Prophet runs by "
-                  "default we are slower, by rather less than the 2.4× this tier "
-                  "reported before the comparison was made like-for-like.", ""]
+            get = lambda name: cell.get((name, "predict_wall"))
+            cells = [get("prophet"), get("fit_cpp"), get("prophet(exact)"),
+                     get("fit_cpp(exact)")]
+            lines.append(f"| {_size_of(key[0])} | " + " | ".join(
+                ("—" if v is None else f"{v:.3f} s") for v in cells) + " |")
+        lines += ["", "Read down the diagonals, not across: approximate against"
+                  " approximate and exact against exact. Comparing our exact sampler"
+                  " with Prophet's approximate one is what produced the \"2.4×"
+                  " slower\" claim this tier reported before #93.", ""]
 
     scaling = table.get(("scaling", "default"), {})
     if scaling:

@@ -63,45 +63,45 @@ Negative means we are lower, which is better for every row but coverage. **The b
 
 | T | Prophet | `fit_cpp` | `fit(analytic=True)` |
 |---|---|---|---|
-| 50 | 0.171 s | **0.017 s** | 0.250 s |
-| 100 | 0.028 s | **0.005 s** | 0.026 s |
-| 300 | 0.044 s | **0.018 s** | 0.112 s |
-| 1000 | 0.161 s | **0.107 s** | 0.551 s |
-| 2905 | 0.585 s | **0.400 s** | 3.336 s |
+| 50 | 0.171 s | **0.016 s** | 0.254 s |
+| 100 | 0.026 s | **0.005 s** | 0.026 s |
+| 300 | 0.044 s | **0.018 s** | 0.113 s |
+| 1000 | 0.158 s | **0.107 s** | 0.554 s |
+| 2905 | 0.585 s | **0.389 s** | 3.178 s |
 
 Peak resident memory, **split into what the import cost and what the fit did**. The README's claim is about the fit — autodiff retains a tape and a closed-form gradient does not — so a baseline taken before the import measures something else.
 
 | T | Prophet fit | ours fit | Prophet import | ours import |
 |---|---|---|---|---|
-| 50 | 3.1 MiB | **1.9 MiB** | **38.2 MiB** | 57.8 MiB |
-| 100 | 3.2 MiB | **2.0 MiB** | **38.0 MiB** | 57.8 MiB |
-| 300 | 3.3 MiB | **2.0 MiB** | **38.1 MiB** | 57.6 MiB |
-| 1000 | 4.9 MiB | **2.1 MiB** | **38.2 MiB** | 57.9 MiB |
-| 2905 | 8.7 MiB | **3.0 MiB** | **38.4 MiB** | 57.7 MiB |
+| 50 | 3.1 MiB | **1.9 MiB** | **38.1 MiB** | 58.0 MiB |
+| 100 | 3.2 MiB | **2.0 MiB** | **38.1 MiB** | 57.6 MiB |
+| 300 | 3.3 MiB | **2.1 MiB** | **38.2 MiB** | 57.9 MiB |
+| 1000 | 5.0 MiB | **2.2 MiB** | **38.2 MiB** | 57.7 MiB |
+| 2905 | 8.6 MiB | **3.1 MiB** | **38.1 MiB** | 57.8 MiB |
 
 We win the fit and lose the import — the latter almost entirely scipy, which Prophet does not pull. A library that is expensive to merely import is still expensive to deploy.
 
-### Prediction, against both of Prophet's samplers
+### Prediction — four paths, and only two comparisons
 
-`Prophet.predict(vectorized=True)` is its default and is **not** a faster form of its own sampler — it is a different one, and the two disagree on the interval bounds by about 1.4%. Ours is exact, so both are reported (#87).
+`predict(vectorized=True)` is the default on **both** sides and is not a faster form of the exact sampler — it is a different one, disagreeing with it by about 1.4% on the interval bounds (#93). `yhat` is identical either way; only the interval is sampled.
 
-| T | Prophet, default | Prophet, exact | ours |
-|---|---|---|---|
-| 50 | 0.030 s | 0.280 s | **0.059 s** |
-| 100 | 0.032 s | 0.279 s | **0.056 s** |
-| 300 | 0.054 s | 0.307 s | **0.079 s** |
-| 1000 | 0.097 s | 0.462 s | **0.165 s** |
-| 2905 | 0.227 s | 0.802 s | **0.303 s** |
+| T | Prophet approx | **ours approx** | Prophet exact | **ours exact** |
+|---|---|---|---|---|
+| 50 | 0.030 s | 0.012 s | 0.273 s | 0.059 s |
+| 100 | 0.032 s | 0.014 s | 0.282 s | 0.057 s |
+| 300 | 0.046 s | 0.021 s | 0.310 s | 0.078 s |
+| 1000 | 0.096 s | 0.051 s | 0.478 s | 0.169 s |
+| 2905 | 0.224 s | 0.127 s | 0.799 s | 0.312 s |
 
-Against the sampler that computes what ours computes we are faster at every size; against the approximation Prophet runs by default we are slower, by rather less than the 2.4× this tier reported before the comparison was made like-for-like.
+Read down the diagonals, not across: approximate against approximate and exact against exact. Comparing our exact sampler with Prophet's approximate one is what produced the "2.4× slower" claim this tier reported before #93.
 
 ### Scaling
 
 | implementation | d log wall / d log T |
 |---|---|
-| prophet | 0.45 |
+| prophet | 0.46 |
 | fit_cpp | 0.94 |
-| fit(analytic=True) | 0.85 |
+| fit(analytic=True) | 0.84 |
 
 Read these with the figure rather than on their own. Every implementation is *slower* at T=50 than at T=100, which is not noise and not subprocess overhead: below 100 observations Prophet's rule selects **Newton** (#25), and both sides follow it. Newton pays `2n` gradient evaluations an iteration for its Hessian. The exponents are fitted through that kink, so they understate the asymptotic slope — Prophet's 0.46 in particular is mostly the kink plus a fixed subprocess spawn, not a claim that its fit is sub-linear.
 
@@ -111,7 +111,7 @@ Read these with the figure rather than on their own. Every implementation is *sl
 
 ## How this was measured
 
-- seed `20260925`, commit `6047201bc6a0`
+- seed `20260925`, commit `86579d982389`
 - python 3.14.7 on macOS-26.5.2-arm64-arm-64bit-Mach-O
 - cmdstanpy 1.3.0, numpy 2.5.3, pandas 3.0.5, prophet 1.4.0, scipy 1.18.1
 
