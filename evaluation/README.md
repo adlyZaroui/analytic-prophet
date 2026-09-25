@@ -30,7 +30,7 @@ sparser trend. Settling that is the suite's centre of gravity.
 | 0 | are we fitting the same model? | **done** |
 | 1 | who recovers the true parameters? | **done** |
 | 2 | **does the better MAP point forecast better?** | **done** |
-| 3 | what does it cost to fit and predict? | pending |
+| 3 | what does it cost to fit and predict? | **done** |
 
 Tier 0 is a **gate**, not a measurement. If the two implementations are not
 fitting the same specification, every number the others produce is about
@@ -157,6 +157,46 @@ contain about a third of the points they claim four fifths of. That is a
 property of the model on long horizons and volatile series, shared by both, and
 it is much larger than any difference between them. Anything that reads the
 accuracy table above without this line is reading it wrong.
+
+## Tier 3 — cost
+
+Fit and predict, against the length of the series and the width of the design
+matrix, with CPU time and memory alongside wall clock.
+
+| T | prophet | fit_cpp | fit(analytic=True) |
+|---|---|---|---|
+| 50 | 0.169 s | **0.016 s** | 0.250 s |
+| 300 | 0.043 s | **0.017 s** | 0.111 s |
+| 2905 | 0.580 s | **0.395 s** | 3.160 s |
+
+Peak resident memory, **split into what the import cost and what the fit did**:
+
+| T | prophet | fit_cpp |
+|---|---|---|
+| fit added, T=300 | 3.5 MiB | **2.0 MiB** |
+| fit added, T=2905 | 8.6 MiB | **3.0 MiB** |
+| import | **38.2 MiB** | 57.8 MiB |
+
+The split is the point. The README's memory claim is about the *fit* — reverse-mode
+autodiff retains a tape and a closed-form gradient does not — and it holds, with
+the gap widening as the series grows, which is what the theory predicts. But
+**we cost 20 MiB more to import**, almost all of it scipy, which Prophet does not
+pull. A library that is expensive to merely import is still expensive to deploy,
+so both numbers are reported.
+
+### Two results that were not expected
+
+**Prediction is the one thing we are slower at**, by about 2.4×: 0.564 s against
+Prophet's 0.222 s at T = 2905. Inference cost has never been measured before, and
+the uncertainty sampling is the obvious suspect.
+
+**Scaling exponents** (d log time / d log T): `fit_cpp` 0.94, `fit(analytic=True)`
+0.84, Prophet **0.46**. Prophet's is sub-linear because a fixed subprocess spawn
+dominates at small T — which is also why its wall time at T=50 (0.169 s) is worse
+than at T=300 (0.043 s).
+
+Width costs us more than it costs Prophet: at T = 1000, going from K=20 to K=34
+takes `fit_cpp` from 0.071 s to 0.120 s while Prophet barely moves (0.157 → 0.172).
 
 ### `metrics.quadratic_change`
 
