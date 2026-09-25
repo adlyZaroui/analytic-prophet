@@ -13,33 +13,32 @@ does nothing clever with an empty registry -- until a tier exists, this reports
 that there is nothing to run.
 """
 import argparse
+import importlib
+import importlib.util
 import sys
 import time
 
 import harness
 
-# number -> (name, callable). A tier's callable takes no arguments and returns
-# an iterable of harness.Measurement. Tier 0 additionally returns False from
-# `passed` to stop the run; see gate() below.
-TIERS = {}
-
-GATE = 0
-
-
-def register(number, name, run, gate=False):
-    """Used by each tier module to add itself, so the runner imports nothing it
-    does not have."""
-    TIERS[number] = (name, run, gate)
+# A tier's callable takes no arguments and returns an iterable of
+# harness.Measurement. The registry itself lives in harness -- see the note
+# there for why it cannot live in this file.
+TIERS = harness.TIERS
 
 
 def _load_tiers():
     """Import whichever tier modules exist. They are added over separate PRs,
-    so a missing one is the normal state rather than an error."""
+    so a missing one is the normal state.
+
+    A tier that exists but cannot be imported is *not* normal, and is raised
+    rather than skipped: swallowing it reports "no tiers registered" for what is
+    actually a broken import, which is a long way to debug from.
+    """
     for number in range(4):
-        try:
-            __import__(f"tiers.tier{number}")
-        except ModuleNotFoundError:
+        name = f"tiers.tier{number}"
+        if importlib.util.find_spec(name) is None:
             continue
+        importlib.import_module(name)
 
 
 def main(argv=None):

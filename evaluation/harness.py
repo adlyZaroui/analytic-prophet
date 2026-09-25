@@ -54,6 +54,19 @@ validate_bridge = _bridge.validate_bridge
 # from it rather than each picking a number.
 SEED = 20260925
 
+# number -> (name, callable, is_gate). The registry lives here rather than in
+# run.py because run.py is executed as a script: `python evaluation/run.py`
+# makes it `__main__`, and a tier doing `import run` then gets a *second*
+# instance of the same file with its own empty registry. Registering into it
+# populated the copy nobody read, and the runner reported no tiers at all.
+# harness is only ever imported, never run, so there is exactly one of it.
+TIERS = {}
+
+
+def register(number, name, run, gate=False):
+    """Add a tier. Called at import time by each evaluation/tiers/tierN.py."""
+    TIERS[number] = (name, run, gate)
+
 
 @dataclass(frozen=True)
 class Measurement:
