@@ -57,6 +57,27 @@ def quadratic_change(model, theta, other, design=None):
     return smooth + l1
 
 
+def quadratic_distance(model, reference, point, design=None):
+    """Curvature-weighted distance from `reference` to `point`.
+
+        d'Hd / 2,   H evaluated at `reference`,  d = point - reference
+
+    The distinction from `quadratic_change` matters and is easy to lose. That
+    one is a *loss gap*: expanded around a fitted point it carries the gradient
+    term and therefore rewards whichever optimizer reached the lower objective.
+    Comparing two implementations' "distance from the truth" that way is a
+    tautology -- the one with the better posterior is further from the truth by
+    construction, whatever it actually recovered.
+
+    This is a *distance*: one ruler, fixed at `reference`, applied to both. Use
+    it with the truth as the reference when asking who recovered it.
+    """
+    reference = np.asarray(reference, dtype=float)
+    step = np.asarray(point, dtype=float) - reference
+    hessian = smooth_hessian(model, reference, design=design)
+    return float(0.5 * step @ hessian @ step)
+
+
 def curvature_spectrum(model, theta, design=None):
     """Eigenvalues of the posterior curvature, largest first.
 

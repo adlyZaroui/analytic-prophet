@@ -28,7 +28,7 @@ sparser trend. Settling that is the suite's centre of gravity.
 | tier | question | status |
 |---|---|---|
 | 0 | are we fitting the same model? | **done** |
-| 1 | who recovers the true parameters? | pending |
+| 1 | who recovers the true parameters? | **done** |
 | 2 | **does the better MAP point forecast better?** | pending |
 | 3 | what does it cost to fit and predict? | pending |
 
@@ -87,6 +87,39 @@ arithmetic, not model.
 basis, which is only legitimate because the design matrices are identical. That
 is what the first check establishes; a projection step would otherwise absorb a
 real difference and report agreement.
+
+## Tier 1 — parameter recovery
+
+18 series generated from the model (T ∈ {100, 300, 1000} × noise ∈ {0.05, 0.2} ×
+3 seeds), both implementations fitted, both compared to the parameters that made
+them.
+
+| | ours wins |
+|---|---|
+| raw distance `‖θ̂ − θ*‖` | 7 / 18 |
+| **identified error** `½(θ̂−θ*)ᵀH(θ*)(θ̂−θ*)` | **14 / 18** |
+
+Median paired difference −0.265 nats, Wilcoxon p = 0.0034.
+
+**The two disagree, and that is the finding.** Raw distance is a coin flip
+because it is dominated by the directions the data does not identify — `k`
+against `delta`, where being far away costs nothing and means nothing. Weight by
+the curvature and a real difference appears.
+
+The ruler is the curvature **at the truth**, not at either fit. An earlier
+version expanded around the fitted point, which carries the gradient term and
+therefore reports a loss gap: whichever implementation reached the lower
+objective is then further from the truth *by construction*. It produced a clean
+0/18 that was a restatement of the posterior comparison and nothing else.
+`tests/test_tier1_recovery.py` pins the distinction.
+
+A second observation with no obvious reading yet: on these series the truth has
+6–11 active changepoints, we find 0–9 and Prophet finds 2–20. Neither is
+calibrated — we are consistently too sparse and Prophet consistently too dense.
+
+The identified error is in **nats** and the curvature grows with the sample, so
+it compares two implementations on one series and does not pool across series of
+different lengths. The tier pairs per series for that reason.
 
 ### `metrics.quadratic_change`
 
