@@ -17,6 +17,10 @@ Where things are:
     trend.py          the three growth modes and their derivatives.
     optimizer.py      projected Newton, and the tolerances runs stop on.
     models.py         [fc] prophet/models.py -- the compiled backend's loader.
+    serialize.py      [fc] prophet/serialize.py -- a fitted model to and from
+                      JSON. Reached as `from analytic_prophet.serialize import
+                      model_to_json`, and deliberately not re-exported here,
+                      because `import prophet` does not expose its one either.
     optimize.cpp      that backend.
 
 The last four have no Prophet counterpart worth the name, and that is the point:

@@ -809,6 +809,8 @@ fourteen tasks are done. What is missing is around it:
 
 - **MCMC sampling** — MAP only. `mcmc_samples > 0` is rejected rather than ignored.
 - **Plotting** — no `plot` or `plot_components`.
+- **Cross-validation** — no `diagnostics.cross_validation`; see
+  [#79](https://github.com/adlyZaroui/analytic-prophet/issues/79).
 - **`scaling='minmax'`** — only `absmax`.
 
 Each of these is accepted as an argument and then rejected, where Prophet has an argument
@@ -829,8 +831,9 @@ analytic_prophet/
     trend.py          the three growth modes and their derivatives   152
     optimizer.py      projected Newton, and the stopping tolerances  182
     models.py         [fc] prophet/models.py — the backend's loader   82
+    serialize.py      [fc] prophet/serialize.py — save and load          251
     optimize.cpp      that backend
-tests/                629 tests, plus the Peyton Manning series under data/
+tests/                657 tests, plus the Peyton Manning series under data/
 benchmark/            against the original: agreement, fit time, memory
 ```
 
@@ -848,6 +851,25 @@ material above.
 The C++ source sits inside the package rather than beside it because it *is* the
 implementation, not a build input to it — where Prophet hands the problem to Stan, this
 hands it to a gradient written out by hand.
+
+A fitted model saves and loads, [fc] Prophet's own API
+([#78](https://github.com/adlyZaroui/analytic-prophet/issues/78)):
+
+```python
+from analytic_prophet.serialize import model_to_json, model_from_json
+
+with open('model.json', 'w') as handle:
+    handle.write(model_to_json(model))
+
+with open('model.json') as handle:
+    model = model_from_json(handle.read())
+```
+
+`pickle` is deliberately not the route, and the reason is sharper here than in Prophet:
+its pickles carry a Stan object and do not survive a version change, while ours would
+carry a handle to whatever build of `optimize.cpp` was loaded — tying the file to one
+machine. What is written is the state a prediction reads and nothing else, so a model
+fitted with `fit_cpp` loads on a machine that has never compiled the core.
 
 One rule the layout imposes: **patch a name where it is looked up, not where it is
 defined.** `load_cpp_module` reads `CPP_MODULE_NAME` from `models`' globals, so a test
@@ -869,7 +891,7 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -e '.[dev]'
-pytest                               # 629 tests
+pytest                               # 657 tests
 ```
 
 `pytest` alone is enough — `pyproject.toml` puts the repo root and `benchmark/` on
