@@ -101,7 +101,7 @@ Read these with the figure rather than on their own. Every implementation is *sl
 
 ## How this was measured
 
-- seed `20260925`, commit `79303bdb5a41`
+- seed `20260925`, commit `60fc143b0bb2`
 - python 3.14.7 on macOS-26.5.2-arm64-arm-64bit-Mach-O
 - cmdstanpy 1.3.0, numpy 2.5.3, pandas 3.0.5, prophet 1.4.0, scipy 1.18.1
 
