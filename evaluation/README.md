@@ -31,13 +31,15 @@ sparser trend. Settling that is the suite's centre of gravity.
 | 1 | who recovers the true parameters? | **done** |
 | 2 | **does the better MAP point forecast better?** | **done** |
 | 3 | what does it cost to fit and predict? | **done** |
+| — | the report | **done** |
 
 Tier 0 is a **gate**, not a measurement. If the two implementations are not
 fitting the same specification, every number the others produce is about
 something nobody asked; a failing gate stops the run.
 
-Each tier lands as its own PR against `main` — they do not depend on each
-other, only on this scaffolding.
+The tiers do not call each other — only this scaffolding. What couples them is
+the deliverable: one command, a shared results format, and a report that reads
+all four.
 
 ## The contract a tier follows
 
@@ -61,8 +63,25 @@ code usually live there.
 |---|---|
 | `harness.py` | the results contract, run metadata, and the one place `evaluation/` reaches `benchmark/` |
 | `metrics.py` | the metrics more than one tier needs |
-| `corpora.py` | series loaders; M4 arrives with Tier 2 |
+| `corpora.py` | series loaders — the vendored series, and M4 fetched on demand |
+| `synthetic.py` | generators that run the model forward, with the parameters that made each series |
 | `run.py` | the runner, tier registry and the gate |
+| `report.py` | tables and figures, from the committed results and nothing else |
+| `tiers/` | one module per tier |
+| `results/` | the committed CSVs, their metadata, the report and its figures |
+
+## The report
+
+```bash
+python evaluation/run.py        # produce results/
+python evaluation/report.py     # produce results/report.md + figures/
+```
+
+[**results/report.md**](results/report.md) is generated from the committed CSVs
+and nothing else — it refits nothing, so regenerating it on another machine
+reproduces the same file and two reports diff to show what moved. A tier that
+has not been run is named in the report with the command that would produce it,
+rather than silently missing.
 
 ## The results
 
