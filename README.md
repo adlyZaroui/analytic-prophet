@@ -52,8 +52,8 @@ small and entirely explicit, so the gradient can be written down instead. Both
 consequences are measured rather than assumed — fitting is **1.5–10× faster** than
 Prophet and the fit's peak memory is **about a third** of Prophet's at T = 2905, with the
 gap widening as the series grows, which is what a retained tape predicts. Predicting is
-**2.6× faster** than Prophet's exact sampler, and slower than the approximation it runs by
-default — which are different computations, and disagree by 1.4% on the interval bounds.
+faster on both of the paths described below — **1.8×** on the approximate one and **2.6×**
+on the exact one.
 → [cost](evaluation/results/report.md#tier-3--what-it-costs)
 
 **Prophet's non-differentiable objective, handled.** The Laplace prior on the changepoint
@@ -88,6 +88,25 @@ the splits nor the definitions are ours:
 
 Narrower intervals at indistinguishable coverage, and more accurate points.
 → [forecast accuracy](evaluation/results/report.md#tier-2--does-the-better-map-point-forecast-better)
+
+**Two uncertainty samplers, and Prophet's default is the approximate one.** This is
+worth knowing before comparing any interval or any prediction time.
+`Prophet.predict(vectorized=True)` is its default, and it is **not** a faster form of
+`vectorized=False` — it is a different computation. Prophet's own two paths disagree by
+about **1.4%** on the interval bounds. This implementation offers both, under the same
+argument and the same default:
+
+```python
+forecast = model.predict(future)                      # approximate, as Prophet defaults to
+forecast = model.predict(future, vectorized=False)    # exact, and slower
+```
+
+`yhat` is identical either way — only the interval is sampled. The approximation replaces
+the Poisson process over the horizon with one coin per timestep and integrates the trend
+by a double cumulative sum; the exact sampler places changepoints in continuous time and
+evaluates the piecewise-linear trend from its definition. Under logistic growth the exact
+sampler runs regardless, and `model.predicted_vectorized` records which one did.
+→ [all four paths timed](evaluation/results/report.md#tier-3--what-it-costs)
 
 **Feature-complete against Prophet's model.** Linear, logistic and flat growth;
 seasonality selected from the history by Prophet's own rule, with per-component Fourier

@@ -92,6 +92,10 @@ ORDEREDDICT = ['seasonalities', 'extra_regressors']
 #       unseeded by design; a restored model draws its own.
 #   k, m, delta, beta
 #       always None. Vestigial, and `params` carries the fitted values.
+#   predicted_vectorized
+#       which uncertainty sampler the last predict used, which the next predict
+#       sets for itself. A record of something that happened, not state a
+#       prediction reads.
 #   _constructed_fit_state
 #       rebuilt rather than carried: model_from_dict constructs the model with
 #       the changepoints it was given, so __init__ takes the snapshot itself.
@@ -101,6 +105,7 @@ SKIPPED = [
     'loss_over_iterations', '_fit_lib_path', 't', 'y', 'y_scaled',
     't_seasonality', '_fit_design_matrix', '_data_columns', 'condition_masks',
     'rng', 'k', 'm', 'delta', 'beta', '_constructed_fit_state',
+    'predicted_vectorized',
 ]
 
 

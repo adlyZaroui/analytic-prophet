@@ -162,6 +162,38 @@ field by field instead, and also reach the sweep through `params`, `_params_vect
 
 ---
 
+### The default uncertainty sampler is an approximation, in both implementations
+
+Worth stating plainly because it is easy to compare the wrong pair of numbers.
+`Prophet.predict(vectorized=True)` is Prophet's default, and it is **not** a faster form
+of `vectorized=False` — it is a different computation. Prophet's own two paths disagree by
+about **1.4%** on the interval bounds, with `yhat` identical between them.
+
+This implementation had only the exact sampler until
+[#93](https://github.com/adlyZaroui/analytic-prophet/issues/93), which is why every
+prediction-time number before it compared an exact computation against an approximate one
+and reported this project as 2.4× slower. It now offers both, under Prophet's argument
+name and Prophet's default.
+
+What the approximation changes, [fc] `_sample_uncertainty`:
+
+- the Poisson process over the horizon becomes an independent coin at each future
+  timestep, so at most one changepoint lands per step and the counts agree only as the
+  step shrinks;
+- the trend is integrated discretely, by a double cumulative sum with a trapezoidal
+  correction, rather than evaluated from the piecewise-linear definition;
+- rows inside the history get exactly zero, which both samplers do anyway ([#58](https://github.com/adlyZaroui/analytic-prophet/issues/58)).
+
+It costs `O(n_samples × future rows)` against `O(n_samples × T × S)`, and the horizon is
+usually a few percent of `T`, which is the entire speed difference.
+
+**Under logistic growth the exact sampler runs regardless.** Prophet's approximation needs
+a separate derivation there — a forward-fill and a per-column `gamma` recursion — which
+this does not have yet. `model.predicted_vectorized` records which sampler actually ran,
+so the fallback is visible rather than silent.
+
+---
+
 ## Known differences from Prophet
 
 Tracked, deliberate, and not yet closed:

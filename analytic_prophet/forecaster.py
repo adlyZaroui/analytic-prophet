@@ -82,6 +82,7 @@ FIT_DERIVED_ATTRIBUTES = (
     # the result
     "params", "_params_vector", "k", "m", "delta", "beta", "sigma_obs",
     "opt", "loss_over_iterations", "_fitted_with_cpp", "_fit_lib_path",
+    "predicted_vectorized",
 )
 
 # Set only by a fit, so there is no constructed value to go back to. A refit
@@ -234,6 +235,8 @@ class AnalyticProphet:
         self._params_vector = None
         self.loss_over_iterations = None
         self.opt = None
+        # which uncertainty sampler the last predict used (#93)
+        self.predicted_vectorized = None
 
         self.sigma_k = sigma_k
         self.sigma_m = sigma_m
@@ -1516,7 +1519,7 @@ class AnalyticProphet:
 
         return future_df
     
-    def _regressor_draws(self, future_df, n_samples):
+    def _regressor_draws(self, future_df, n_samples, vectorized=True):
         """{name: (n_samples, T)} of raw regressor values, for the regressors
         that have a nested model.
 
@@ -1537,21 +1540,24 @@ class AnalyticProphet:
             columns = np.tile(future_df[name].to_numpy(dtype=float), (n_samples, 1))
             if is_future.any():
                 future_frame = pd.DataFrame({"ds": future_df.loc[is_future, "ds"].to_numpy()})
-                columns[:, is_future] = predictor._sample_yhat(future_frame, n_samples)
+                columns[:, is_future] = predictor._sample_yhat(
+                    future_frame, n_samples, vectorized)
             drawn[name] = columns
         return drawn
 
-    def _sample_yhat(self, future_df, n_samples):
+    def _sample_yhat(self, future_df, n_samples, vectorized=True):
         """`n_samples` x T draws of this model's own yhat, for a nested model
         to hand its parent."""
         prepared = self._ensure_regressor_values(future_df).copy()
         prepared['t'] = ((pd.to_datetime(prepared['ds']) - self.ds.min())
                                 / (self.ds.max() - self.ds.min()))
         cap_scaled, floor = self._future_capacity(prepared)
-        _, _, _, yhat_draws = self._forecast_draws(prepared, cap_scaled, floor, n_samples)
+        _, _, _, yhat_draws = self._forecast_draws(prepared, cap_scaled, floor,
+                                                   n_samples, vectorized)
         return yhat_draws
 
-    def _forecast_draws(self, future_df, cap_scaled, floor, n_samples):
+    def _forecast_draws(self, future_df, cap_scaled, floor, n_samples,
+                        vectorized=True):
         """(x, trend_draws, seasonality, yhat_draws) for a prepared frame.
 
         `yhat` is drawn rather than derived from the trend band, which is what
@@ -1565,8 +1571,10 @@ class AnalyticProphet:
         x = np.ascontiguousarray(
             self.make_all_seasonality_features(future_df)[0].to_numpy(dtype=float))
 
-        trend_draws = self._sample_trends(t, cap_scaled, floor, n_samples)
-        regressor_draws = self._regressor_draws(future_df, n_samples)
+        trend_draws = (self._sample_trends_vectorized(t, cap_scaled, floor, n_samples)
+                       if vectorized and self.growth != 'logistic'
+                       else self._sample_trends(t, cap_scaled, floor, n_samples))
+        regressor_draws = self._regressor_draws(future_df, n_samples, vectorized)
 
         # the regressor columns are the last of the design matrix, in the order
         # they were registered
@@ -1658,6 +1666,78 @@ class AnalyticProphet:
             trend_normalized = (k + rates) * t + (m + offsets)
         trend = trend_normalized * self.y_scale
         draws[chunk] = trend if floor is None else trend + floor
+
+    def _trend_shift_matrix(self, mean_delta, likelihood, n_future, n_samples):
+        """Random slope changes, one coin per future timestep.
+
+        [fc] Prophet._make_trend_shift_matrix. The trapezoidal average on the
+        last line is Prophet's: a change that lands between two steps is split
+        across both rather than applied wholly to the later one.
+        """
+        occurs = self.rng.uniform(size=(n_samples, n_future)) < likelihood
+        shifts = self.rng.laplace(0, mean_delta, size=(n_samples, n_future)) * occurs
+        shifted = np.hstack([np.zeros((n_samples, 1)), shifts])[:, :-1]
+        return (shifted + shifts) / 2
+
+    def _sample_uncertainty(self, t, n_samples):
+        """(n_samples, len(t)) of trend deviation, in normalized units.
+
+        [fc] Prophet._sample_uncertainty, which is what `predict` runs by
+        default there. It is an **approximation** of the sampler
+        `_sample_trends` implements, not a faster form of it, and the two differ
+        in three ways worth naming (#93):
+
+          * the Poisson process over the horizon becomes an independent coin at
+            every timestep, so at most one changepoint lands per step and the
+            counts agree only as the step shrinks;
+          * the trend is integrated discretely, by a double cumulative sum,
+            rather than evaluated from the piecewise-linear definition;
+          * rows inside the history get exactly zero, which is the same choice
+            the exact sampler makes for its own reasons (#58) rather than an
+            approximation.
+
+        What it buys is the cost: O(n_samples x future rows) against
+        O(n_samples x T x S), and the horizon is usually a few percent of T.
+        """
+        t = np.asarray(t, dtype=float)
+        if t.max() <= 1.0:
+            return np.zeros((n_samples, len(t)))
+
+        future = t[t > 1.0]
+        n_future = len(future)
+        # one timestep, in the scaled units the changepoints live in
+        single_diff = (float(np.diff(future).mean()) if n_future > 1
+                       else float(np.diff(self.t).mean()))
+        likelihood = len(self.changepoints_t) * single_diff
+        _k, _m, delta, _sigma_obs, _beta = self._fitted()
+        mean_delta = float(np.abs(delta).mean()) + 1e-8
+
+        if self.growth == 'flat':
+            # no slope to change
+            uncertainty = np.zeros((n_samples, n_future))
+        else:
+            shifts = self._trend_shift_matrix(mean_delta, likelihood, n_future, n_samples)
+            # slope changes -> slopes -> values, then scaled by what a step means
+            uncertainty = shifts.cumsum(axis=1).cumsum(axis=1) * single_diff
+
+        n_past = int(np.sum(t <= 1.0))
+        if n_past:
+            uncertainty = np.concatenate(
+                [np.zeros((n_samples, n_past)), uncertainty], axis=1)
+        return uncertainty
+
+    def _sample_trends_vectorized(self, t, cap_scaled, floor, n_samples):
+        """`n_samples` x T trend draws, Prophet's approximate way.
+
+        [fc] sample_predictive_trend_vectorized: the fitted trend, plus a
+        sampled deviation, both in normalized units and de-normalized once.
+        """
+        k, m, delta, _sigma_obs, _beta = self._fitted()
+        expected = predict_trend(k, m, delta, self.changepoints_t, t, 1.0,
+                                 cap_scaled, None, self.growth)
+        uncertainty = self._sample_uncertainty(t, n_samples)
+        draws = (expected[None, :] + uncertainty) * self.y_scale
+        return draws if floor is None else draws + floor
 
     def _sample_trends(self, t, cap_scaled, floor, n_samples):
         """`n_samples` x T trend draws, in the series' own units.
@@ -1759,7 +1839,24 @@ class AnalyticProphet:
 
         return future_df, quantiles
     
-    def predict(self, future_df):
+    def predict(self, future_df, vectorized=True):
+        """The forecast, and the interval around it.
+
+        `vectorized` selects which uncertainty sampler runs, [fc] the argument
+        and the default. True is Prophet's approximation -- an independent coin
+        per future timestep, integrated by a double cumulative sum -- and False
+        is the exact sampler, which places changepoints as a Poisson process
+        and evaluates the piecewise-linear trend from its definition.
+
+        They are **different computations, not two speeds of one**. Prophet's
+        own two paths disagree by about 1.4% on the interval bounds, and so do
+        these. `yhat` is unaffected: only the interval is sampled. Which one ran
+        is recorded on `self.predicted_vectorized` (#93).
+
+        The exact sampler is used regardless under logistic growth, where
+        Prophet's approximation needs a separate derivation this does not have
+        yet. It is slower, not wrong.
+        """
         # A copy up front: `t` is added below, and writing a column into
         # the caller's frame is theirs to be surprised by (#35).
         future_df = self._ensure_regressor_values(future_df).copy()
@@ -1782,8 +1879,9 @@ class AnalyticProphet:
         # pass: yhat's interval is the spread of its own draws rather than the
         # trend's band shifted, which is what lets the observation noise (#63)
         # and a regressor's own forecast uncertainty (#16 task 14a) enter it.
+        self.predicted_vectorized = bool(vectorized) and self.growth != 'logistic'
         _, trend_draws, (multiplier, seasonality), yhat_draws = self._forecast_draws(
-            future_df, cap_scaled, floor, self.uncertainty_samples)
+            future_df, cap_scaled, floor, self.uncertainty_samples, vectorized)
 
         # [stan] trend .* (1 + X_sm * beta) + X_sa * beta. `trend` is already in
         # the series' own units, and the multiplier is unitless, so only the
