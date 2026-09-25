@@ -1,5 +1,13 @@
 # Benchmarks
 
+Three scripts that are fast enough to run against a change. For the claim-level
+study — parameter recovery, held-out accuracy, cost across sizes, and the
+generated report — see [`evaluation/`](../evaluation/), which takes minutes to
+hours rather than seconds.
+
+The division is deliberate: these answer "did that change break something", and
+`evaluation/` answers "what can this project claim".
+
 The premise of this project is a Prophet that differs from the original in one
 respect only: the gradient comes from a closed-form expression rather than
 Stan's automatic differentiation. Two consequences should follow, and these

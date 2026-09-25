@@ -64,139 +64,28 @@ code usually live there.
 | `corpora.py` | series loaders; M4 arrives with Tier 2 |
 | `run.py` | the runner, tier registry and the gate |
 
-## Tier 0 — the gate
+## The results
 
-```
-tier  metric                       T=300      T=1000     T=2905
-0     design_matrix_max_abs_diff   7.3e-12    7.3e-12    7.3e-12
-0     prior_scales_max_abs_diff    0          0          0
-0     changepoints_max_abs_diff    0          0          0
-0     lp__  prophet                813.351    2852.768   8004.798
-0     lp__  analytic_prophet       815.337    2855.528   8005.159
-0     lp___difference             +1.986     +2.760     +0.361
-```
+**They live in [`results/report.md`](results/report.md)**, generated from the
+committed CSVs by `report.py`. They are deliberately not repeated here: two
+hand-maintained copies of the same table drift the moment a tier is re-run, and
+the generated one is the copy that cannot.
 
-Four checks, in the order of how fundamental they are: the design matrix
-element for element, the per-column prior scales, the changepoints, and only
-then the posterior. A difference in the first three is a *modelling*
-difference, and reporting only the posterior would let one hide inside the
-other. The 7.3e-12 is the Fourier basis being evaluated in a different order —
-arithmetic, not model.
+The headlines, with the full treatment one link away:
 
-`beta` is passed straight into Stan's density rather than projected into its
-basis, which is only legitimate because the design matrices are identical. That
-is what the first check establishes; a projection step would otherwise absorb a
-real difference and report agreement.
+- **Tier 0** — the gate passes. Design matrices agree to 7.3e-12, changepoints
+  and prior scales exactly, and our `lp__` is ahead at every size.
+- **Tier 1** — weighted by curvature we recover the truth better on 14 of 18
+  synthetic series (p = 0.0034), where raw distance is a coin flip at 7 of 18.
+- **Tier 2** — we forecast better held out (MAE p = 0.0063) with narrower
+  intervals at indistinguishable coverage. **Both** implementations under-cover
+  badly, which is larger than anything separating them.
+- **Tier 3** — fitting is faster and the fit's memory is about a third of
+  Prophet's; predicting is the one thing we are slower at.
 
-## Tier 1 — parameter recovery
+---
 
-18 series generated from the model (T ∈ {100, 300, 1000} × noise ∈ {0.05, 0.2} ×
-3 seeds), both implementations fitted, both compared to the parameters that made
-them.
-
-| | ours wins |
-|---|---|
-| raw distance `‖θ̂ − θ*‖` | 7 / 18 |
-| **identified error** `½(θ̂−θ*)ᵀH(θ*)(θ̂−θ*)` | **14 / 18** |
-
-Median paired difference −0.265 nats, Wilcoxon p = 0.0034.
-
-**The two disagree, and that is the finding.** Raw distance is a coin flip
-because it is dominated by the directions the data does not identify — `k`
-against `delta`, where being far away costs nothing and means nothing. Weight by
-the curvature and a real difference appears.
-
-The ruler is the curvature **at the truth**, not at either fit. An earlier
-version expanded around the fitted point, which carries the gradient term and
-therefore reports a loss gap: whichever implementation reached the lower
-objective is then further from the truth *by construction*. It produced a clean
-0/18 that was a restatement of the posterior comparison and nothing else.
-`tests/test_tier1_recovery.py` pins the distinction.
-
-A second observation with no obvious reading yet: on these series the truth has
-6–11 active changepoints, we find 0–9 and Prophet finds 2–20. Neither is
-calibrated — we are consistently too sparse and Prophet consistently too dense.
-
-The identified error is in **nats** and the curvature grows with the sample, so
-it compares two implementations on one series and does not pool across series of
-different lengths. The tier pairs per series for that reason.
-
-## Tier 2 — forecast accuracy, held out
-
-**The question the README refuses to answer, answered.** 36 M4 series (20 weekly,
-20 daily), rolling-origin evaluation on cutoffs from
-`prophet.diagnostics.generate_cutoffs`, scored by `prophet.diagnostics.performance_metrics`.
-Both sides get the same cutoffs and the same scorer.
-
-Paired per-series differences, negative meaning we are lower:
-
-| metric | median diff | wins | p |
-|---|---|---|---|
-| MAE | −1.914 | 26/36 | 0.0063 |
-| RMSE | −2.967 | 25/36 | 0.0183 |
-| MAPE | −0.0007 | 26/36 | 0.0013 |
-| sMAPE | −0.0004 | 24/36 | 0.0139 |
-| interval width | −2.711 | 30/36 | <0.0001 |
-| coverage | +0.0003 | 16/36 | 0.798 |
-| active changepoints | −5.0 | 36/36 | <0.0001 |
-
-**The better MAP point does forecast better**, on this corpus — and it does so
-with *narrower* intervals at statistically indistinguishable coverage. The
-mechanism is visible in the last row: we fit a sparser trend on every one of the
-36 series.
-
-This contradicts the only adjacent evidence the README had, which pointed the
-other way: Prophet fits the *training* data marginally better. Held out, that
-reverses.
-
-### The finding that is not about us
-
-**Both implementations badly under-cover.** Mean coverage of the nominal 80%
-interval is **0.353** for ours and **0.342** for Prophet's — the intervals
-contain about a third of the points they claim four fifths of. That is a
-property of the model on long horizons and volatile series, shared by both, and
-it is much larger than any difference between them. Anything that reads the
-accuracy table above without this line is reading it wrong.
-
-## Tier 3 — cost
-
-Fit and predict, against the length of the series and the width of the design
-matrix, with CPU time and memory alongside wall clock.
-
-| T | prophet | fit_cpp | fit(analytic=True) |
-|---|---|---|---|
-| 50 | 0.169 s | **0.016 s** | 0.250 s |
-| 300 | 0.043 s | **0.017 s** | 0.111 s |
-| 2905 | 0.580 s | **0.395 s** | 3.160 s |
-
-Peak resident memory, **split into what the import cost and what the fit did**:
-
-| T | prophet | fit_cpp |
-|---|---|---|
-| fit added, T=300 | 3.5 MiB | **2.0 MiB** |
-| fit added, T=2905 | 8.6 MiB | **3.0 MiB** |
-| import | **38.2 MiB** | 57.8 MiB |
-
-The split is the point. The README's memory claim is about the *fit* — reverse-mode
-autodiff retains a tape and a closed-form gradient does not — and it holds, with
-the gap widening as the series grows, which is what the theory predicts. But
-**we cost 20 MiB more to import**, almost all of it scipy, which Prophet does not
-pull. A library that is expensive to merely import is still expensive to deploy,
-so both numbers are reported.
-
-### Two results that were not expected
-
-**Prediction is the one thing we are slower at**, by about 2.4×: 0.564 s against
-Prophet's 0.222 s at T = 2905. Inference cost has never been measured before, and
-the uncertainty sampling is the obvious suspect.
-
-**Scaling exponents** (d log time / d log T): `fit_cpp` 0.94, `fit(analytic=True)`
-0.84, Prophet **0.46**. Prophet's is sub-linear because a fixed subprocess spawn
-dominates at small T — which is also why its wall time at T=50 (0.169 s) is worse
-than at T=300 (0.043 s).
-
-Width costs us more than it costs Prophet: at T = 1000, going from K=20 to K=34
-takes `fit_cpp` from 0.071 s to 0.120 s while Prophet barely moves (0.157 → 0.172).
+## The two metrics worth explaining
 
 ### `metrics.quadratic_change`
 

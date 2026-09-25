@@ -1,0 +1,61 @@
+# Development history
+
+Every item below was found and fixed with a regression test, and is listed
+because the failure modes are instructive — several were silent, producing
+plausible wrong numbers rather than errors.
+
+[← back to the README](README.md)
+
+---
+
+Every item below was found and fixed with a regression test. Listed because the failure
+modes are instructive, and because several were silent — producing plausible wrong
+numbers rather than errors.
+
+| | issue | what was wrong |
+|---|---|---|
+| Correctness | [#2](https://github.com/adlyZaroui/analytic-prophet/issues/2) | Uncertainty intervals de-normalized asymmetrically: `y_absmax` was applied to the intercept term only, leaving the slope-driven part in normalized units |
+| | [#4](https://github.com/adlyZaroui/analytic-prophet/issues/4), [#18](https://github.com/adlyZaroui/analytic-prophet/issues/18) | `sigma_obs` was a fixed, unseeded random draw rather than an estimated parameter. Now fitted, in both paths, with the `T·log σ` normalization the likelihood requires |
+| | [#12](https://github.com/adlyZaroui/analytic-prophet/issues/12) | Full audit of every constant against Prophet. All prior scales and structural constants were already correct; initialization was not — `fit` started `k = m = 0` instead of `linear_growth_init`, and `fit_cpp` drew from an unseeded `2.0·N(0,1)`, making it non-reproducible |
+| | | Changepoint indicator used `>` where Stan uses `>=`. Aligned — and verified numerically inert, since `aⱼ(t)·δⱼ·(t − sⱼ)` vanishes at `t = sⱼ` either way |
+| Optimizer | [#8](https://github.com/adlyZaroui/analytic-prophet/issues/8) | liblbfgs died after 2 iterations with `LBFGSERR_ROUNDING_ERROR`. Root cause: the non-smooth Laplace prior |
+| | [#21](https://github.com/adlyZaroui/analytic-prophet/issues/21) | No reachable stopping criterion — `past = 0` disabled the objective-change test and the gradient threshold was unattainable, so runs ended on line-search exhaustion ~33k iterations past convergence. Stan's criteria implemented instead |
+| | [#23](https://github.com/adlyZaroui/analytic-prophet/issues/23) | OWL-QN replaced by the split reformulation with L-BFGS-B: 5.4× faster and a better optimum |
+| | [#28](https://github.com/adlyZaroui/analytic-prophet/issues/28) | The changepoint and Fourier matrices, constant for a whole fit, were rebuilt on every objective evaluation — 57% of each. Built once: `fit_cpp` reached parity with Prophet |
+| | [#13](https://github.com/adlyZaroui/analytic-prophet/issues/13) | `fit_cpp` returned NaN while reporting `LBFGS_SUCCESS`. Resolved by the solver change |
+| | [#24](https://github.com/adlyZaroui/analytic-prophet/issues/24) | `fit()`'s loss trace recorded the *canonical* objective while scipy minimized the *split* one. Equal at the optimum, so the final value was right and nothing caught it — but the recorded trajectory rose on a run that descends, and was not comparable with `fit_cpp`'s |
+| Refitting | [#41](https://github.com/adlyZaroui/analytic-prophet/issues/41) | A model fit once on twenty rows kept `n_changepoints` capped at 15 and fitted 15 rather than 25 on every later history; a model fit across one date range kept that range's holiday names and forced them onto the next as all-zero columns. Both silently fitted a different model. `Prophet.fit` raises on a second call, so neither can arise there |
+| Modelling | [#36](https://github.com/adlyZaroui/analytic-prophet/issues/36) | Fourier basis measured days from the series start, not the 1970 epoch, and emitted all `cos` then all `sin` rather than interleaving. A pure reparameterization — but until it was fixed, `beta` could not be compared with Prophet's at all |
+| | [#3](https://github.com/adlyZaroui/analytic-prophet/issues/3) | The C++ carried `params.segment(2, 25)` and `fourier_components(..., 10)` as literals, so `S` and `K` could not vary |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 2 | The seasonal component was described in four places that had to agree and nothing checked that they did. A `ParameterLayout` now derives every offset from `(S, K)`, and `K` comes from a registry |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) tasks 3–4 | Yearly was registered unconditionally. Prophet selects components from the span and spacing of the history — so the two were never fitting the same model unless the series happened to suit yearly-only |
+| | [#63](https://github.com/adlyZaroui/analytic-prophet/issues/63), [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14a | `yhat`'s interval was the trend's band shifted, so it carried no observation noise — the term that dominates it. Measured at 0.056× Prophet's, an 18-fold overstatement of precision, and in the dangerous direction: too narrow looks reasonable in a way too wide does not. `predict` now draws `yhat` rather than deriving it, which is also what lets a regressor predictor's own uncertainty enter |
+| | [#15](https://github.com/adlyZaroui/analytic-prophet/issues/15) | Changepoints were spaced uniformly in scaled *time*; Prophet spaces them over evenly-spaced *row indices* and takes the dates there, caps the count on short series, and accepts an explicit list. All three ported together, since porting one leaves the other two wrong. They are now bit-identical to Prophet's at every size — and `fit()` stopped terminating ABNORMAL at T = 30, because a changepoint on an observation has data at it where one in a gap does not |
+| | [#58](https://github.com/adlyZaroui/analytic-prophet/issues/58), [#35](https://github.com/adlyZaroui/analytic-prophet/issues/35) | The trend interval drew its new changepoints across the whole frame at a per-point rate, so most landed *inside* the fitted history and every draw rewrote the past before extrapolating from it — a band ~170× Prophet's, wider than the data. Placed as Prophet's Poisson process on `(1, T]` instead, which brings it to 1.2×, the residual being our own `mean\|delta\|`. `predict` also stopped writing a `t_scaled` column into the caller's frame |
+| | [#52](https://github.com/adlyZaroui/analytic-prophet/issues/52) | The constructor took no arguments, so every setting was an attribute assigned afterwards and a ported Prophet script had to be rewritten line by line. Wiring `interval_width` and `uncertainty_samples` into it exposed three defects in the method they feed: quantiles hardcoded at 95% where Prophet's default is 80%, one draw taken from the global numpy generator so seeding a model did nothing, and `compute_trend` called without the growth mode — a linear band around a logistic fit |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14d | The `K = 0` divergence above was argued rather than measured, which is the one thing every other agreement claim here is not. Measured: the padding column costs exactly `β²/2` and nothing else, and a trend-only fit under flat growth reproduces Prophet's `lp__` exactly |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 14 | A model with every seasonality disabled could not fit: the C++ length guard read `params_size < 2 + S + 2`, assuming at least one seasonality column. `K = 0` is trend plus noise, and a model. Found through a nested regressor model on 400 days with weekly turned off, which puts yearly below its threshold too |
+| | [#33](https://github.com/adlyZaroui/analytic-prophet/issues/33), [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 10 | `add_regressor` accepted a `pd.Series` and discarded it, so a caller's regressor was simply absent with no error. The signature could not have worked either: a series carries the history's values and no way to produce the future ones `predict` needs |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 9 | Country holidays, via the `holidays` package rather than by importing anything from Prophet. Frames and name sets checked against Prophet's own helpers for five countries, since the underlying data moves between releases and asserting specific dates would test the package rather than this code |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 13 | Flat growth, and with it the first exact agreement with Prophet — identical `lp__` at every size, which is what confirms the margin elsewhere is optimizer behaviour rather than a modelling difference |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 12 | Logistic growth. The hardest derivative in the project so far: `gamma` is a recursion, so `d(gamma)/d(k, m, delta)` is accumulated forward rather than written down, and the trend's chain rule carries that S×(2+S) Jacobian through `inv_logit` |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 11 | Multiplicative mode. The first change to the gradient since `sigma_obs` became free: every trend block picks up the `(1 + X_sm·β)` factor and `β`'s picks up the trend. The all-additive case keeps its own branch — not for speed, but because `y − g − s` and `y − (g·1 + s)` differ in the last bits, which was enough to move the scipy path to a point 2.96 nats worse |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 8 | Holidays. The objective and gradient needed no change — a holiday column is a column of `X` — so the work was alignment: columns sorted by name rather than frame order, all-zero columns kept for occurrences outside a frame, and the fit's holiday set reconciled with predict's |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 7 | Conditional seasonalities: a named boolean column zeroes a component's features where it is False. The feature matrix reproduces Prophet's to 1e-10 — see [Where this deviates on purpose](docs/deviations.md) for why not exactly |
+| | [#43](https://github.com/adlyZaroui/analytic-prophet/issues/43) | Eigen answers a size mismatch with an assertion, which calls `abort()`: the interpreter died with no traceback and, in a test run, no failing test name. Four such mismatches aborted and eleven more returned plausible wrong numbers. Every dimension and scale is now checked in one place, through both entry points |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 6 | The registry built by tasks 2–5 had no public entry point: fitting anything other than what the auto rule selects meant assigning to `model.seasonalities` directly. `add_seasonality` added, with Prophet's validation checked branch for branch |
+| | [#16](https://github.com/adlyZaroui/analytic-prophet/issues/16) task 5 | `beta`'s prior used one scalar for every column, where Stan has `vector[K] sigmas`. Verified per-column against Stan's own `sigmas` and `log_prob`, and the shrinkage checked against the ridge algebra rather than merely being nonzero |
+| | [#34](https://github.com/adlyZaroui/analytic-prophet/issues/34) | `from_dict_to_array` overwrote `beta` with zeros regardless of what was passed. Invisible only because every caller happened to pass zeros |
+| Infrastructure | [#1](https://github.com/adlyZaroui/analytic-prophet/issues/1), [#11](https://github.com/adlyZaroui/analytic-prophet/pull/11) | ctypes → pybind11. The old binding hardcoded a relative library path and carried a 19-entry `argtypes` list kept in sync by hand; mismatches were undefined behaviour rather than errors |
+| | [#5](https://github.com/adlyZaroui/analytic-prophet/issues/5) | Parity test between the two fit paths from matched initial conditions |
+| | [#26](https://github.com/adlyZaroui/analytic-prophet/pull/26) | Benchmark harness against the original |
+
+One methodological note worth recording: the convexity argument in
+[#5](https://github.com/adlyZaroui/analytic-prophet/issues/5) — "the objective is convex,
+so a mismatch means a bug" — **stopped being true** once `sigma_obs` became a free
+parameter. Along that axis the objective carries `T·log σ_obs`, which is concave, and a
+concrete violation of the midpoint inequality is now in the test suite. From perturbed
+starting points, 2 of 5 seeds land on local optima 1206 and 912 nats worse than
+Prophet's deterministic initialization reaches. That initialization is doing real work.
+
+---
