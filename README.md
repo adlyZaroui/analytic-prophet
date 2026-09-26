@@ -79,14 +79,16 @@ identical changepoints, so only the optimizer differs:
 Prophet's own `generate_cutoffs` and scored by its own `performance_metrics`, so neither
 the splits nor the definitions are ours:
 
-| | median difference | wins | p |
-|---|---|---|---|
-| MAE | −1.914 | 26/36 | 0.0063 |
-| RMSE | −2.967 | 25/36 | 0.0183 |
-| interval width | −2.711 | 30/36 | <0.0001 |
-| coverage | +0.0003 | 16/36 | 0.798 |
+| | median difference | p |
+|---|---|---|
+| MAE | −1.914 | 0.0063 |
+| RMSE | −2.967 | 0.0183 |
+| MAPE | −0.0007 | 0.0013 |
+| coverage | **+0.0026** | 0.0025 |
+| interval width | +1.350 | 0.470 |
 
-Narrower intervals at indistinguishable coverage, and more accurate points.
+More accurate points, and **higher** coverage at statistically indistinguishable width —
+negative is better for the error rows, positive for coverage.
 → [forecast accuracy](evaluation/results/report.md#tier-2--does-the-better-map-point-forecast-better)
 
 **Two uncertainty samplers, and Prophet's default is the approximate one.** This is

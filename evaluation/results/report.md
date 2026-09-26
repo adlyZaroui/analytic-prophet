@@ -31,7 +31,7 @@ The two disagree, and that is the finding. Raw distance is a coin flip because i
 
 > The identified error is in **nats** and the curvature grows with the sample, so it compares implementations on one series and does not pool across lengths. Hence the pairing.
 
-Active changepoints: truth 6–11, ours 0–9, Prophet 2–20. Neither is calibrated — see #88.
+The trend's sparsity is reported as Σ|δ| and as the count of **exact** zeros rather than as rates above a threshold: ours has 16–25 exact zeros and Prophet 0–0, so a count of "active" changepoints measures where the line was drawn rather than the fit (#95). How many the generating vector had is reported beside them for reference, not as a target: MAP with an L1 prior over nested, collinear step functions is not a support-recovery procedure, so neither fit is expected to match it (#88).
 
 ![parameter recovery](figures/tier1_recovery.png)
 
@@ -39,21 +39,25 @@ Active changepoints: truth 6–11, ours 0–9, Prophet 2–20. Neither is calibr
 
 The question the README explicitly refuses to answer. Rolling-origin evaluation on cutoffs from `prophet.diagnostics.generate_cutoffs`, scored by `prophet.diagnostics.performance_metrics` — both sides get the same splits and the same scorer.
 
-| metric | median difference | wins | p |
+| metric | median difference | lower on | p |
 |---|---|---|---|
 | mae | -1.9142 | 26/36 | 0.0063 |
 | rmse | -2.9667 | 25/36 | 0.0183 |
 | mape | -0.0007 | 26/36 | 0.0013 |
 | smape | -0.0004 | 24/36 | 0.0139 |
-| coverage | +0.0003 | 16/36 | 0.7976 |
-| interval_width | -2.7108 | 30/36 | 0.0000 |
-| active_changepoints | -5.0000 | 36/36 | 0.0000 |
+| coverage | +0.0026 | — | 0.0025 |
+| interval_width | +1.3501 | — | 0.4697 |
+| sum_abs_delta | +0.5516 | — | 0.0000 |
+| exact_zeros | +14.0000 | — | 0.0000 |
+| l1_penalty | +11.0316 | — | 0.0000 |
 
-Negative means we are lower, which is better for every row but coverage. **The better MAP point does forecast better** on this corpus, with narrower intervals at indistinguishable coverage.
+Negative means we are lower. That is better for the four error rows, worse for coverage — which should be near the nominal 0.8 — and neither for the sparsity rows, which are reported because they describe the fits rather than rank them. The count column is left blank where a win is not defined.
+
+**The better MAP point does forecast better** on this corpus.
 
 ### The finding that is not about us
 
-**Both implementations badly under-cover.** Mean coverage of the nominal 80% interval is **0.353** for ours and **0.342** for Prophet's — the intervals contain about a third of the points they claim four fifths of. That is the model on long horizons and volatile series, shared by both, and it is larger than anything separating them.
+**Both implementations badly under-cover.** Mean coverage of the nominal 80% interval is **0.356** for ours and **0.341** for Prophet's — the intervals contain about a third of the points they claim four fifths of. That is the model on long horizons and volatile series, shared by both, and it is larger than anything separating them.
 
 ![coverage](figures/tier2_coverage.png)
 
@@ -111,7 +115,7 @@ Read these with the figure rather than on their own. Every implementation is *sl
 
 ## How this was measured
 
-- seed `20260925`, commit `86579d982389`
+- seed `20260925`, commit `053cf1240e72`
 - python 3.14.7 on macOS-26.5.2-arm64-arm-64bit-Mach-O
 - cmdstanpy 1.3.0, numpy 2.5.3, pandas 3.0.5, prophet 1.4.0, scipy 1.18.1
 
