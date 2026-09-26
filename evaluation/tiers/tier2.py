@@ -119,6 +119,12 @@ def _one_series(name, df, frequency, lib_path):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
+        # Prophet's uncertainty draws come from numpy's *global* generator, so
+        # without this its intervals differ between runs and the committed
+        # results contradict what this suite promises about them -- that an
+        # unchanged rerun produces an unchanged file. Ours is seeded per fit in
+        # _our_cross_validation; this is the other half.
+        np.random.seed(harness.SEED % (2 ** 32))
         prophet_cv = cross_validation(
             Prophet(**harness.PROPHET_KWARGS).fit(df), horizon=horizon_text,
             cutoffs=cutoffs, disable_tqdm=True)
@@ -138,15 +144,26 @@ def _one_series(name, df, frequency, lib_path):
         row(implementation, "interval_width",
             float(np.mean(frame["yhat_upper"] - frame["yhat_lower"])))
 
-    # the trend's sparsity, which is the mechanism the two differ by
+    # The trend's sparsity, as two quantities that do not depend on where a
+    # line is drawn. A count of `|delta| > 1e-6` used to stand here and was
+    # reported as the mechanism behind the accuracy result; it is almost
+    # entirely a threshold artifact, because Prophet's rates are never exactly
+    # zero and ours often are (#95).
     from analytic_prophet import AnalyticProphet
     ours = AnalyticProphet(**harness.PROPHET_KWARGS)
     ours.fit_cpp(df, lib_path=lib_path)
     theirs = Prophet(**harness.PROPHET_KWARGS).fit(df)
-    row("analytic_prophet", "active_changepoints",
-        np.sum(np.abs(ours.params["delta"][0]) > 1e-6))
-    row("prophet", "active_changepoints",
-        np.sum(np.abs(np.ravel(theirs.params["delta"])) > 1e-6))
+    # `implementation` rather than `name`: `row` closes over this function's
+    # `name`, which is the *series*, and a loop variable called `name` shadows
+    # it -- every row then files itself under the implementation's name and the
+    # per-series pairing silently finds nothing to pair.
+    for implementation, rates in (
+            ("analytic_prophet", np.abs(ours.params["delta"][0])),
+            ("prophet", np.abs(np.ravel(theirs.params["delta"])))):
+        row(implementation, "sum_abs_delta", rates.sum())
+        row(implementation, "exact_zeros", np.sum(rates == 0.0))
+        row(implementation, "l1_penalty",
+            rates.sum() / ours.changepoint_prior_scale, "nats")
     return rows
 
 
@@ -179,7 +196,7 @@ def _paired(measurements):
 
     summaries = []
     for metric in ("mae", "rmse", "mape", "smape", "coverage", "interval_width",
-                   "active_changepoints"):
+                   "sum_abs_delta", "exact_zeros", "l1_penalty"):
         differences = [v["analytic_prophet"] - v["prophet"]
                        for (_, name), v in by_series.items()
                        if name == metric and len(v) == 2]

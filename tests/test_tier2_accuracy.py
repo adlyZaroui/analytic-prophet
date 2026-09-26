@@ -204,3 +204,65 @@ def test_the_sample_is_the_same_on_every_run():
     first = [name for name, _ in corpora.m4("Weekly", n_series=4, seed=7)]
     second = [name for name, _ in corpora.m4("Weekly", n_series=4, seed=7)]
     assert first == second
+
+
+def test_every_metric_both_sides_report_gets_paired():
+    """A metric emitted by both implementations must reach the summary.
+
+    This is the shape of a bug that had already happened: `row` closes over the
+    *series* name, a loop variable called `name` shadowed it, and every sparsity
+    row filed itself under the implementation instead. The rows were all there
+    and all correct in isolation; the pairing simply found nothing to pair, and
+    said nothing about it. A metric that quietly drops out of the summary is
+    indistinguishable from one nobody asked for.
+    """
+    from harness import Measurement
+
+    rows = []
+    for series in ("a", "b", "c"):
+        for implementation, value in (("analytic_prophet", 1.0), ("prophet", 2.0)):
+            rows.append(Measurement(2, series, "W", implementation, "rmse", value))
+            rows.append(Measurement(2, series, "W", implementation, "exact_zeros", value))
+
+    summary = {m.metric: m.value for m in tier2._paired(rows)}
+
+    for metric in ("rmse", "exact_zeros"):
+        assert f"{metric}_n" in summary, f"{metric} never reached the summary"
+        assert summary[f"{metric}_n"] == 3, (
+            f"{metric} paired {summary[f'{metric}_n']:.0f} of 3 series")
+
+
+def test_the_sparsity_metrics_are_the_threshold_free_ones():
+    """#95: `active_changepoints` was a count of `|delta| > 1e-6`, which on
+    Prophet's side measured the threshold rather than the fit."""
+    import inspect
+    source = inspect.getsource(tier2)
+
+    assert "sum_abs_delta" in source and "exact_zeros" in source
+    assert "active_changepoints" not in source
+
+
+def test_both_sides_uncertainty_is_seeded(weekly_series, compiled_optimizer_module):
+    """Committed results are only a reviewable diff if an unchanged rerun
+    reproduces them, and Prophet draws its intervals from numpy's *global*
+    generator. Ours is seeded per fit; Prophet's needs seeding around the call.
+    """
+    import inspect
+    source = inspect.getsource(tier2)
+
+    assert "np.random.seed" in source, "Prophet's global generator is not seeded"
+    assert "model.rng = np.random.default_rng" in source, "ours is not seeded"
+
+
+def test_our_cross_validation_repeats_exactly(weekly_series, compiled_optimizer_module):
+    from prophet.diagnostics import generate_cutoffs
+
+    horizon = pd.Timedelta("30 D")
+    cutoffs = generate_cutoffs(weekly_series, horizon, pd.Timedelta("400 D"),
+                               pd.Timedelta("120 D"))
+    first = tier2._our_cross_validation(weekly_series, cutoffs, horizon,
+                                        compiled_optimizer_module)
+    second = tier2._our_cross_validation(weekly_series, cutoffs, horizon,
+                                         compiled_optimizer_module)
+    np.testing.assert_array_equal(first["yhat_lower"].values,
+                                  second["yhat_lower"].values)

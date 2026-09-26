@@ -177,7 +177,8 @@ def test_both_implementations_are_measured_against_the_truth(one_case):
     reported = {(m.implementation, m.metric) for m in one_case}
     for implementation in ("analytic_prophet", "prophet"):
         for metric in ("theta_error_l2", "identified_error", "excess_over_truth",
-                       "delta_error_l2", "beta_error_l2", "active_changepoints"):
+                       "delta_error_l2", "beta_error_l2", "sum_abs_delta",
+                       "exact_zeros"):
             assert (implementation, metric) in reported, (implementation, metric)
 
 
@@ -196,3 +197,26 @@ def test_a_map_fit_scores_better_than_the_truth_on_its_own_sample(one_case):
     for m in one_case:
         if m.metric == "excess_over_truth":
             assert m.value < 0, m.implementation
+
+
+# -- sparsity, reported without a threshold (#95) -------------------------
+
+def test_the_sparsity_readouts_need_no_threshold(one_case):
+    """`active changepoints` used to stand here, as `|delta| > 1e-6`. It is
+    almost entirely a function of that cutoff on Prophet's side, so it is
+    replaced by what the prior actually charges for and by the count of rates
+    that are exactly zero -- neither of which has a cutoff to argue about."""
+    reported = {(m.implementation, m.metric) for m in one_case}
+    for implementation in ("analytic_prophet", "prophet"):
+        assert (implementation, "sum_abs_delta") in reported
+        assert (implementation, "exact_zeros") in reported
+    assert not any(m.metric == "active_changepoints" for m in one_case)
+
+
+def test_the_generating_sparsity_is_reported_for_reference(one_case):
+    """Reference, not target. MAP with an L1 prior over nested, collinear step
+    functions is not a support-recovery procedure, so neither fit is expected
+    to match the vector that made the series (#88)."""
+    by_metric = {m.metric: m.value for m in one_case if m.implementation == "both"}
+    assert "sum_abs_delta_true" in by_metric
+    assert "exact_zeros_true" in by_metric

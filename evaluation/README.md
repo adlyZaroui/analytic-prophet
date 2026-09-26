@@ -18,10 +18,15 @@ behind the +2.34 nat posterior margin, the 0.10–0.68× fit times and the
 0.17–0.59% prediction agreement. That was enough to find real bugs and is not
 enough to make a general claim.
 
-The README also states outright that better forecasts are **not** claimed, and
-the one adjacent measurement points the other way: Prophet fits the training
-data marginally better while we score better on the posterior, because we find a
-sparser trend. Settling that is the suite's centre of gravity.
+Settling whether the better posterior means better *forecasts* was the suite's
+centre of gravity, and Tier 2 settled it: it does, held out, on 36 M4 series.
+
+The explanation that used to sit beside that question — that Prophet fits the
+training data better while we pay less in the Laplace prior — turned out to be
+backwards in both halves, and the metric supporting it was a threshold artifact
+([#95](https://github.com/adlyZaroui/analytic-prophet/issues/95)). Sparsity is
+now reported as Σ|δ| and as the number of *exact* zeros, neither of which needs
+a cutoff to be argued about.
 
 ## The tiers
 
@@ -96,9 +101,10 @@ The headlines, with the full treatment one link away:
   and prior scales exactly, and our `lp__` is ahead at every size.
 - **Tier 1** — weighted by curvature we recover the truth better on 14 of 18
   synthetic series (p = 0.0034), where raw distance is a coin flip at 7 of 18.
-- **Tier 2** — we forecast better held out (MAE p = 0.0063) with narrower
-  intervals at indistinguishable coverage. **Both** implementations under-cover
-  badly, which is larger than anything separating them.
+- **Tier 2** — we forecast better held out (MAE p = 0.0063), with higher
+  coverage (p = 0.0025) at indistinguishable interval width. **Both**
+  implementations under-cover badly, which is larger than anything separating
+  them.
 - **Tier 3** — fitting is faster and the fit's memory is about a third of
   Prophet's. Prediction is measured on **four** paths, because
   `predict(vectorized=True)` is the default on both sides and is an

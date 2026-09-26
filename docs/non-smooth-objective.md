@@ -98,24 +98,77 @@ It claims: **this implementation finds a better optimum of the model Prophet
 specifies**, by Prophet's own objective.
 
 For a long time it did **not** claim better forecasts, because that is a different
-question and the one adjacent measurement pointed the other way:
+question and no held-out evaluation had been done.
 
-| | training SSE | active changepoints (`\|δ\| > 1e-6`) |
-|---|---|---|
-| Prophet | **788.646** | 17 |
-| this implementation | 789.679 | 8 |
-
-Prophet fits the *training data* marginally better; this implementation scores better on
-the posterior because it pays less in the Laplace prior, i.e. it finds a sparser trend.
-Whether a better MAP point generalizes was left open, pending held-out evaluation.
-
-**That evaluation has now been done, and it reverses.** On 36 M4 series, rolling-origin,
-using Prophet's own cutoffs and its own scorer, this implementation is more accurate —
-MAE better on 26 of 36 (p = 0.0063), RMSE on 25 of 36 (p = 0.0183) — and with *narrower*
-intervals at statistically indistinguishable coverage. The mechanism is visible in the
-table above: the sparser trend, which loses in-sample, wins out of sample. It fits fewer
-active changepoints than Prophet on **all 36** series.
+**That evaluation has now been done, and this implementation is more accurate.** On 36 M4
+series, rolling-origin, using Prophet's own cutoffs and its own scorer: MAE better on 26
+of 36 (p = 0.0063), RMSE on 25 of 36 (p = 0.0183), with **higher** coverage
+(p = 0.0025) at statistically indistinguishable interval width (p = 0.47).
 → [Tier 2](../evaluation/results/report.md#tier-2--does-the-better-map-point-forecast-better)
+
+### What the better posterior is actually made of
+
+An earlier version of this section explained it as sparsity — that Prophet fits the
+training data marginally better while this implementation pays less in the Laplace prior.
+**Both halves are backwards**, and the correction is
+[#95](https://github.com/adlyZaroui/analytic-prophet/issues/95).
+
+Measured on the Peyton Manning series with the default configuration, and again with this
+implementation fitted on Prophet's own changepoints so that only the optimizer differs:
+
+| T = 2905, default | Σ\|δ\| | L1 paid | training SSE |
+|---|---|---|---|
+| Prophet | 3.497 | 69.9 nats | 679.4 |
+| this implementation | **3.620** | **72.4 nats** | **678.0** |
+
+| T = 2905, on Prophet's changepoints | Σ\|δ\| | training SSE | exact zeros |
+|---|---|---|---|
+| Prophet | 3.497 | 679.4 | 0 / 25 |
+| this implementation | **3.620** | **678.0** | **15 / 25** |
+
+We pay **more** prior and fit the training data **better**. The account is duller than the
+one it replaces and does not need sparsity at all: this implementation finds a point with
+a higher likelihood, and the extra prior cost is smaller than the likelihood gain.
+
+It is not one series either. Across the 36 M4 series of Tier 2, paired per series:
+
+| | median difference | lower on | p |
+|---|---|---|---|
+| Σ\|δ\| | **+0.552** | 6 / 36 | <0.0001 |
+| L1 paid | **+11.03 nats** | 6 / 36 | <0.0001 |
+| exact zeros | **+14** | 0 / 36 | <0.0001 |
+
+We pay more prior on 30 of the 36, and have more exact zeros on **all 36**. Whatever the
+difference between the two fits is, "we find a sparser trend" is not a description of it.
+
+The numbers the old table quoted — SSE 788.646 against 789.679 — reproduce under neither
+configuration, and its own configuration was never recorded. They predate
+[#15](https://github.com/adlyZaroui/analytic-prophet/issues/15) aligning the changepoints
+and [#23](https://github.com/adlyZaroui/analytic-prophet/issues/23) changing the solver,
+either of which would move them. A number whose configuration is not written down cannot
+be checked, which is why both are named above.
+
+### The difference that is real, and needs no threshold
+
+The last column is the one worth keeping. **This implementation's rates reach exactly
+zero; Prophet's never do** — 15 of 25 against 0 of 25, at every size measured. That is the
+non-smooth objective again: the Laplace prior's kink sits at `δ = 0`, the
+[split reformulation](#the-fix-a-smooth-reformulation) puts it on a bound the optimizer
+can land on exactly, and Prophet's stops nearby instead.
+
+It is also why "active changepoints", counted as `|δ| > 1e-6`, was a bad summary and has
+been dropped. On Prophet's side it is mostly a function of the cutoff:
+
+| threshold | this implementation | Prophet |
+|---|---|---|
+| 1e-8 | 8 | 25 |
+| 1e-6 | 8 | 19 |
+| 1e-4 | 8 | 15 |
+| 1e-3 | 8 | 13 |
+
+Ours is flat across five orders of magnitude because the zeros are exact. Prophet's halves
+because they are not. A count like that measures where the line was drawn, so Σ|δ| and the
+number of exact zeros are reported instead.
 
 Two things keep that from being the last word. The corpus is M4, whose series are
 anonymised and therefore barely exercise holidays or day-of-week effects — the features

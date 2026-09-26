@@ -95,7 +95,11 @@ def _one(truth, lib_path):
     row("both", "y_scale_abs_diff", abs(ours.y_scale - prophet_model.y_scale))
     row("both", "changepoints", layout.n_changepoints)
     row("both", "design_columns", layout.n_regressor_columns)
-    row("both", "active_changepoints_true", truth.active)
+    # the generating vector's own sparsity, for reference rather than as a
+    # target: MAP with an L1 prior over nested, collinear step functions is not
+    # a support-recovery procedure, so neither fit is expected to match it (#88)
+    row("both", "sum_abs_delta_true", np.abs(truth.theta[truth.layout.delta]).sum())
+    row("both", "exact_zeros_true", truth.layout.n_changepoints - truth.active)
 
     if theta_prophet.size != theta_ours.size:
         row("both", "layout_mismatch", 1.0)
@@ -107,8 +111,14 @@ def _one(truth, lib_path):
         for block, index in _blocks(layout).items():
             row(name, f"{block}_error_l2", np.linalg.norm(error[index]))
         row(name, "theta_error_l2", np.linalg.norm(error))
-        row(name, "active_changepoints",
-            np.sum(np.abs(theta[layout.delta]) > 1e-6))
+        # Two threshold-free readouts of the trend's sparsity, replacing a
+        # count of `|delta| > 1e-6` that was almost entirely a function of that
+        # threshold on Prophet's side (#95). `sum_abs_delta` is what the Laplace
+        # prior actually charges for; `exact_zeros` is what distinguishes the
+        # two optimizers, and needs no cutoff to say so.
+        rates = np.abs(theta[layout.delta])
+        row(name, "sum_abs_delta", rates.sum())
+        row(name, "exact_zeros", np.sum(rates == 0.0))
         row(name, "minus_log_posterior", objective(theta), "nats")
         # How much better than the truth this point scores on the sample it was
         # fitted to. Negative for any MAP estimate worth the name, and *more*
