@@ -229,9 +229,28 @@ def test_stans_objective_tolerance_would_score_below_prophet(prophet_comparison,
             model.params["delta"][0], model.sigma_obs, model.params["beta"][0])
 
     assert score() > lp_prophet, "the central claim, on this path"
-    assert score(ftol=STAN_FTOL) < lp_prophet - 4.0, (
-        "Stan's ftol no longer puts this path below Prophet -- if that is real, "
-        "the deviation recorded in fit() should go")
+
+    stan_score = score(ftol=STAN_FTOL)
+    shortfall = lp_prophet - stan_score
+
+    # What the deviation actually rests on, and what is asserted: taking Stan's
+    # number would put this path *below* the model it reproduces, while the
+    # shipped setting puts it above. Both directions hold everywhere measured.
+    assert shortfall > 0, (
+        f"Stan's ftol no longer puts this path below Prophet ({stan_score:.4f} "
+        f"against {lp_prophet:.4f}) -- if that is real, the deviation recorded "
+        f"in fit() should go")
+
+    # The *size* of the shortfall is not pinned at the 4.43 nats measured on
+    # macOS/arm64, for two reasons found by CI (#103). It is platform
+    # dependent: Linux measures 3.86. And it is not stable run to run even on
+    # one platform -- two CI runs minutes apart, same job and same Python,
+    # straddled 4.0, which is float nondeterminism in a fit this long rather
+    # than anything moving. A floor well under both still catches a collapse,
+    # which is all this assertion can honestly do.
+    assert shortfall > 1.0, (
+        f"Stan's ftol now costs {shortfall:.3f} nats against Prophet, not the "
+        f"~4 measured -- the reasoning in fit() is out of date")
 
 
 def test_the_line_search_budget_is_not_the_cause(peyton_manning_df, scipy_options):

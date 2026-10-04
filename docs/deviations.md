@@ -285,9 +285,17 @@ Matching Stan's number would put the reference path **4.43 nats below the model 
 reproduces**. Tightening instead costs iterations and nothing else. `fit_cpp`, the
 deliverable, uses Stan's values unchanged.
 
-`tests/test_convergence_tolerances.py` pins every number above, including the ones that
-would reopen the question: if Stan's `gtol` ever stops being a no-op, or if Stan's `ftol`
-ever stops scoring below Prophet, the tests fail rather than the reasoning quietly going
-stale.
+The table is macOS/arm64, like the rest of this section. On Linux the same comparison
+gives a shortfall of **3.86 nats** — the same conclusion, a different size. CI also
+measured the same job twice, minutes apart on the same Python, and got shortfalls on
+either side of 4.0, which is float nondeterminism in a 2905-point fit rather than
+anything moving ([#103](https://github.com/adlyZaroui/analytic-prophet/issues/103)).
+
+`tests/test_convergence_tolerances.py` pins what survives that: that `fit()` as shipped
+scores **above** Prophet and that Stan's `ftol` scores **below** it, which hold
+everywhere measured, plus a loose floor on the size. The directions are the argument;
+the magnitude is the illustration. If Stan's `gtol` ever stops being a no-op, or Stan's
+`ftol` ever stops scoring below Prophet, the tests fail rather than the reasoning
+quietly going stale.
 
 ---
