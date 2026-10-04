@@ -44,6 +44,10 @@ SIMPLE_ATTRIBUTES = [
     'holidays_prior_scale', 'holidays_mode', 'interval_width',
     'uncertainty_samples', 'country_holidays', 'sigma_k', 'sigma_m',
     'newton_fallback', 'T', 'y_scale', 'sigma_obs', '_multiplicative',
+    # [fc] Prophet carries this one too: whether the history had a `floor`
+    # column, which is what makes one mandatory on every later frame (#104).
+    # A restored logistic model has to keep demanding it.
+    'logistic_floor',
     # the cap #41 undoes. Without these two a model fitted on twenty rows,
     # saved, loaded and refitted on a longer history keeps the capped count and
     # silently fits 15 changepoints instead of 25 -- the exact bug #41 closed,
