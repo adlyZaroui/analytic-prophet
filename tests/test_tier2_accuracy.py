@@ -38,8 +38,12 @@ def weekly_series(peyton_manning_df):
 
 # -- the same splits for both --------------------------------------------
 
+# The cross-validation tests below reach prophet's own `generate_cutoffs` and
+# `performance_metrics`, so each requests prophet_comparison for the skip
+# rather than for the handles it returns (#103).
 def test_our_cross_validation_honours_the_cutoffs_it_is_given(weekly_series,
-                                                              compiled_optimizer_module):
+                                                              compiled_optimizer_module,
+                                                              prophet_comparison):
     """[fc] cross_validation derives its own cutoffs; ours takes them, because
     that is the part that has to be identical between the two."""
     from prophet.diagnostics import generate_cutoffs
@@ -56,7 +60,8 @@ def test_our_cross_validation_honours_the_cutoffs_it_is_given(weekly_series,
 
 
 def test_no_forecast_point_precedes_or_outruns_its_cutoff(weekly_series,
-                                                          compiled_optimizer_module):
+                                                          compiled_optimizer_module,
+                                                          prophet_comparison):
     horizon = pd.Timedelta("30 D")
     from prophet.diagnostics import generate_cutoffs
     cutoffs = generate_cutoffs(weekly_series, horizon, pd.Timedelta("400 D"),
@@ -71,7 +76,8 @@ def test_no_forecast_point_precedes_or_outruns_its_cutoff(weekly_series,
 
 def test_the_model_for_a_cutoff_never_saw_past_it(weekly_series,
                                                   compiled_optimizer_module,
-                                                  monkeypatch):
+                                                  monkeypatch,
+                                                  prophet_comparison):
     """Leakage does not raise -- it produces excellent forecasts. So the history
     handed to each fit is inspected directly rather than inferred from the
     numbers being plausible."""
@@ -102,7 +108,8 @@ def test_the_model_for_a_cutoff_never_saw_past_it(weekly_series,
 # -- the same scoring for both -------------------------------------------
 
 def test_our_forecasts_are_shaped_for_prophets_scorer(weekly_series,
-                                                      compiled_optimizer_module):
+                                                      compiled_optimizer_module,
+                                                      prophet_comparison):
     """`performance_metrics` is used on both sides, which only works if our
     cross-validation frame carries the columns it reads -- including the
     interval bounds, without which it silently drops coverage."""
@@ -123,7 +130,8 @@ def test_our_forecasts_are_shaped_for_prophets_scorer(weekly_series,
 
 
 def test_the_intervals_are_reproducible_across_cutoffs(weekly_series,
-                                                       compiled_optimizer_module):
+                                                       compiled_optimizer_module,
+                                                       prophet_comparison):
     """The interval is sampled, so an unseeded run would make coverage differ
     between two runs of the same comparison."""
     from prophet.diagnostics import generate_cutoffs
@@ -254,7 +262,8 @@ def test_both_sides_uncertainty_is_seeded(weekly_series, compiled_optimizer_modu
     assert "model.rng = np.random.default_rng" in source, "ours is not seeded"
 
 
-def test_our_cross_validation_repeats_exactly(weekly_series, compiled_optimizer_module):
+def test_our_cross_validation_repeats_exactly(weekly_series, compiled_optimizer_module,
+                                              prophet_comparison):
     from prophet.diagnostics import generate_cutoffs
 
     horizon = pd.Timedelta("30 D")

@@ -14,11 +14,19 @@ somewhere:
   * an editable install has to actually import. That one is not hypothetical:
     on macOS with Python 3.13+ it silently does not, which
     test_an_editable_install_actually_imports exists to catch.
+
+`tomllib` is imported with a fallback because this module would otherwise be
+the one thing in the suite that cannot run on 3.9 or 3.10 -- two of the
+versions `requires-python` claims. Found by building the matrix (#103), which
+is exactly what a matrix is for.
 """
 import os
 import subprocess
 import sys
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:   # Python < 3.11, where it is `tomli` from pip
+    import tomli as tomllib
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 

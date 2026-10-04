@@ -168,7 +168,9 @@ def test_the_distance_uses_one_ruler_for_both_candidates(compiled_optimizer_modu
 # -- the tier itself ------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def one_case(compiled_optimizer_module):
+def one_case(compiled_optimizer_module, prophet_comparison):
+    # prophet_comparison is for the skip, not its value: tier1 imports
+    # prophet inside collect() (#103).
     return tier1.collect(sizes=(300,), noises=(0.1,), seeds=(1,),
                          lib_path=compiled_optimizer_module)
 

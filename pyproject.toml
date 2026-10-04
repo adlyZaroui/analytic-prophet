@@ -51,11 +51,23 @@ compare = ["prophet"]
 #
 # Eigen and LBFGSpp are header-only and come from the system, not from pip:
 #     brew install eigen lbfgspp        # or equivalent
-dev = [
-    "analytic-prophet[holidays,compare]",
+#
+# `test` is what the suite needs *minus* the comparison against the original,
+# and it is what CI installs on every matrix job (#103): prophet is the single
+# largest cost in a run, so only the one agreement job pays for it.
+test = [
+    "analytic-prophet[holidays]",
     "pytest>=7",
     "pybind11",
+    # tests/test_ci.py reads the workflow files, and tests/test_packaging.py
+    # reads this one -- which needs tomli below 3.11, where tomllib arrived.
+    # Without it the suite could not run on two of the versions
+    # `requires-python` claims, which is the kind of thing a matrix is for.
+    "pyyaml",
+    "tomli; python_version < '3.11'",
 ]
+
+dev = ["analytic-prophet[test,compare]"]
 
 [project.urls]
 Repository = "https://github.com/adlyZaroui/analytic-prophet"

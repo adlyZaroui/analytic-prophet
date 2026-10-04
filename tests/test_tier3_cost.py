@@ -124,7 +124,9 @@ def test_the_width_sweep_reaches_different_design_widths(compiled_optimizer_modu
 # -- the tier -------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def small_run(compiled_optimizer_module):
+def small_run(compiled_optimizer_module, prophet_comparison):
+    # prophet_comparison is for the skip, not its value: tier3 imports
+    # prophet inside collect() (#103).
     return tier3.collect(sizes=(300,), repeats=1, lib_path=compiled_optimizer_module,
                          with_memory=False)
 
