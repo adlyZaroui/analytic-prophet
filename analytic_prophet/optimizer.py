@@ -42,6 +42,18 @@ SCIPY_TOL_REL_OBJ = 1e-16
 # on Newton when the first attempt raises. Strictly fewer than 100.
 NEWTON_BELOW = 100
 
+# [fc] Prophet.fit short-circuits a series that never moves: when `y.min() ==
+# y.max()` under linear or flat growth it keeps the initial parameters, sets
+# this as sigma_obs, and never calls the optimizer at all.
+#
+# The number is Prophet's literal, not a bound. fit()'s own lower bound on
+# sigma_obs is 1e-6, which is exactly where a constant series lands when it is
+# optimized the long way: the likelihood has no optimum in the interior, since
+# the residuals are identically zero and -T*log(sigma) rises without limit as
+# sigma falls, so the fit runs to whichever floor it is given. Prophet picks
+# the floor up front and saves the iterations (#102).
+CONSTANT_SERIES_SIGMA_OBS = 1e-9
+
 # Which terminal status means "Stan would have raised here", and so triggers the
 # Newton retry. The two solvers number theirs differently, and the numbering
 # collides, so each path names its own rather than sharing a test: scipy's 2 is

@@ -28,7 +28,7 @@ from .trend import (  # noqa: F401 -- re-exported, and the
     flat_growth_init, logistic_gamma_and_jacobian, logistic_trend_and_jacobian, logistic_growth_init, linear_growth_init, det_dot, predict_trend, TREND_INDICATORS)
 from .optimizer import (  # noqa: F401 -- re-exported, and the
     # names tests monkeypatch must stay bound in this module
-    finite_difference_hessian, projected_newton, STAN_EPS, STAN_TOL_OBJ, STAN_TOL_REL_OBJ, STAN_TOL_GRAD, STAN_TOL_PARAM, STAN_MAX_ITERATIONS, SCIPY_TOL_REL_OBJ, NEWTON_BELOW, SCIPY_LINE_SEARCH_FAILURE, CPP_SOLVER_RAISED)
+    finite_difference_hessian, projected_newton, STAN_EPS, STAN_TOL_OBJ, STAN_TOL_REL_OBJ, STAN_TOL_GRAD, STAN_TOL_PARAM, STAN_MAX_ITERATIONS, SCIPY_TOL_REL_OBJ, NEWTON_BELOW, CONSTANT_SERIES_SIGMA_OBS, SCIPY_LINE_SEARCH_FAILURE, CPP_SOLVER_RAISED)
 from .models import (  # noqa: F401 -- re-exported, and the
     # names tests monkeypatch must stay bound in this module
     load_cpp_module, canonical_to_cpp, cpp_to_canonical, CPP_MODULE_NAME, BUILD_HINT, _cpp_module_cache)
@@ -191,6 +191,9 @@ class AnalyticProphet:
         self.train_holiday_names = None
         self.train_holiday_column_names = None
         self._fit_design_matrix = None
+        # [fc] Prophet.logistic_floor: whether the *history* carried a `floor`
+        # column, which is what makes one mandatory on every later frame.
+        self.logistic_floor = False
         self.country_holidays = None
         self._fitted_with_cpp = False
         self._fit_lib_path = None
@@ -274,6 +277,14 @@ class AnalyticProphet:
                 f"implemented.")
 
     def get_parameters(self) -> np.array:
+        """The fitted parameters as the flat canonical vector.
+
+        No Prophet counterpart -- `params` is the dict both carry, and this is
+        the vector the optimizer worked in. It reads fitted state, so it
+        answers the same way as everything else that does (#104).
+        """
+        if self._params_vector is None:
+            raise ValueError('Model has not been fit.')
         return self._params_vector
 
     def _needs_newton_fallback(self, failed, params) -> bool:
@@ -348,13 +359,34 @@ class AnalyticProphet:
 
     def _fitted(self):
         """(k, m, delta, sigma_obs, beta) from `params`, in the shapes the
-        arithmetic wants rather than the ones the dict carries."""
+        arithmetic wants rather than the ones the dict carries.
+
+        [fc] the check and its wording. Every path that reads a fitted
+        parameter comes through here, so this is the one place it has to be --
+        without it, predicting before fitting raised `TypeError: 'NoneType'
+        object is not subscriptable` from the subscript on the line below (#104).
+        """
+        if self.params is None:
+            raise ValueError('Model has not been fit.')
         return (float(self.params["k"][0][0]), float(self.params["m"][0][0]),
                 self.params["delta"][0], float(self.params["sigma_obs"][0][0]),
                 self.params["beta"][0])
         
     def _normalize_y(self) -> None:
+        """y / y_scale, with Prophet's guard for a scale of zero.
+
+        [fc] initialize_scales under `scaling='absmax'`, which is the only
+        scaling here, down to `if self.y_scale == 0: self.y_scale = 1.0`.
+
+        That guard is not a corner case worth skipping: an all-zero history
+        gives y_scale = 0, and without it every y_scaled was 0/0 = nan, which
+        fitted to nan parameters and forecast nan, raising nothing (#102). The
+        series that triggers it is a real one -- a count of something that
+        never happened over the window being fitted.
+        """
         self.y_scale = np.max(np.abs(self.y))
+        if self.y_scale == 0:
+            self.y_scale = 1.0
         self.y_scaled = np.array(self.y / self.y_scale)
 
     def _future_capacity(self, future_df):
@@ -368,6 +400,14 @@ class AnalyticProphet:
         if 'cap' not in future_df:
             raise ValueError(
                 'Capacities must be supplied for logistic growth in column "cap"')
+        # [fc] setup_dataframe's `if self.logistic_floor: if 'floor' not in df:
+        # raise`, wording included. A history fitted with a floor is fitted on
+        # `y - floor`, so a future frame that omits it is not defaulting to
+        # zero, it is asking for a different model: dropping the column from
+        # the frame moved the last yhat of a 150-point logistic fit from 6.92
+        # to 1.90, with nothing raised and nothing logged.
+        if self.logistic_floor and 'floor' not in future_df:
+            raise ValueError('Expected column "floor".')
         floor = future_df['floor'].to_numpy(dtype=float) if 'floor' in future_df \
             else np.zeros(len(future_df))
         cap = future_df['cap'].to_numpy(dtype=float)
@@ -399,6 +439,7 @@ class AnalyticProphet:
             raise ValueError('cap must be greater than floor (which defaults to 0).')
 
         self.floor = floor
+        self.logistic_floor = 'floor' in df
         self.cap_scaled = (cap - floor) / self.y_scale
         self.y_scaled = (self.y - floor) / self.y_scale
     
@@ -1031,7 +1072,58 @@ class AnalyticProphet:
             gradient[self.layout.beta],
         ))
 
-    def preprocess(self, df: pd.DataFrame) -> None:
+    def _clean_history(self, df: pd.DataFrame) -> pd.DataFrame:
+        """The history a fit can actually use, or a sentence saying why not.
+
+        [fc] Prophet.preprocess and setup_dataframe between them, including the
+        wording: someone porting a script should recognise the error and be able
+        to search for it. Prophet's rule is three-way and is copied rather than
+        approximated -- a missing `y` is **dropped**, a missing `ds` **raises**,
+        and an infinite `y` **raises**.
+
+        Dropping is right for `y` because the trend is a function of `t`: a
+        dropped row leaves a real gap in the design matrix rather than shifting
+        everything after it up by one. It is wrong for `ds`, where there is no
+        timestamp to leave a gap at.
+
+        Before #102 none of this existed and a single NaN in `y` fitted happily
+        to NaN, returning an all-NaN forecast with nothing raised and nothing
+        logged -- the failure mode of #13, on the input side.
+        """
+        if ('ds' not in df) or ('y' not in df):
+            raise ValueError(
+                'Dataframe must have columns "ds" and "y" with the dates and '
+                'values respectively.')
+
+        history = df[df['y'].notnull()].copy()
+        if history.shape[0] < 2:
+            raise ValueError('Dataframe has less than 2 non-NaN rows.')
+        dropped = len(df) - len(history)
+        if dropped:
+            # Prophet drops them silently. This does not, which is the one
+            # place here that says more than Prophet does: a fit on fewer rows
+            # than the caller passed is the event whose silence made #102 hard
+            # to notice at all. INFO, so a caller who is not listening sees no
+            # change.
+            logger.info("Dropping %d row(s) with a missing y.", dropped)
+
+        history['y'] = pd.to_numeric(history['y'])
+        if np.isinf(history['y'].values).any():
+            raise ValueError('Found infinity in column y.')
+
+        dates = pd.to_datetime(history['ds'])
+        # the timezone check comes first, [fc] setup_dataframe's order. It only
+        # shows on a frame that is both tz-aware and holds a NaT, where the two
+        # messages compete -- and there Prophet names the timezone.
+        if dates.dt.tz is not None:
+            raise ValueError('Column ds has timezone specified, which is not '
+                             'supported. Remove timezone.')
+        if dates.isnull().any():
+            raise ValueError('Found NaN in column ds.')
+        history['ds'] = dates
+        return history.reset_index(drop=True)
+
+    def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
         """Everything both fit paths do to the history before optimizing it.
 
         [fc] Prophet.preprocess, and at the same seam: it reformats the history,
@@ -1045,8 +1137,14 @@ class AnalyticProphet:
         preprocessing had to be made twice, and #41 is what that costs: both
         paths needed `_reset_fit_state()` added separately, and a miss would
         have been silent in whichever one was forgotten.
+
+        Returns the **cleaned** history, which is not always the frame it was
+        given: rows with a missing `y` are dropped (#102), and everything
+        downstream -- the design matrix, the regressor standardizations, the
+        nested regressor models -- has to see the same rows the optimizer will.
         """
         self._reset_fit_state()
+        df = self._clean_history(df)
         self.y = df['y'].values
 
         if df['ds'].dtype != 'datetime64[ns]':
@@ -1093,6 +1191,7 @@ class AnalyticProphet:
         # built once here, not per objective evaluation (#28)
         self._fit_design_matrix = np.ascontiguousarray(
             self.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
+        return df
 
     def calculate_initial_params(self, initial_params: dict=None) -> dict:
         """The point both optimizers start from.
@@ -1125,17 +1224,71 @@ class AnalyticProphet:
             params.update(initial_params)
         return params
 
+    def _fit_constant_series(self, initial_params: dict,
+                             sigma_obs: float=None) -> bool:
+        """Prophet's short-circuit for a series that never moves.
+
+        [fc] Prophet.fit, condition and number both: when `y.min() ==
+        y.max()` under linear or flat growth the initial parameters already
+        are the answer -- a flat line through a flat series -- so it keeps
+        them, sets sigma_obs to CONSTANT_SERIES_SIGMA_OBS, and never calls
+        Stan at all. Returns whether it applied, so the caller can skip its
+        optimizer. Logistic growth is excluded there and here: its initializer
+        solves for a curve approaching `cap`, which a constant series is not.
+
+        Optimizing instead reaches the same line and the same forecast -- both
+        paths put yhat on the constant exactly -- and differs only in
+        sigma_obs, where it runs down to fit()'s 1e-6 bound rather than
+        Prophet's 1e-9. The likelihood has no interior optimum here, since the
+        residuals are identically zero and -T*log(sigma) rises without limit
+        as sigma falls, so the estimate is whichever floor it is given and the
+        intervals are degenerate either way (width 7.7e-6 against Prophet's
+        7.7e-9 on a 200-point constant series). What matching buys is the
+        iterations, and the parity (#102).
+        """
+        if self.growth not in ('linear', 'flat'):
+            return False
+        if self.y.min() != self.y.max():
+            return False
+
+        params = dict(initial_params)
+        params['sigma_obs'] = (CONSTANT_SERIES_SIGMA_OBS if sigma_obs is None
+                               else sigma_obs)
+        vector = from_dict_to_array(params, self.layout)
+        self.opt = None
+        # no optimizer ran, and saying so is better than naming one that did not
+        self.optimizer_used = None
+        self.loss_over_iterations = []
+        self.sigma_obs = vector[self.layout.sigma_obs_idx]
+        self._store_params(vector)
+        return True
+
     def fit(self, df: pd.DataFrame, analytic: bool=False, use_combined: bool=False, optimizer: str='L-BFGS-B',
             initial_params: dict=None, fixed_sigma_obs: float=None,
             algorithm: str=None) -> Tuple[float, float, np.array, np.array]:
         if analytic and use_combined:
             raise ValueError("Both 'analytic' and 'use_combined' cannot be True at the same time.")
 
-        self.preprocess(df)
+        # the cleaned history, not the caller's frame: rows with a missing y
+        # are dropped, and the regressor models below must see the same rows
+        # the optimizer did (#102)
+        df = self.preprocess(df)
 
         initial_params_dict = self.calculate_initial_params(initial_params)
         if fixed_sigma_obs is not None:
             initial_params_dict['sigma_obs'] = fixed_sigma_obs
+
+        # [fc] the constant-series branch, which Prophet also takes after the
+        # initial parameters are in hand and the regressor models are fitted --
+        # hence the call below, which the branch owes before it returns.
+        #
+        # An explicitly pinned sigma_obs is honoured over Prophet's 1e-9: it is
+        # a request from the caller, which Prophet has no equivalent of, and
+        # overriding it would make `fixed_sigma_obs` silently not apply.
+        if self._fit_constant_series(initial_params_dict, fixed_sigma_obs):
+            self._fitted_with_cpp = False
+            self._fit_regressor_models(df)
+            return
 
         loss_over_iterations = []
 
@@ -1291,9 +1444,22 @@ class AnalyticProphet:
     def fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None,
                 verbose: bool=False, algorithm: str=None) -> Tuple[float, float, np.array, np.array]:
         """Fit via the compiled C++ core (see load_cpp_module for how it's found)."""
-        self.preprocess(df)
+        # the cleaned history, not the caller's frame: rows with a missing y
+        # are dropped, and the regressor models below must see the same rows
+        # the optimizer did (#102)
+        df = self.preprocess(df)
 
         defaults = self.calculate_initial_params(initial_params)
+
+        # [fc] the constant-series branch, which both paths share. It comes
+        # before the library is loaded, so a flat series is answered without
+        # one -- the C++ core would be asked to minimise a function with no
+        # interior minimum.
+        if self._fit_constant_series(defaults):
+            self._fitted_with_cpp = True
+            self._fit_lib_path = lib_path
+            self._fit_regressor_models(df)
+            return -1
 
         # The compiled optimizer's layout is [k, m, delta(S), beta(K), zeta],
         # with zeta = log(sigma_obs) last -- see cpp_to_canonical. Estimating
@@ -1507,6 +1673,11 @@ class AnalyticProphet:
     
 
     def make_future_dataframe(self, periods, include_history=True):
+        # [fc] `if self.history_dates is None: raise ... 'Model has not been
+        # fit.'`. Without it this was `AttributeError: 'NoneType' object has no
+        # attribute 'max'` from the line below (#104).
+        if self.ds is None:
+            raise ValueError('Model has not been fit.')
         last_date = pd.to_datetime(self.ds.max())  # Ensure last_date is a datetime object
         future_dates = [last_date + pd.Timedelta(days=i) for i in range(1, periods + 1)]
         future_dates_df = pd.DataFrame(future_dates, columns=['ds'])

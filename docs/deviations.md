@@ -194,6 +194,27 @@ so the fallback is visible rather than silent.
 
 ---
 
+### A not-fitted call raises `ValueError`, where Prophet raises bare `Exception`
+
+Prophet's two not-fitted guards — in `predict` and in `make_future_dataframe` — raise
+`Exception('Model has not been fit.')`. This implementation raises the same sentence as a
+`ValueError`, from one place (`_fitted`), plus `make_future_dataframe` and
+`get_parameters`, which read fitted state before `_fitted` would be reached
+([#104](https://github.com/adlyZaroui/analytic-prophet/issues/104)).
+
+The message is Prophet's verbatim, so searching for it still works, and `ValueError` is a
+subclass of `Exception`, so a script written against Prophet's `except Exception` catches
+this one unchanged. The reverse is not true — code written against this one would not have
+caught Prophet's — which is the asymmetry that makes the narrower type the safe side to
+deviate on.
+
+Every other message on the data path is Prophet's exactly, type included: the columns
+check, `Dataframe has less than 2 non-NaN rows.`, `Found infinity in column y.`,
+`Found NaN in column ds.`, the timezone check, `Expected column "floor".`, and
+`Capacities must be supplied for logistic growth in column "cap"`.
+
+---
+
 ## Known differences from Prophet
 
 Tracked, deliberate, and not yet closed:
