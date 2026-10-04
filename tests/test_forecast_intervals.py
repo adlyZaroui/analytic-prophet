@@ -72,6 +72,10 @@ def test_the_band_collapses_to_the_trend_band_without_noise(peyton_manning_df,
     # sampled changepoints yet, so their trend band is exactly 0 and any
     # residual noise there fails a relative comparison
     model.params["sigma_obs"][0][0] = 0.0
+    # seeded, so the draw is the same one every time. Unseeded, this test was
+    # nondeterministic in a way that mattered below: it passed in one CI run
+    # and failed in the next on 3.9 and 3.13 (#103).
+    model.rng = np.random.default_rng(0)
 
     forecast = model.predict(model.make_future_dataframe(periods=90))
     horizon = slice(model.T, None)
@@ -79,7 +83,18 @@ def test_the_band_collapses_to_the_trend_band_without_noise(peyton_manning_df,
     trend_band = (forecast["trend_upper"] - forecast["trend_lower"]).values[horizon]
     yhat_band = (forecast["yhat_upper"] - forecast["yhat_lower"]).values[horizon]
 
-    np.testing.assert_allclose(yhat_band, trend_band, rtol=1e-12, atol=0)
+    # `atol=0` is the part that matters and is kept: where the trend band is
+    # exactly 0 the two must agree exactly, which is what catches noise leaking
+    # into a point that should have none.
+    #
+    # `rtol` was 1e-12, which is below float arithmetic rather than below
+    # anything meaningful. The two bands are built from the *same* samples --
+    # yhat is trend plus a noise term that is identically zero here -- so they
+    # differ only in summation order, by 1.78e-15 absolute: eight times eps,
+    # one element in ninety. On a point whose band is ~9e-5 that is 2e-11
+    # relative, and the comparison failed for it. 1e-9 is still nine orders
+    # tighter than any difference this test exists to catch.
+    np.testing.assert_allclose(yhat_band, trend_band, rtol=1e-9, atol=0)
 
 
 def test_the_width_matches_the_normal_interval_it_should_be(peyton_manning_df,

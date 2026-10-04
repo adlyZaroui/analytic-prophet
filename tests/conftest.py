@@ -7,6 +7,7 @@ below builds the C++ core (analytic_prophet/optimize.cpp) as an extension on the
 fly, so the parity and convergence tests can import and call it directly
 without a built extension checked into the repo.
 """
+import collections
 import importlib.util
 import os
 import shutil
@@ -32,6 +33,74 @@ from analytic_prophet import (AnalyticProphet, N_CHANGE_POINTS, n_yearly,
 DATA_PATH = Path(__file__).parent / "data" / "peyton_manning.csv"
 CPP_SOURCE = Path(__file__).parent.parent / "analytic_prophet" / "optimize.cpp"
 PARAM_SIZE = 2 + N_CHANGE_POINTS + 1 + 2 * n_yearly  # k, m, delta, sigma_obs, beta -> 48
+
+# ---------------------------------------------------------------------------
+# Environment gaps: a skip on a laptop, a failure where the environment was
+# built on purpose.
+#
+# #103. A runner without Eigen and LBFGSpp reports a green suite that silently
+# skipped the compiled path -- which is worse than a red one, because it looks
+# like evidence. The skip is right on a contributor's machine and wrong in CI,
+# so which one it is belongs to the caller rather than to the test.
+ENVIRONMENT_PREFIX = "environment: "
+
+REQUIREMENTS = {
+    "cpp": ("--require-cpp",
+            "the C++ toolchain (a compiler, Eigen, LBFGSpp, pybind11)"),
+    "prophet": ("--require-prophet", "prophet"),
+}
+
+
+def pytest_addoption(parser):
+    group = parser.getgroup("analytic-prophet")
+    for option, what in sorted(REQUIREMENTS.values()):
+        group.addoption(option, action="store_true", default=False,
+                        help=f"fail rather than skip when {what} is missing")
+
+
+def environment_gap(config, requirement, reason):
+    """Skip because this environment cannot run it -- or fail, because the
+    caller said this environment was supposed to be able to."""
+    option, what = REQUIREMENTS[requirement]
+    if config.getoption(option):
+        pytest.fail(f"{reason}\n\nThis run was given {option}, so {what} was "
+                    f"expected to be installed and its absence is a failure "
+                    f"rather than a skip.", pytrace=False)
+    pytest.skip(ENVIRONMENT_PREFIX + reason)
+
+
+def _skip_reason(report):
+    """The reason out of a skip report, whatever shape it arrived in."""
+    longrepr = getattr(report, "longrepr", None)
+    if isinstance(longrepr, tuple) and len(longrepr) == 3:
+        return str(longrepr[2]).removeprefix("Skipped: ")
+    return str(longrepr)
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Say what was skipped and why, grouped.
+
+    "Green" has to be readable: without this, a run that skipped every test
+    touching the compiled core looks exactly like a run that passed them. The
+    count is the thing CI publishes (#103).
+    """
+    reports = terminalreporter.stats.get("skipped", [])
+    if not reports:
+        return
+    counts = collections.Counter(_skip_reason(report) for report in reports)
+    terminalreporter.write_sep("=", "skipped, by reason", yellow=True)
+    for reason, count in counts.most_common():
+        terminalreporter.write_line(f"  {count:4d}  {reason}")
+
+    gaps = sum(count for reason, count in counts.items()
+               if reason.startswith(ENVIRONMENT_PREFIX))
+    if gaps:
+        options = " ".join(option for option, _ in sorted(REQUIREMENTS.values()))
+        terminalreporter.write_line(
+            f"  {gaps} of these are gaps in this environment rather than "
+            f"choices about what to run.")
+        terminalreporter.write_line(
+            f"  Run with {options} to make them failures instead.")
 
 
 def pin_yearly_only(model):
@@ -107,29 +176,32 @@ def _find_eigen_include():
     return None
 
 
-def _build_cpp_extension(tmp_path_factory):
+def _build_cpp_extension(tmp_path_factory, config):
     """Builds analytic_prophet/optimize.cpp into an importable extension, using
     the compile command documented in that file's trailing comment. Skips
     (rather than fails) the tests that depend on it when the C++ toolchain,
     Eigen, pybind11 or LBFGSpp aren't available -- that's an environment gap,
-    not a code defect."""
+    not a code defect. `--require-cpp` says the environment was built to have
+    them, and turns each of these into a failure (#103)."""
+    gap = lambda reason: environment_gap(config, "cpp", reason)
+
     compiler = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
     if compiler is None:
-        pytest.skip("no C++ compiler found to build the C++ core")
+        gap("no C++ compiler found to build the C++ core")
 
     eigen_include = _find_eigen_include()
     if eigen_include is None:
-        pytest.skip("Eigen headers not found (set EIGEN_INCLUDE_DIR) -- can't build the C++ core")
+        gap("Eigen headers not found (set EIGEN_INCLUDE_DIR) -- can't build the C++ core")
 
     try:
         import pybind11
     except ImportError:
-        pytest.skip("pybind11 is not installed -- can't build the C++ core")
+        gap("pybind11 is not installed -- can't build the C++ core")
 
     lbfgspp_include = _find_lbfgspp_include()
     if lbfgspp_include is None:
-        pytest.skip("LBFGSpp headers not found (set LBFGSPP_INCLUDE_DIR, or "
-                    "`brew install lbfgspp`) -- can't build the C++ core")
+        gap("LBFGSpp headers not found (set LBFGSPP_INCLUDE_DIR, or "
+            "`brew install lbfgspp`) -- can't build the C++ core")
 
     suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
     out_path = tmp_path_factory.mktemp("cpp_core") / f"{CPP_MODULE_NAME}{suffix}"
@@ -149,7 +221,7 @@ def _build_cpp_extension(tmp_path_factory):
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
-        pytest.skip(f"could not build the C++ core: {result.stderr[-500:]}")
+        gap(f"could not build the C++ core: {result.stderr[-500:]}")
 
     return str(out_path)
 
@@ -178,10 +250,10 @@ def _find_lbfgspp_include():
 
 
 @pytest.fixture(scope="session")
-def compiled_optimizer_module(tmp_path_factory):
+def compiled_optimizer_module(tmp_path_factory, pytestconfig):
     """Path to the freshly built pybind11 extension, as fit_cpp(lib_path=...)
     wants it."""
-    return _build_cpp_extension(tmp_path_factory)
+    return _build_cpp_extension(tmp_path_factory, pytestconfig)
 
 
 @pytest.fixture(scope="session")
@@ -249,16 +321,26 @@ def random_params(param_size):
 
 
 @pytest.fixture(scope="session")
-def prophet_comparison():
+def prophet_comparison(pytestconfig):
     """Handles for comparing against the original Prophet.
 
     Skips when prophet is not installed: it is a heavy optional dependency
     (it pulls cmdstanpy and a compiled Stan model), so the rest of the suite
-    must not require it.
+    must not require it. `--require-prophet` is for the one CI job that
+    installs it on purpose, where a skip would mean the agreement checks
+    quietly did not run (#103).
+
+    Some tests request this fixture **by name alone**, without using what it
+    returns: the evaluation tiers import prophet inside their own `collect`
+    functions, so those tests need the skip without needing the handles. They
+    used to raise `ImportError` instead, which made 21 tests fail rather than
+    skip on a machine without prophet -- found by rehearsing a CI matrix job
+    before there was a CI matrix (#103).
     """
     if not importlib.util.find_spec("prophet"):
-        pytest.skip("prophet is not installed -- `pip install prophet` to run the "
-                    "agreement checks against the original")
+        environment_gap(pytestconfig, "prophet",
+                        "prophet is not installed -- `pip install prophet` to run "
+                        "the agreement checks against the original")
 
     import _common as benchmark_common
     import _prophet_bridge as bridge

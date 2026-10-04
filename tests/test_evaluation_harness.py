@@ -99,7 +99,10 @@ def test_a_failing_gate_stops_the_run(tmp_path, monkeypatch):
     assert ran == [], "tier 3 ran after the gate failed"
 
 
-def test_a_passing_gate_lets_the_run_continue(tmp_path, monkeypatch):
+def test_a_passing_gate_lets_the_run_continue(tmp_path, monkeypatch,
+                                              prophet_comparison):
+    # prophet_comparison is for the skip: run.py exits 1 without prophet, so
+    # this would read a missing dependency as a failed gate (#103).
     ran = []
     monkeypatch.setattr(runner, "TIERS", {
         0: ("gate", lambda: [harness.Measurement(0, "s", "c", "both",

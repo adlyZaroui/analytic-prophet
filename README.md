@@ -1,5 +1,7 @@
 # analytic-prophet
 
+[![tests](https://github.com/adlyZaroui/analytic-prophet/actions/workflows/tests.yml/badge.svg)](https://github.com/adlyZaroui/analytic-prophet/actions/workflows/tests.yml)
+
 A reimplementation of [Facebook Prophet](https://github.com/facebook/prophet)'s fitting
 engine that replaces Stan with a hand-derived, closed-form gradient and a small C++ core.
 
@@ -197,8 +199,9 @@ analytic_prophet/
     models.py         [fc] prophet/models.py — the compiled backend's loader
     serialize.py      [fc] prophet/serialize.py — save and load
     optimize.cpp      that backend
+.github/workflows/    CI: the suite on every push, the tiers on request
 docs/                 the model, the argument, the deviations
-tests/                722 tests, plus the Peyton Manning series under data/
+tests/                the suite, plus the Peyton Manning series under data/
 benchmark/            fast micro-benchmarks, for running against a change
 evaluation/           the claim-level study, and its generated report
 ```
@@ -224,8 +227,12 @@ Requires a C++17 compiler and two header-only libraries:
 ```bash
 brew install eigen lbfgspp          # or equivalent
 pip install -e '.[dev]'
-pytest                               # 722 tests
+pytest                              # the whole suite, about three minutes
 ```
+
+`.[test]` is the same without `prophet`, which only the comparisons need. The count is
+deliberately not written down here: CI reports it, and a number in prose goes stale
+between the commit that adds tests and the one that remembers to update it.
 
 `pytest` alone is enough — `pyproject.toml` puts the repo root and `benchmark/` on
 `pythonpath` along with `evaluation/`, so a fresh clone runs the suite with **no install and no `PYTHONPATH`**.
@@ -253,6 +260,26 @@ needs it, and it pulls `cmdstanpy` plus a compiled Stan model. The agreement tes
 without it and the benchmarks print an install hint, so `pip install prophet` is only
 needed to run those. `holidays` is required for `add_country_holidays` and imported
 lazily, so nothing else needs it.
+
+### Continuous integration
+
+Two workflows, under [`.github/workflows/`](.github/workflows):
+
+- **`tests.yml`**, on every push and pull request: the suite across Python 3.9–3.14,
+  which is what gives `requires-python = ">=3.9"` any basis — before it, the suite had
+  only ever run on one version. One further job installs `prophet` and runs the
+  comparisons against the original; it is the only one that pays for cmdstan.
+- **`evaluation.yml`**, manual or monthly: `evaluation/run.py` and a regenerated report,
+  uploaded as an artifact rather than committed. Tier 0 is a gate and fails the job.
+  These tiers are deliberately not per-push — Tier 2 alone is about eleven minutes and
+  needs the network.
+
+A skip is the right answer on a laptop without a compiler and the wrong one on a runner
+that installed Eigen on purpose, where it would mean CI reported **green for a run that
+never built the C++ core**. So the strictness is the caller's: `pytest --require-cpp` and
+`--require-prophet` turn those skips into failures, and every CI job passes them. Every
+run also prints what it skipped, grouped by reason, into the job summary — "green" has to
+be readable.
 
 ---
 

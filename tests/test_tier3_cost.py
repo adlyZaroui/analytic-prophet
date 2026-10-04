@@ -72,7 +72,13 @@ def test_memory_separates_what_the_import_cost_from_what_the_fit_did(
     usage = tier3.peak_memory("fit_cpp", 300, compiled_optimizer_module)
 
     assert set(usage) == {"import_rss", "fit_peak_rss_added", "peak_rss"}
-    assert usage["import_rss"] > 0, "importing the package costs something"
+    # `>= 0` rather than `> 0`, which is not pedantry. The probe's baseline is
+    # taken *after* numpy and pandas are in, and peak RSS is a high-water mark:
+    # importing a few small pure-Python modules on top need not raise it above
+    # what pandas' own import transiently reached. It does on macOS/arm64 and
+    # reads exactly 0 in every CI job on Linux (#103). The separation this test
+    # is named for is the key set and the ordering below, both still asserted.
+    assert usage["import_rss"] >= 0
     assert usage["fit_peak_rss_added"] >= 0
     assert usage["peak_rss"] >= usage["import_rss"]
 
@@ -124,7 +130,9 @@ def test_the_width_sweep_reaches_different_design_widths(compiled_optimizer_modu
 # -- the tier -------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def small_run(compiled_optimizer_module):
+def small_run(compiled_optimizer_module, prophet_comparison):
+    # prophet_comparison is for the skip, not its value: tier3 imports
+    # prophet inside collect() (#103).
     return tier3.collect(sizes=(300,), repeats=1, lib_path=compiled_optimizer_module,
                          with_memory=False)
 

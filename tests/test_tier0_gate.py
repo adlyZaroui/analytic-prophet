@@ -18,9 +18,11 @@ from tiers import tier0
 
 
 @pytest.fixture(scope="module")
-def gate_at_300(compiled_optimizer_module):
+def gate_at_300(compiled_optimizer_module, prophet_comparison):
     """One size, because these tests are about the gate rather than the model
     and a full sweep is the benchmark's job."""
+    # prophet_comparison is for the skip, not its value: tier0 imports
+    # prophet inside collect() (#103).
     return tier0.collect(sizes=(300,), lib_path=compiled_optimizer_module)
 
 
@@ -61,7 +63,7 @@ def test_our_posterior_is_the_better_one(gate_at_300):
 # -- the gate has to be able to fail --------------------------------------
 
 def test_a_different_model_trips_the_gate(monkeypatch, compiled_optimizer_module,
-                                          capsys):
+                                          capsys, prophet_comparison):
     """The test that gives the others their meaning.
 
     A seasonality Prophet does not have makes the two design matrices genuinely
@@ -85,7 +87,8 @@ def test_a_different_model_trips_the_gate(monkeypatch, compiled_optimizer_module
     assert "gate failed" in capsys.readouterr().out
 
 
-def test_a_worse_posterior_trips_the_gate(monkeypatch, compiled_optimizer_module):
+def test_a_worse_posterior_trips_the_gate(monkeypatch, compiled_optimizer_module,
+                                          prophet_comparison):
     """The other half: identical models, ours stopping short. This is the claim
     the project makes, and the gate is what stops the rest of the suite
     assuming it."""

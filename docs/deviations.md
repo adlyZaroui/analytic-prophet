@@ -246,6 +246,21 @@ relative decrease of **6.8e-16** — four orders below Stan's threshold — whil
 37% of its steps are below the threshold. Stan's test is a one-step test, so it fires on
 the first of them.
 
+> **Where that plateau happens is a property of the scipy build, not of this objective.**
+> Every number in this section was measured on macOS/arm64. The first CI run
+> ([#103](https://github.com/adlyZaroui/analytic-prophet/issues/103)) measured the same
+> thing on Linux under the oldest supported scipy and found **no plateau at all**: Stan's
+> one-step test fires 5.8e-5 nats from the optimum, on a run that converges perfectly
+> well under Stan's own number. The two tests that pin the 4.80 nats now skip where the
+> plateau is absent and report what they measured instead.
+>
+> This does not change the deviation or the reason for it. `ftol = 1e-16` costs
+> iterations and nothing else, so a platform where Stan's number would also have
+> converged is a platform where the tighter one is merely redundant — and the one place
+> it matters, it is worth 4.43 nats against Prophet. What it does change is the scope of
+> the claim: the plateau is real where it was measured and must not be read as a property
+> of scipy everywhere.
+
 Three explanations were checked and ruled out:
 
 - **Not scipy's own stopping rule.** Evaluating Stan's test by hand on the trajectory
@@ -270,9 +285,17 @@ Matching Stan's number would put the reference path **4.43 nats below the model 
 reproduces**. Tightening instead costs iterations and nothing else. `fit_cpp`, the
 deliverable, uses Stan's values unchanged.
 
-`tests/test_convergence_tolerances.py` pins every number above, including the ones that
-would reopen the question: if Stan's `gtol` ever stops being a no-op, or if Stan's `ftol`
-ever stops scoring below Prophet, the tests fail rather than the reasoning quietly going
-stale.
+The table is macOS/arm64, like the rest of this section. On Linux the same comparison
+gives a shortfall of **3.86 nats** — the same conclusion, a different size. CI also
+measured the same job twice, minutes apart on the same Python, and got shortfalls on
+either side of 4.0, which is float nondeterminism in a 2905-point fit rather than
+anything moving ([#103](https://github.com/adlyZaroui/analytic-prophet/issues/103)).
+
+`tests/test_convergence_tolerances.py` pins what survives that: that `fit()` as shipped
+scores **above** Prophet and that Stan's `ftol` scores **below** it, which hold
+everywhere measured, plus a loose floor on the size. The directions are the argument;
+the magnitude is the illustration. If Stan's `gtol` ever stops being a no-op, or Stan's
+`ftol` ever stops scoring below Prophet, the tests fail rather than the reasoning
+quietly going stale.
 
 ---

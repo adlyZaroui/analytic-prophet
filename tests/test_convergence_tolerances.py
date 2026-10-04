@@ -125,15 +125,35 @@ def test_stans_objective_tolerance_stops_the_run_short(peyton_manning_df, scipy_
 
     4.8 nats is not a rounding difference: it is larger than the entire 2.34-nat
     margin this project has over Prophet.
+
+    **It is also not universal, which the first CI run established** (#103).
+    The quantity being measured is where scipy's iterate sequence plateaus, and
+    that is a property of the scipy build: on macOS/arm64 Stan's one-step test
+    fires ~4.8 nats from the optimum, while on Linux CI under the oldest
+    supported scipy it fires essentially at it -- 5.8e-5 nats, a run that
+    converges perfectly well under Stan's number.
+
+    So the test skips where the plateau is absent rather than asserting it
+    everywhere, and says what it measured. The deviation itself is unaffected:
+    `ftol = 1e-16` costs iterations and nothing else, so a platform where
+    Stan's number would also have done is a platform where the tighter one is
+    merely redundant.
     """
     df = peyton_manning_df.reset_index(drop=True)
 
     tight, loss_tight = scipy_options(df)
     stan, loss_stan = scipy_options(df, ftol=STAN_FTOL)
 
+    cost = loss_stan - loss_tight
+    if cost < 1.0:
+        pytest.skip(f"Stan's ftol costs {cost:.2e} nats on this scipy build "
+                    f"({stan.opt.nit} iterations against {tight.opt.nit}), so "
+                    f"its one-step test does not misfire here and there is no "
+                    f"deviation to measure")
+
     assert stan.opt.nit < tight.opt.nit / 5     # 434 against 4261
-    assert loss_stan - loss_tight > 4.0, (
-        f"Stan's ftol now costs {loss_stan - loss_tight:.3f} nats, not ~4.8 -- "
+    assert cost > 4.0, (
+        f"Stan's ftol now costs {cost:.3f} nats, not ~4.8 -- "
         f"the reasoning in fit() is out of date")
 
 
@@ -156,8 +176,17 @@ def test_the_run_stops_on_a_plateau_it_then_climbs_out_of(peyton_manning_df):
 
     assert len(below) > 0
     first = below[0]
+    remaining = trace[first] - trace[-1]
+    if remaining < 1.0:
+        # Same platform dependence as the test above, and the same reason to
+        # say what was measured rather than assert it everywhere (#103): here
+        # the first sub-threshold step arrives at the optimum rather than nats
+        # before it, so Stan's one-step test would have stopped a finished run.
+        pytest.skip(f"the first sub-threshold step on this scipy build leaves "
+                    f"{remaining:.2e} nats on the table, so the one-step test "
+                    f"does not misfire here")
     # the run is nowhere near done when the first one arrives ...
-    assert trace[first] - trace[-1] > 4.0
+    assert remaining > 4.0
     # ... and they are pervasive rather than a single unlucky step
     assert np.mean(relative_decrease[first:] <= STAN_FTOL) > 0.25
 
@@ -200,9 +229,28 @@ def test_stans_objective_tolerance_would_score_below_prophet(prophet_comparison,
             model.params["delta"][0], model.sigma_obs, model.params["beta"][0])
 
     assert score() > lp_prophet, "the central claim, on this path"
-    assert score(ftol=STAN_FTOL) < lp_prophet - 4.0, (
-        "Stan's ftol no longer puts this path below Prophet -- if that is real, "
-        "the deviation recorded in fit() should go")
+
+    stan_score = score(ftol=STAN_FTOL)
+    shortfall = lp_prophet - stan_score
+
+    # What the deviation actually rests on, and what is asserted: taking Stan's
+    # number would put this path *below* the model it reproduces, while the
+    # shipped setting puts it above. Both directions hold everywhere measured.
+    assert shortfall > 0, (
+        f"Stan's ftol no longer puts this path below Prophet ({stan_score:.4f} "
+        f"against {lp_prophet:.4f}) -- if that is real, the deviation recorded "
+        f"in fit() should go")
+
+    # The *size* of the shortfall is not pinned at the 4.43 nats measured on
+    # macOS/arm64, for two reasons found by CI (#103). It is platform
+    # dependent: Linux measures 3.86. And it is not stable run to run even on
+    # one platform -- two CI runs minutes apart, same job and same Python,
+    # straddled 4.0, which is float nondeterminism in a fit this long rather
+    # than anything moving. A floor well under both still catches a collapse,
+    # which is all this assertion can honestly do.
+    assert shortfall > 1.0, (
+        f"Stan's ftol now costs {shortfall:.3f} nats against Prophet, not the "
+        f"~4 measured -- the reasoning in fit() is out of date")
 
 
 def test_the_line_search_budget_is_not_the_cause(peyton_manning_df, scipy_options):
