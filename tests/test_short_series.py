@@ -341,6 +341,16 @@ def test_the_fallback_fires_where_the_python_path_actually_fails(peyton_manning_
     without = pin_yearly_only(AnalyticProphet())
     without.newton_fallback = False
     without.fit(df, analytic=True, initial_params=zero_init)
+    if without.opt.status != SCIPY_LINE_SEARCH_FAILURE:
+        # Which configurations provoke scipy's line search is a property of the
+        # scipy build. This one does on macOS/arm64, and in no CI job on Linux,
+        # where it converges cleanly -- so there is nothing here to fall back
+        # from and nothing for this test to measure (#103). The *mechanism* is
+        # covered either way by the tests above, which drive the status
+        # directly rather than hoping for it.
+        pytest.skip("scipy's line search does not fail on this build: the "
+                    f"configuration converged with status {without.opt.status}, "
+                    "so there is no real failure to fall back from")
     assert without.opt.status == SCIPY_LINE_SEARCH_FAILURE
 
     with_fallback = pin_yearly_only(AnalyticProphet())

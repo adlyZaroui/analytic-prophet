@@ -246,6 +246,21 @@ relative decrease of **6.8e-16** — four orders below Stan's threshold — whil
 37% of its steps are below the threshold. Stan's test is a one-step test, so it fires on
 the first of them.
 
+> **Where that plateau happens is a property of the scipy build, not of this objective.**
+> Every number in this section was measured on macOS/arm64. The first CI run
+> ([#103](https://github.com/adlyZaroui/analytic-prophet/issues/103)) measured the same
+> thing on Linux under the oldest supported scipy and found **no plateau at all**: Stan's
+> one-step test fires 5.8e-5 nats from the optimum, on a run that converges perfectly
+> well under Stan's own number. The two tests that pin the 4.80 nats now skip where the
+> plateau is absent and report what they measured instead.
+>
+> This does not change the deviation or the reason for it. `ftol = 1e-16` costs
+> iterations and nothing else, so a platform where Stan's number would also have
+> converged is a platform where the tighter one is merely redundant — and the one place
+> it matters, it is worth 4.43 nats against Prophet. What it does change is the scope of
+> the claim: the plateau is real where it was measured and must not be read as a property
+> of scipy everywhere.
+
 Three explanations were checked and ruled out:
 
 - **Not scipy's own stopping rule.** Evaluating Stan's test by hand on the trajectory

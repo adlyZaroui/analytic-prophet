@@ -12,6 +12,7 @@ It also pins the two things that have to agree with something else in the
 repo: the matrix floor against `requires-python`, and the set of
 `--require-*` options against the ones conftest.py actually registers.
 """
+import os
 import re
 import subprocess
 import sys
@@ -226,16 +227,31 @@ def test_every_environment_skip_in_conftest_goes_through_the_gap():
         f"{offenders}")
 
 
-def test_the_skip_report_names_every_reason(pyproject_text):
+def test_the_skip_report_names_every_reason(tmp_path):
     """The run has to say what it skipped, grouped, or "green" cannot be read.
 
-    Checked by running a real pytest rather than by inspection, because the
-    hook that prints it is pytest's to call.
+    Checked by running a real pytest, because the hook that prints it is
+    pytest's to call -- but on a test file written here rather than one of the
+    repo's own. The first version pointed at tests/test_packaging.py and
+    asserted its skips, which it has on this machine because the editable
+    install is broken on macOS and does *not* have on Linux, where the install
+    works: the test failed in all seven CI jobs for the thing it was supposed
+    to be indifferent to (#103).
+
+    conftest.py comes in as a plugin because the generated file lives outside
+    tests/, so it is loaded once rather than twice.
     """
+    generated = tmp_path / "test_generated_skip.py"
+    generated.write_text("import pytest\n\n\n"
+                         "def test_skips_for_a_reason_of_its_own():\n"
+                         "    pytest.skip('a reason of its own')\n")
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/test_packaging.py", "-q"],
-        cwd=REPO, capture_output=True, text=True, timeout=300)
+        [sys.executable, "-m", "pytest", str(generated), "-q",
+         "-p", "conftest", "-p", "no:cacheprovider"],
+        cwd=REPO, capture_output=True, text=True, timeout=300,
+        env=dict(os.environ, PYTHONPATH=str(REPO / "tests")))
     assert "skipped, by reason" in result.stdout, result.stdout[-2000:]
+    assert "a reason of its own" in result.stdout, result.stdout[-2000:]
 
 
 @pytest.fixture(scope="module")

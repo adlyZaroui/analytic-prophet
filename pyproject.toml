@@ -65,6 +65,12 @@ test = [
     # `requires-python` claims, which is the kind of thing a matrix is for.
     "pyyaml",
     "tomli; python_version < '3.11'",
+    # evaluation/report.py draws the figures, and tests/test_evaluation_report.py
+    # checks they were written. It had never been declared anywhere: prophet
+    # depends on matplotlib, so it arrived with the comparison install and the
+    # report tests passed for a reason nothing stated. Without prophet they
+    # raised ModuleNotFoundError -- found by the first CI run (#103).
+    "matplotlib",
 ]
 
 dev = ["analytic-prophet[test,compare]"]

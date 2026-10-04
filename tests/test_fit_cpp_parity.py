@@ -57,9 +57,14 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
     # all-zero start, neither of which the defaults would produce -- is the one
     # place scipy reports ABNORMAL, which is #24. Since #25 the Newton fallback
     # catches it: the retry converges on the same objective to 1e-13, so the run
-    # now reports success and the fitted point is unchanged. Still checked as a
-    # result rather than a status, so this test keeps measuring what it is about.
-    assert python_model.optimizer_used == "Newton"
+    # now reports success and the fitted point is unchanged.
+    #
+    # *Whether* it reports ABNORMAL is a property of the scipy build and not of
+    # this code. On macOS/arm64 the line search fails here and Newton takes
+    # over; in every CI job on Linux the same configuration converges under
+    # L-BFGS and the fallback never fires. Both land on the same optimum, which
+    # is what this test is about, so the path taken is no longer asserted (#103).
+    assert python_model.optimizer_used in ("Newton", "LBFGS")
     assert np.all(np.isfinite(python_model.get_parameters()))
 
     cpp_model = pin_yearly_only(AnalyticProphet())
