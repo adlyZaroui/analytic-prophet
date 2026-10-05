@@ -16,6 +16,8 @@ The design-matrix figure is the Fourier basis evaluated in a different order —
 
 ![posterior parity](figures/tier0_parity.png)
 
+**What this is.** The Peyton Manning series, first *T* rows, default configuration. Both implementations are fitted on **Prophet's own changepoints**, so the only thing that differs is the optimizer. Each is then scored by `CmdStanModel.log_prob` — Prophet's own Stan density, not ours — and the bar is the difference in nats. **Above zero is better for us.** The margin is small relative to the level (813 to 8005 nats), which is why the difference is plotted rather than the two values: on a parity scatter the three points sit exactly on the diagonal and the figure says nothing.
+
 ## Tier 1 — who recovers the true parameters?
 
 Series generated from the model, so there is a true parameter vector to be right about. On real data there is not, and agreement between two fits is all anyone can measure.
@@ -34,6 +36,8 @@ The two disagree, and that is the finding. Raw distance is a coin flip because i
 The trend's sparsity is reported as Σ|δ| and as the count of **exact** zeros rather than as rates above a threshold: ours has 16–25 exact zeros and Prophet 0–0, so a count of "active" changepoints measures where the line was drawn rather than the fit (#95). How many the generating vector had is reported beside them for reference, not as a target: MAP with an L1 prior over nested, collinear step functions is not a support-recovery procedure, so neither fit is expected to match it (#88).
 
 ![parameter recovery](figures/tier1_recovery.png)
+
+**What this is.** 18 synthetic series generated from the model itself — *T* ∈ {100, 300, 1000} × noise ∈ {0.05, 0.2} × 3 seeds — so the true parameters are known. **Left:** the identified error, a Hessian-weighted distance from the generating parameters, in nats; one point per series, ours against Prophet's. **Below the diagonal is better for us.** **Right:** the same recovery for this implementation alone, per parameter block, in the normalized units the model fits in (`y / max|y|`), median over the series at each length — a generator sanity check, where falling with *T* is the point, not a comparison with anybody. *The identified error is in nats and does not pool across series lengths*, which is why the left panel is paired per series rather than averaged.
 
 ## Tier 2 — does the better MAP point forecast better?
 
@@ -61,7 +65,11 @@ Negative means we are lower. That is better for the four error rows, worse for c
 
 ![coverage](figures/tier2_coverage.png)
 
+**What this is.** 36 M4 series (20 weekly, 20 daily), rolling-origin cutoffs from `prophet.diagnostics.generate_cutoffs`, with coverage of the nominal 80% interval computed by `prophet.diagnostics.performance_metrics` for **both** sides, so neither is scored by its own ruler. One dot per series per implementation, joined, sorted by ours; dotted lines are the two means. **Nearer 0.80 is better, and neither is near it.** This is the largest number in the suite and it is shared: the gap between the dots is small, and the gap between both and the dashed line is not. Since [#93] the default sampler on both sides is the approximate one.
+
 ![paired accuracy](figures/tier2_accuracy.png)
+
+**What this is.** The same corpus and protocol as above, scored by Prophet's own `performance_metrics`. Each panel is the per-series relative difference, (ours − Prophet) / Prophet, so the pairing is preserved rather than averaged away. **Left of zero is better for us**, and the shading says so. The summary is a median with an IQR rather than a mean, because forecast errors across series are heavy-tailed — one series differs by about 35% while most differ by under 2%. The axis is bounded by a robust range for that reason, and the panel counts what falls outside it rather than cropping it silently. `n` and the paired p-value are in each panel.
 
 ## Tier 3 — what it costs
 
@@ -111,11 +119,13 @@ Read these with the figure rather than on their own. Every implementation is *sl
 
 ![cost](figures/tier3_cost.png)
 
+**What this is.** The Peyton Manning series, default configuration, wall clock, best of 3 runs. **Lower is better everywhere.** **Left:** fit time. Below *T* = 100 both implementations run Newton rather than L-BFGS, which is Prophet's own algorithm rule ([#25]) and is what the kink at *T* = 50 is. **Middle:** peak resident memory attributable to the fit, *over and above what importing the library cost* — that separation is the measurement, since the claim is about the autodiff tape and not about import weight. Measured in a fresh subprocess per point, summing `RUSAGE_SELF` and `RUSAGE_CHILDREN` so that Prophet's cmdstan child process is counted. **Right:** inference, all four paths. Prophet's default is an approximation and so is ours since [#94]; solid lines are the two approximate samplers and dashed the two exact ones, so the honest comparisons are **down** each style rather than across.
+
 ---
 
 ## How this was measured
 
-- seed `20260925`, commit `d93a5fe53e87`
+- seed `20260925`, commit `e15bb450a1ba`
 - python 3.14.7 on macOS-26.5.2-arm64-arm-64bit-Mach-O
 - cmdstanpy 1.3.0, numpy 2.5.3, pandas 3.0.5, prophet 1.4.0, scipy 1.18.1
 
