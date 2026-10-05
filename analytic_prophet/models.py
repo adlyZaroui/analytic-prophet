@@ -11,16 +11,11 @@ import os
 
 import numpy as np
 
+from .build import (  # noqa: F401 -- re-exported, and the names tests
+    # monkeypatch must stay bound in this module
+    BUILD_HINT, CPP_MODULE_NAME, CPP_SOURCE, ToolchainMissing,
+    build_cpp_extension, cache_dir, find_eigen_include, find_lbfgspp_include)
 from .layout import DEFAULT_LAYOUT, extract_params
-
-
-CPP_MODULE_NAME = 'analytic_prophet_cpp'
-
-BUILD_HINT = (
-    "Build it from analytic_prophet/optimize.cpp -- see the compile command in "
-    "that file's trailing comment, or let tests/conftest.py's "
-    "compiled_optimizer_module fixture build it for you."
-)
 
 _cpp_module_cache = {}
 
@@ -29,8 +24,13 @@ def load_cpp_module(lib_path=None):
 
     With lib_path=None this is an ordinary import, so a built or installed
     extension is found on sys.path like any other module; failing that, it
-    looks for one built in place next to this file. Passing lib_path loads a
-    specific .so, which is how the tests point at one built into a temp dir.
+    looks for one built in place next to this file; failing that, it **builds
+    one** and caches it (#108). Passing lib_path loads a specific .so, which
+    is how the tests point at one built into a temp dir.
+
+    `ToolchainMissing` comes out of the build when the machine cannot do it,
+    naming the one thing that is absent. It subclasses `ImportError`, which is
+    what this raised before there was a builder.
 
     The ctypes binding this replaced hardcoded a *relative* path
     ('./liboptimization.so'), so it only worked when the process happened to be
@@ -42,12 +42,12 @@ def load_cpp_module(lib_path=None):
         except ImportError:
             here = os.path.dirname(os.path.abspath(__file__))
             candidates = sorted(glob.glob(os.path.join(here, CPP_MODULE_NAME + '*.so')))
-            if not candidates:
-                raise ImportError(
-                    f"{CPP_MODULE_NAME} is not importable and no build of it was found "
-                    f"in {here}. {BUILD_HINT}"
-                )
-            lib_path = candidates[0]
+            # Nothing installed and nothing built in place: build it, once,
+            # into a content-keyed cache (#108). Before this, `fit(df)` --
+            # the default call, and the one a ported Prophet script makes --
+            # raised here on any machine that had not built the extension by
+            # hand, which is every fresh clone.
+            lib_path = candidates[0] if candidates else build_cpp_extension()
 
     lib_path = os.path.abspath(lib_path)
     if lib_path not in _cpp_module_cache:

@@ -17,6 +17,10 @@ Where things are:
     trend.py          the three growth modes and their derivatives.
     optimizer.py      projected Newton, and the tolerances runs stop on.
     models.py         [fc] prophet/models.py -- the compiled backend's loader.
+    build.py          compiling optimize.cpp on demand, and caching it, so
+                      that `fit(df)` works on a machine that has never built
+                      it. One builder: the tests and benchmarks had their own
+                      before #108, at different optimisation levels.
     serialize.py      [fc] prophet/serialize.py -- a fitted model to and from
                       JSON. Reached as `from analytic_prophet.serialize import
                       model_to_json`, and deliberately not re-exported here,
@@ -42,5 +46,5 @@ __version__ = "0.1.0"
 
 from .forecaster import *          # noqa: F401,F403,E402
 from .forecaster import AnalyticProphet   # noqa: F401,E402  -- the one that matters
-from . import (constants, forecaster, layout, make_holidays,  # noqa: F401,E402
-               models, optimizer, seasonality, trend)
+from . import (build, constants, forecaster, layout,  # noqa: F401,E402
+               make_holidays, models, optimizer, seasonality, trend)

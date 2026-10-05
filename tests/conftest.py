@@ -10,10 +10,7 @@ without a built extension checked into the repo.
 import collections
 import importlib.util
 import os
-import shutil
-import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
 import numpy as np
@@ -29,9 +26,11 @@ from analytic_prophet import (AnalyticProphet, N_CHANGE_POINTS, n_yearly,
                            SIGMA_OBS_IDX, SIGMA_OBS_PRIOR_SCALE, CPP_MODULE_NAME,
                            load_cpp_module, seasonal_time, seasonality,
                            condition_matrix, TREND_INDICATORS, YEARLY_PERIOD)
+from analytic_prophet.build import ToolchainMissing, build_cpp_extension
 
 DATA_PATH = Path(__file__).parent / "data" / "peyton_manning.csv"
-CPP_SOURCE = Path(__file__).parent.parent / "analytic_prophet" / "optimize.cpp"
+# the source the package builds; re-exported so tests can read it
+from analytic_prophet.build import CPP_SOURCE  # noqa: E402
 PARAM_SIZE = 2 + N_CHANGE_POINTS + 1 + 2 * n_yearly  # k, m, delta, sigma_obs, beta -> 48
 
 # ---------------------------------------------------------------------------
@@ -154,99 +153,27 @@ def param_size():
     return PARAM_SIZE
 
 
-def _find_eigen_include():
-    candidates = [os.environ.get("EIGEN_INCLUDE_DIR")]
-    try:
-        prefix = subprocess.run(
-            ["brew", "--prefix", "eigen"], capture_output=True, text=True, timeout=5
-        ).stdout.strip()
-        if prefix:
-            candidates.append(str(Path(prefix, "include", "eigen3")))
-    except (OSError, subprocess.SubprocessError):
-        pass
-    candidates += [
-        "/opt/homebrew/opt/eigen/include/eigen3",
-        "/usr/local/opt/eigen/include/eigen3",
-        "/usr/local/include/eigen3",
-        "/usr/include/eigen3",
-    ]
-    for candidate in candidates:
-        if candidate and (Path(candidate) / "Eigen" / "Dense").exists():
-            return candidate
-    return None
-
-
 def _build_cpp_extension(tmp_path_factory, config):
-    """Builds analytic_prophet/optimize.cpp into an importable extension, using
-    the compile command documented in that file's trailing comment. Skips
-    (rather than fails) the tests that depend on it when the C++ toolchain,
-    Eigen, pybind11 or LBFGSpp aren't available -- that's an environment gap,
-    not a code defect. `--require-cpp` says the environment was built to have
-    them, and turns each of these into a failure (#103)."""
-    gap = lambda reason: environment_gap(config, "cpp", reason)
+    """The package's own builder, pointed at a directory the session owns.
 
-    compiler = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
-    if compiler is None:
-        gap("no C++ compiler found to build the C++ core")
+    It used to be ~70 lines here: find a compiler, find Eigen, find LBFGSpp,
+    assemble the compile command. `benchmark/_common.py` had the same lines
+    again, at `-O3` where these were at `-O2`, so the published timings came
+    from a different binary than the parity tests verified. #108 put one
+    builder in the package -- which is where it was needed, since `fit(df)`
+    has to be able to build -- and this is now a call to it.
 
-    eigen_include = _find_eigen_include()
-    if eigen_include is None:
-        gap("Eigen headers not found (set EIGEN_INCLUDE_DIR) -- can't build the C++ core")
+    Building into `tmp_path_factory` rather than the user's cache keeps the
+    suite's behaviour unchanged: a fresh build per session, no state carried
+    between runs, nothing written outside the test sandbox.
 
-    try:
-        import pybind11
-    except ImportError:
-        gap("pybind11 is not installed -- can't build the C++ core")
-
-    lbfgspp_include = _find_lbfgspp_include()
-    if lbfgspp_include is None:
-        gap("LBFGSpp headers not found (set LBFGSPP_INCLUDE_DIR, or "
-            "`brew install lbfgspp`) -- can't build the C++ core")
-
-    suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
-    out_path = tmp_path_factory.mktemp("cpp_core") / f"{CPP_MODULE_NAME}{suffix}"
-
-    cmd = [
-        compiler, "-std=c++17", "-shared", "-fPIC", "-O2",
-        "-o", str(out_path), str(CPP_SOURCE),
-        f"-I{eigen_include}",
-        f"-I{pybind11.get_include()}",
-        f"-I{sysconfig.get_paths()['include']}",
-        f"-I{lbfgspp_include}",
-    ]
-    if sys.platform == "darwin":
-        # Extension modules resolve CPython's symbols from the host interpreter
-        # at load time rather than linking libpython.
-        cmd += ["-undefined", "dynamic_lookup"]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-    if result.returncode != 0:
-        gap(f"could not build the C++ core: {result.stderr[-500:]}")
-
-    return str(out_path)
-
-
-def _find_lbfgspp_include():
-    """LBFGSpp headers (L-BFGS-B). Header-only, so nothing is linked.
-
-    NOTE: LBFGSpp ships LBFGS.h, which shadows liblbfgs's lbfgs.h on a
-    case-insensitive filesystem. That no longer bites since #23 removed the
-    liblbfgs dependency, but it is why the two must not both be on the
-    include path.
+    A toolchain gap is still a skip rather than a failure, unless
+    `--require-cpp` says this environment was built to have one (#103).
     """
-    candidates = [os.environ.get("LBFGSPP_INCLUDE_DIR")]
     try:
-        prefix = subprocess.run(["brew", "--prefix", "lbfgspp"], capture_output=True,
-                                text=True, timeout=5).stdout.strip()
-        if prefix:
-            candidates.append(str(Path(prefix, "include")))
-    except (OSError, subprocess.SubprocessError):
-        pass
-    candidates += ["/opt/homebrew/include", "/usr/local/include", "/usr/include"]
-    for candidate in candidates:
-        if candidate and (Path(candidate) / "LBFGSB.h").exists():
-            return candidate
-    return None
+        return build_cpp_extension(dest=tmp_path_factory.mktemp("cpp_core"))
+    except ToolchainMissing as missing:
+        environment_gap(config, "cpp", str(missing))
 
 
 @pytest.fixture(scope="session")
