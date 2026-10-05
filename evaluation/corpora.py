@@ -1,5 +1,11 @@
 """The series the tiers measure on.
 
+The M4 competition dataset is published by the M Open Forecasting Center for
+research use, and is downloaded from the M4-methods repository rather than
+vendored: it is large, only this suite needs it, and the tests that use it
+skip cleanly when it is absent. `tests/data/README.md` records where both
+corpora come from and under what terms (#105).
+
 A loader returns `(name, DataFrame)` pairs with Prophet's `ds`/`y` columns, so
 a tier iterates corpora without knowing where they came from.
 

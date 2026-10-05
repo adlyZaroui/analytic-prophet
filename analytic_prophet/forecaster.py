@@ -25,7 +25,7 @@ from .make_holidays import (  # noqa: F401 -- re-exported, and the
     _country_holidays_class, get_holiday_names, make_holidays_df, validate_holidays_frame, make_holiday_features, COUNTRY_CODE_SUBSTITUTIONS, COUNTRY_NAME_SWEEP, HOLIDAYS_PACKAGE_HINT)
 from .trend import (  # noqa: F401 -- re-exported, and the
     # names tests monkeypatch must stay bound in this module
-    flat_growth_init, logistic_gamma_and_jacobian, logistic_trend_and_jacobian, logistic_growth_init, linear_growth_init, det_dot, predict_trend, TREND_INDICATORS)
+    flat_growth_init, logistic_gamma_and_jacobian, logistic_trend, logistic_trend_and_jacobian, logistic_growth_init, linear_growth_init, det_dot, predict_trend, TREND_INDICATORS)
 from .optimizer import (  # noqa: F401 -- re-exported, and the
     # names tests monkeypatch must stay bound in this module
     finite_difference_hessian, projected_newton, STAN_EPS, STAN_TOL_OBJ, STAN_TOL_REL_OBJ, STAN_TOL_GRAD, STAN_TOL_PARAM, STAN_MAX_ITERATIONS, SCIPY_TOL_REL_OBJ, NEWTON_BELOW, CONSTANT_SERIES_SIGMA_OBS, SCIPY_LINE_SEARCH_FAILURE, CPP_SOLVER_RAISED)
@@ -888,16 +888,20 @@ class AnalyticProphet:
         # through the Jacobian form: it is the common case, and its fits are
         # sensitive to the last bits (see the note on the additive branch).
         if self.growth == 'logistic':
-            g, trend_jacobian = logistic_trend_and_jacobian(
-                k, m, delta, self.t, self.cap_scaled, A, self.changepoints_t)
+            # The trend alone. This is the objective, which never contracts a
+            # Jacobian -- only the two gradient functions below do -- and the
+            # Jacobian is 52% of the cost of computing both: 508 us against
+            # 242 us at T = 2905 with 25 changepoints. It called
+            # logistic_trend_and_jacobian here and dropped the second return
+            # value, on every iteration of every logistic fit (#105).
+            g = logistic_trend(k, m, delta, self.t, self.cap_scaled, A,
+                               self.changepoints_t)
         elif self.growth == 'flat':
             # [stan] flat_trend: rep_vector(m, T). k and delta remain
             # parameters and keep their priors, but the likelihood does not see
             # them, so both are driven to zero.
-            trend_jacobian = None
             g = np.full(self.T, m)
         else:
-            trend_jacobian = None
             gamma = -self.changepoints_t * delta
             g = (k + np.dot(A, delta)) * self.t + (m + np.dot(A, gamma))
 
@@ -2108,15 +2112,12 @@ class AnalyticProphet:
             raise ValueError(
                 'Capacities must be supplied for logistic growth in column "cap"')
 
-        # [fc] the rate of the Poisson process is S per unit of scaled time,
-        # so a frame reaching T sees S * (T - 1) new changepoints on average.
-        horizon_scaled = float(future_t_scaled.max())
-        n_changepoints = len(self.changepoints_t)
-        # [fc] `+ 1e-8`: a fit with no active changepoints gives mean|delta| = 0,
-        # and Laplace(0, 0) is undefined. Without it a perfectly straight series
-        # produced a zero-width band rather than a narrow one.
-        lambda_mle = float(np.abs(delta).mean()) + 1e-8
-
+        # The Poisson rate and the `+ 1e-8` Laplace guard were computed here
+        # too, with their [fc] comments, and were left behind when
+        # `_sample_trends` was extracted -- which recomputes both. Two
+        # explanations beside one copy of the code is worse than none, because
+        # a reader cannot tell which is authoritative. `_sample_trends` carries
+        # them, and it is where the arithmetic happens (#105).
         forecast = self._sample_trends(future_t_scaled, cap_scaled, floor, n_samples)
         quantiles = self._quantiles(forecast)
 

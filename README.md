@@ -49,8 +49,17 @@ both sides are seeded.
 git clone https://github.com/adlyZaroui/analytic-prophet
 cd analytic-prophet
 brew install eigen lbfgspp          # or equivalent; header-only, nothing is linked
-pip install -e '.[dev]'
+pip install -e '.[dev]'             # see the caveat below if you are on macOS
 ```
+
+> **The install is optional, and on macOS it can succeed without working.** `pytest` and
+> everything in this repository run from a fresh clone with no install at all, because
+> `pyproject.toml` puts the right directories on `pythonpath`. The editable install is
+> only for importing `analytic_prophet` from somewhere else — and on macOS with Python
+> 3.13+ it reports success and then does not import, because setuptools writes the
+> editable `.pth` with `UF_HIDDEN` and 3.13 hardened `site` to skip hidden `.pth` files.
+> `tests/test_packaging.py::test_an_editable_install_actually_imports` is what catches it.
+> [More on it below](#building-and-testing).
 
 ```python
 import pandas as pd
