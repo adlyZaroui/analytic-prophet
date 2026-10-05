@@ -88,23 +88,24 @@ METHODS = {
     "piecewise_logistic": (DELIBERATE, "inside `logistic_trend_and_jacobian`"),
     "flat_trend": (DELIBERATE, "inside `predict_trend`"),
 
-    # -- absent, and arguably should not be --------------------------------
-    "predictive_samples": (GAP, "the documented way to get raw draws out of a MAP fit. "
-                                "This computes exactly those draws and then discards "
-                                "them behind quantiles"),
-    "predict_seasonal_components": (GAP, "no counterpart; this is why there is no "
-                                         "component decomposition"),
-    "add_group_component": (GAP, "builds the column groupings the decomposition needs"),
-    "regressor_column_matrix": (GAP, "produces `train_component_cols`, same reason"),
+    # -- the four gaps #101 found, closed in #114 --------------------------
+    "predictive_samples": (SAME, "the draws `predict` reduces to quantiles, "
+                                 "transposed to Prophet's `(T, n_samples)`"),
+    "predict_seasonal_components": (SAME, "agrees with Prophet to 1e-12 on matched "
+                                          "parameters, degenerate intervals included"),
+    "add_group_component": (SAME, "—"),
+    "regressor_column_matrix": (SAME, "—"),
 }
 
 # What `Prophet.fit` leaves on the instance -> (verdict, where it is here / why not)
+#
+# `component_modes` and `train_component_cols` were here as gaps until #114
+# set them at fit time; they are now in the "present on both" group and so
+# have no row, which `test_no_attribute_verdict_is_stale` enforces.
 ATTRIBUTES = {
     "history_dates": (MOVED, "`model.ds`"),
     "history": (GAP, "the fitted frame is not kept; a ported script reading "
                      "`model.history` gets an `AttributeError`"),
-    "component_modes": (GAP, "additive/multiplicative groupings, for the decomposition"),
-    "train_component_cols": (GAP, "which columns belong to which component"),
     "start": (DELIBERATE, "derived from `model.ds` where it is needed"),
     "t_scale": (DELIBERATE, "derived from `model.ds` where it is needed"),
     "y_min": (DELIBERATE, "0 by construction: `scaling='absmax'` is the only mode here"),

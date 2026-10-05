@@ -48,6 +48,9 @@ SIMPLE_ATTRIBUTES = [
     # column, which is what makes one mandatory on every later frame (#104).
     # A restored logistic model has to keep demanding it.
     'logistic_floor',
+    # [fc] Prophet carries this one as a simple attribute too: a dict of
+    # component names per mode, which is JSON by construction (#114).
+    'component_modes',
     # the cap #41 undoes. Without these two a model fitted on twenty rows,
     # saved, loaded and refitted on a longer history keeps the capped count and
     # silently fits 15 changepoints instead of 25 -- the exact bug #41 closed,
@@ -70,7 +73,11 @@ SET_ATTRIBUTES = ['_auto_registered']
 
 PD_SERIES = ['changepoints', 'ds']
 
-PD_DATAFRAME = ['holidays', '_regressor_history']
+# [fc] Prophet keeps `train_component_cols` here too. It is the fitted
+# grouping `beta` is indexed by, and a restored model checks every later
+# design matrix against it (#114), so a model that loses it would accept a
+# matrix whose columns had moved.
+PD_DATAFRAME = ['holidays', '_regressor_history', 'train_component_cols']
 
 NP_ARRAY = ['changepoints_t', 's_a', 's_m', 'sigmas', 'cap_scaled', 'floor',
             '_params_vector']
