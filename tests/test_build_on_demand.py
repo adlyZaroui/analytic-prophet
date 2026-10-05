@@ -23,6 +23,7 @@ and what is left to check is the parts around it.
 import logging
 import os
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,33 @@ def test_a_second_build_reuses_the_first(tmp_path):
     second = build.build_cpp_extension(dest=tmp_path)
     assert second == first
     assert os.stat(second).st_mtime_ns == stamp, "it rebuilt instead of reusing"
+
+
+def test_the_cached_path_is_the_one_a_user_takes(tmp_path, monkeypatch):
+    """Every other test here passes an explicit `dest`, which is what the
+    suite and the benchmarks do -- so the branch a *user* takes, with no
+    destination at all, would otherwise be the one thing never run.
+
+    ANALYTIC_PROPHET_CACHE points it at a directory this test owns, so the
+    real code path runs without writing to the developer's cache.
+    """
+    monkeypatch.setenv("ANALYTIC_PROPHET_CACHE", str(tmp_path))
+    assert build.cache_dir() == tmp_path
+
+    built = Path(build.build_cpp_extension())
+    assert built.exists()
+    assert tmp_path in built.parents, "it did not land in the cache"
+    suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
+    assert built.name == build.CPP_MODULE_NAME + suffix
+
+    # content-keyed: the digest is a directory under the cache, not the file
+    assert built.parent.parent == tmp_path
+
+    # and the second call is a lookup rather than a compile
+    stamp = os.stat(built).st_mtime_ns
+    again = build.build_cpp_extension()
+    assert Path(again) == built
+    assert os.stat(again).st_mtime_ns == stamp
 
 
 def test_force_rebuilds(tmp_path):
