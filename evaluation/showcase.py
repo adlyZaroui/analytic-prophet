@@ -41,9 +41,17 @@ from tiers import tier2
 
 FIGURE = harness.RESULTS / "figures" / "showcase.png"
 
+# A Prophet-shaped model does not fit every M4 series, and a panel where both
+# implementations miss badly shows the difficulty of the series rather than
+# the difference between two optimizers. So the ranking is taken over the
+# series where the model works at all: both implementations within this sMAPE
+# held out. 0.10 keeps 11 of the 36 and is stated in the caption, because a
+# threshold nobody can see is a thumb on the scale.
+FITS_AT_ALL = 0.10
+
 # Panels, in the order they are drawn, each with the rule that picks it.
 SELECTIONS = (
-    ("largest advantage", "the series of the 36 where our cross-validated RMSE "
+    ("largest advantage", "of those, the series where our cross-validated RMSE "
                           "beats Prophet's by the most"),
     ("median", "the series at the median of that same ranking"),
     ("Prophet wins", "the series where Prophet beats us by the most"),
@@ -59,14 +67,24 @@ def _advantages(results=None):
     """
     path = Path(results or harness.RESULTS / "tier2_accuracy.csv")
     frame = pd.read_csv(path)
-    rmse = frame[frame["metric"] == "rmse"]
+
+    def paired(metric):
+        wanted = frame[frame["metric"] == metric]
+        return {series: dict(zip(group["implementation"], group["value"]))
+                for series, group in wanted.groupby("series")}
+
+    rmse, smape = paired("rmse"), paired("smape")
 
     rows = []
-    for series, group in rmse.groupby("series"):
-        by_implementation = dict(zip(group["implementation"], group["value"]))
-        ours = by_implementation.get("analytic_prophet")
-        theirs = by_implementation.get("prophet")
+    for series, values in rmse.items():
+        ours, theirs = values.get("analytic_prophet"), values.get("prophet")
+        fit = smape.get(series, {})
         if ours is None or theirs is None or not theirs:
+            continue
+        if not {"analytic_prophet", "prophet"} <= set(fit):
+            continue
+        # the filter: the worse of the two has to be a usable forecast
+        if max(fit["analytic_prophet"], fit["prophet"]) > FITS_AT_ALL:
             continue
         rows.append(((theirs - ours) / theirs, series, ours, theirs))
     rows.sort(reverse=True)
@@ -102,8 +120,26 @@ def _load(series):
     raise SystemExit(f"{series} is not in the M4 sample; is the corpus cached?")
 
 
-def _one_window(frame, cutoff, horizon, lib_path):
-    """Fit both implementations on the history up to `cutoff` and forecast."""
+def _one_window(frame, cutoff, horizon, lib_path, tail):
+    """Fit both implementations on the history up to `cutoff`, then predict
+    across the whole drawn span -- the tail of the training data as well as
+    the horizon past it.
+
+    **Predicting back over the training tail is what removes the step at the
+    cutoff.** Drawing only the forecast starts each line at the first future
+    point, whose fitted value is not the last observation: at one of the
+    series in the first version of this figure the gap was +401 on a series
+    around 9000, which reads as a glitch in the plot and is not one. It is the
+    model's residual at the end of its own training data.
+
+    Carrying the fitted curve through the cutoff shows it for what it is. Each
+    line is then continuous, the distance between a fitted line and the
+    observed one is the fit, and the vertical rule marks where the model stops
+    having been shown the answer.
+
+    The RMSEs are still computed on the horizon alone. Scoring a model on the
+    data it was fitted to would be a different and much kinder number.
+    """
     from prophet import Prophet
 
     from analytic_prophet import AnalyticProphet
@@ -114,10 +150,14 @@ def _one_window(frame, cutoff, horizon, lib_path):
     if len(history) < 2 or future.empty:
         return None
 
+    shown_history = history if tail is None else history.tail(tail)
+    drawn = pd.concat([shown_history[["ds"]], future[["ds"]]], ignore_index=True)
+    n_fitted = len(shown_history)
+
     ours = AnalyticProphet(**harness.PROPHET_KWARGS)
     ours.rng = np.random.default_rng(harness.SEED)
     ours.fit(history, lib_path=lib_path)
-    our_forecast = ours.predict(future[["ds"]])
+    our_curve = ours.predict(drawn)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -125,22 +165,23 @@ def _one_window(frame, cutoff, horizon, lib_path):
         # figure would differ between runs without this. [fc] tier2.
         np.random.seed(harness.SEED % (2 ** 32))
         theirs = Prophet(**harness.PROPHET_KWARGS).fit(history)
-        their_forecast = theirs.predict(future[["ds"]])
+        their_curve = theirs.predict(drawn)
 
     truth = future["y"].to_numpy()
 
-    def rmse(predicted):
-        return float(np.sqrt(np.mean((truth - predicted) ** 2)))
+    def rmse(curve):
+        return float(np.sqrt(np.mean(
+            (truth - curve["yhat"].to_numpy()[n_fitted:]) ** 2)))
 
     return {
-        "history": history, "cutoff": cutoff, "future": future,
-        "ours": our_forecast, "theirs": their_forecast,
-        "our_rmse": rmse(our_forecast["yhat"].to_numpy()),
-        "their_rmse": rmse(their_forecast["yhat"].to_numpy()),
+        "history": history, "shown_history": shown_history,
+        "cutoff": cutoff, "future": future,
+        "ours": our_curve, "theirs": their_curve, "n_fitted": n_fitted,
+        "our_rmse": rmse(our_curve), "their_rmse": rmse(their_curve),
     }
 
 
-def panel_data(series, cross_validated_advantage, lib_path):
+def panel_data(series, cross_validated_advantage, lib_path, tail=None):
     """What one panel draws: history, the cutoff, the truth, both forecasts.
 
     **Which window.** A series is selected by its cross-validated RMSE, which
@@ -167,7 +208,7 @@ def panel_data(series, cross_validated_advantage, lib_path):
 
     cutoffs = generate_cutoffs(frame, horizon, pd.Timedelta(initial_text),
                                pd.Timedelta(period_text))
-    windows = [w for w in (_one_window(frame, cutoff, horizon, lib_path)
+    windows = [w for w in (_one_window(frame, cutoff, horizon, lib_path, tail)
                            for cutoff in cutoffs) if w is not None]
     if not windows:
         raise SystemExit(f"{series}: no usable cutoff")
@@ -199,24 +240,27 @@ def draw(panels, out_path=FIGURE, tail=None):
     axes = np.atleast_1d(axes)
 
     for axis, ((label, _rule, advantage, series, _o, _t), data) in zip(axes, panels):
-        history, future = data["history"], data["future"]
-        shown = history if tail is None else history.tail(tail)
+        shown, future = data["shown_history"], data["future"]
 
-        axis.plot(shown["ds"], shown["y"], color="0.35", linewidth=1.0,
+        axis.plot(shown["ds"], shown["y"], color="0.45", linewidth=0.9,
                   label="observed (training)")
-        axis.plot(future["ds"], future["y"], color="0.1", linewidth=1.6,
+        axis.plot(future["ds"], future["y"], color="0.1", linewidth=1.7,
                   label="actual (held out)")
 
-        for forecast, colour, name in (
+        # One continuous line per model across the whole drawn span: fitted
+        # to the left of the cutoff, forecast to the right. Drawing only the
+        # right-hand part leaves a step at the cutoff that looks like a
+        # plotting bug and is really the model's residual (#100 review).
+        for curve, colour, name in (
                 (data["theirs"], theirs_colour, "Prophet"),
                 (data["ours"], ours_colour, "analytic-prophet")):
-            axis.fill_between(future["ds"], forecast["yhat_lower"],
-                              forecast["yhat_upper"], color=colour, alpha=0.10,
+            axis.fill_between(curve["ds"], curve["yhat_lower"],
+                              curve["yhat_upper"], color=colour, alpha=0.09,
                               linewidth=0)
-            axis.plot(future["ds"], forecast["yhat"], color=colour,
-                      linewidth=1.6, label=name)
+            axis.plot(curve["ds"], curve["yhat"], color=colour,
+                      linewidth=1.5, label=name)
 
-        axis.axvline(data["cutoff"], color="0.5", linestyle=":", linewidth=1.2)
+        axis.axvline(data["cutoff"], color="0.4", linestyle=":", linewidth=1.3)
         axis.set_title(
             f"{series} — {label}: {advantage:+.1%} RMSE cross-validated, "
             f"{data['advantage']:+.1%} in this window "
@@ -255,7 +299,7 @@ def main(argv=None):
     for label, rule, advantage, series, ours, theirs in chosen:
         print(f"  {label}: {series} ({advantage:+.1%})")
         panels.append(((label, rule, advantage, series, ours, theirs),
-                       panel_data(series, advantage, lib_path)))
+                       panel_data(series, advantage, lib_path, tail=args.tail)))
 
     written = draw(panels, Path(args.out), tail=args.tail)
     print(f"wrote {written}")

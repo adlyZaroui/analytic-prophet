@@ -16,28 +16,31 @@ is no MCMC and no plotting, so this is not yet a drop-in replacement. See
 
 ![three held-out forecasts: the largest advantage, the median, and one Prophet wins](evaluation/results/figures/showcase.png)
 
-**What this shows, and what it does not.** Three M4 series, forecast past a cutoff neither
-model saw, with the actual values drawn over the horizon. They are **chosen by rule, not
-by eye**: of the 36 series in [Tier 2](evaluation/results/report.md#tier-2--is-it-more-accurate-held-out),
-these are the one where our cross-validated RMSE beats Prophet's by the most, the one at
-the median of that ranking, and the one where Prophet beats us by the most. For each, the
-window drawn is the cutoff whose advantage is closest to that series' cross-validated
-figure, so the picture and the percentage describe the same thing.
+**What this shows, and what it does not.** Three M4 series, forecast past a cutoff
+neither model saw. Each coloured line is continuous through the cutoff: to its left the
+model's fit to data it was shown, to its right its forecast. The actual values over the
+horizon are drawn in black, and the bands are the nominal 80% intervals.
+
+They are **chosen by rule, not by eye.** Of Tier 2's 36 series, the ranking is taken over
+the **11 where a Prophet-shaped model fits at all** — both implementations within 10%
+sMAPE held out — because a panel where both miss badly shows the difficulty of the series
+rather than the difference between two optimizers. Within those: the series where our
+cross-validated RMSE beats Prophet's by the most, the one at the median of that ranking,
+and the one where Prophet beats us by the most.
 
 **The top panel is the mechanism; the bottom two are the typical case.** Prophet's
 optimizer stops short on the non-differentiable objective, and that costs most where the
 trend is doing the work — a regime change, as in the top panel, where the L1 kink is
-load-bearing. Elsewhere both implementations fit almost the same model and the curves sit
-on top of each other. Across all 36 series the median RMSE advantage is **0.45%**, and
+load-bearing. Elsewhere both implementations fit nearly the same model and the two lines
+sit on top of each other. Across all 36 series the median RMSE advantage is **0.45%**, and
 past two years of history predictions differ by **0.17–0.59%** of the series scale. A
 reader who runs this on their own data should expect the bottom two panels, not the top
 one.
 
-The shaded bands are the nominal 80% intervals. **Neither implementation's are well
-calibrated**: on this corpus they contain about a third of the held-out points they claim
-four fifths of — mean coverage **0.356** for ours and **0.341** for Prophet's. That is a
-property of the model on long horizons, it is shared, and it is larger than anything
-separating the two.
+**Neither implementation's intervals are well calibrated.** On this corpus they contain
+about a third of the held-out points they claim four fifths of — mean coverage **0.356**
+for ours and **0.341** for Prophet's. That is a property of the model on long horizons, it
+is shared, and it is larger than anything separating the two.
 
 Regenerate it with `python evaluation/showcase.py`; the output is byte-identical because
 both sides are seeded.
