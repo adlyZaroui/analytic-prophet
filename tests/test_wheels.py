@@ -55,6 +55,54 @@ def tested_versions():
 
 # -- the matrix says what requires-python claims --------------------------
 
+def test_the_release_checks_the_wheels_against_the_configuration(release):
+    """The config listing a Python proves nothing on its own.
+
+    v0.1.0 was configured to build cp314 and built cp39-cp313, because the
+    pinned cibuildwheel predated CPython 3.14 and silently skipped it. Every
+    test here reads configuration, so every test passed while
+    `requires-python` claimed a version with no wheel behind it. The only
+    place that question can be answered is against the artefacts.
+    """
+    verify = release["jobs"]["verify"]
+    shell = " ".join(step.get("run", "") for step in verify["steps"])
+    assert "wheelhouse/*.whl" in shell, (
+        "nothing compares the built wheels against the configured Pythons")
+    assert "cibuildwheel" in shell and "build" in shell
+
+
+def test_the_macos_runner_builds_both_architectures(cibuildwheel, release):
+    """One runner, two architectures, cross-compiled.
+
+    The matrix used to carry a `macos-13` leg for x86_64, which was redundant
+    -- `[tool.cibuildwheel.macos]` asks every macOS runner for both -- and
+    fatal, because GitHub retired that runner image. The job sat queued with
+    no runner, and since `verify` needs `wheels` and `publish` needs `verify`,
+    it blocked the release rather than failing it.
+    """
+    assert set(cibuildwheel["macos"]["archs"]) == {"x86_64", "arm64"}
+
+    runners = release["jobs"]["wheels"]["strategy"]["matrix"]["os"]
+    assert "macos-13" not in runners, "the retired Intel runner is back"
+    assert sum(1 for r in runners if r.startswith("macos")) == 1, (
+        "one macOS runner builds both arches; a second only duplicates them")
+
+
+def test_cibuildwheel_is_new_enough_for_the_pythons_claimed(release, cibuildwheel):
+    """A tool older than the interpreters it is asked to build skips them
+    without failing, which is how cp314 went missing."""
+    import re
+
+    pinned = next(step["uses"] for step in release["jobs"]["wheels"]["steps"]
+                  if "cibuildwheel" in str(step.get("uses", "")))
+    major = int(re.search(r"@v(\d+)", pinned).group(1))
+    newest = max(int(m.group(1)) for m in
+                 re.finditer(r"cp3(\d+)-", cibuildwheel["build"]))
+    # CPython 3.14 support landed in cibuildwheel 3.x; 2.x cannot build it
+    assert not (newest >= 14 and major < 3), (
+        f"{pinned} cannot build cp3{newest}")
+
+
 def test_a_wheel_is_built_for_every_python_that_is_tested(cibuildwheel,
                                                           tested_versions):
     """`requires-python` is load-bearing the moment there is a package: it
