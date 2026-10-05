@@ -238,18 +238,21 @@ leaves on the instance, with one of four verdicts.
 | `absent, deliberate` | not implemented and not intended: MCMC, plotting, or an internal folded into something else |
 | `absent, gap` | should probably exist |
 
-Of Prophet's **40** public methods, **13** are the same, **8** moved, **15** are absent on purpose and **4** are gaps.
+Of Prophet's **40** public methods, **17** are the same, **8** moved, **15** are absent on purpose and **0** are gaps.
+
+**There are no gaps left.** The four #101 found — `predictive_samples`,
+`predict_seasonal_components`, `add_group_component` and `regressor_column_matrix`
+— were closed in [#114](https://github.com/adlyZaroui/analytic-prophet/issues/114).
+What remains absent is MCMC, plotting, and internals deliberately folded elsewhere.
 
 Behavioural divergences are not in the table, because they are not members: refitting is
 allowed where Prophet refuses, `K = 0` where Prophet pads to 1, the Fourier basis is
 evaluated in a different order, and a not-fitted call raises `ValueError` rather than bare
 `Exception`. Each has its own section above.
 
-The table is the deliverable here. **Deciding what to add comes after**, now that
-the shape of the gap is visible rather than argued about. It is generated from the
-register in `tests/test_parity_surface.py`, which fails if Prophet grows a member,
-if a row describes something that no longer exists, or if one of the gaps is filled
-without the row being updated.
+The table is generated from the register in `tests/test_parity_surface.py`, which fails
+if Prophet grows a member, if a row describes something that no longer exists, or if a
+verdict stops matching where the name actually is.
 
 <!-- parity-table:start -->
 
@@ -258,6 +261,7 @@ without the row being updated.
 | member | verdict | here |
 |---|---|---|
 | `add_country_holidays` | same | — |
+| `add_group_component` | same | — |
 | `add_regressor` | same | — |
 | `add_seasonality` | same | — |
 | `calculate_initial_params` | same | — |
@@ -266,7 +270,10 @@ without the row being updated.
 | `make_all_seasonality_features` | same | — |
 | `make_future_dataframe` | same | — |
 | `predict` | same | — |
+| `predict_seasonal_components` | same | agrees with Prophet to 1e-12 on matched parameters, degenerate intervals included |
+| `predictive_samples` | same | the draws `predict` reduces to quantiles, transposed to Prophet's `(T, n_samples)` |
 | `preprocess` | same | also does `setup_dataframe`'s and `initialize_scales`' work |
+| `regressor_column_matrix` | same | — |
 | `set_auto_seasonalities` | same | — |
 | `set_changepoints` | same | — |
 | `validate_column_name` | same | — |
@@ -304,25 +311,14 @@ without the row being updated.
 | `setup_dataframe` | absent, deliberate | folded into `preprocess` |
 | `validate_inputs` | absent, deliberate | folded into the constructor's rejections (#52) and `_clean_history` (#102, #104) |
 
-#### Methods: absent, and arguably should not be
-
-| member | verdict | here |
-|---|---|---|
-| `add_group_component` | absent, gap | builds the column groupings the decomposition needs |
-| `predict_seasonal_components` | absent, gap | no counterpart; this is why there is no component decomposition |
-| `predictive_samples` | absent, gap | the documented way to get raw draws out of a MAP fit. This computes exactly those draws and then discards them behind quantiles |
-| `regressor_column_matrix` | absent, gap | produces `train_component_cols`, same reason |
-
 #### Attributes a fit sets
 
-24 of Prophet's are set here too, under the same names. These are the rest:
+26 of Prophet's are set here too, under the same names. These are the rest:
 
 | member | verdict | here |
 |---|---|---|
 | `history_dates` | moved | `model.ds` |
-| `component_modes` | absent, gap | additive/multiplicative groupings, for the decomposition |
 | `history` | absent, gap | the fitted frame is not kept; a ported script reading `model.history` gets an `AttributeError` |
-| `train_component_cols` | absent, gap | which columns belong to which component |
 | `fit_kwargs` | absent, deliberate | Prophet keeps them to refit in `cross_validation`; refitting here is a fresh fit (#41) |
 | `mcmc_samples` | absent, deliberate | rejected by the constructor rather than ignored (#52) |
 | `scaling` | absent, deliberate | `'absmax'` only; `'minmax'` is rejected, not ignored (#52) |

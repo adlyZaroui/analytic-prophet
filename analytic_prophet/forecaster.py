@@ -78,6 +78,7 @@ FIT_DERIVED_ATTRIBUTES = (
     "_fit_design_matrix", "_data_columns", "_data_prior_scales", "_data_modes",
     "_data_column_count", "_holiday_columns", "_holiday_prior_scales",
     "train_holiday_names", "train_holiday_column_names",
+    "train_component_cols", "component_modes",
     "_regressor_history",
     # the result
     "params", "_params_vector", "k", "m", "delta", "beta", "sigma_obs",
@@ -218,6 +219,11 @@ class AnalyticProphet:
         self.holidays_mode = holidays_mode
         self.train_holiday_names = None
         self.train_holiday_column_names = None
+        # [fc] what a fit leaves behind for the decomposition: which design
+        # columns belong to which component, and which components are additive
+        # (#114). Both were `absent, gap` rows in the parity table.
+        self.train_component_cols = None
+        self.component_modes = None
         self._fit_design_matrix = None
         # [fc] Prophet.logistic_floor: whether the *history* carried a `floor`
         # column, which is what makes one mandatory on every later frame.
@@ -559,10 +565,15 @@ class AnalyticProphet:
     def make_all_seasonality_features(self, df):
         """The whole design matrix, its prior scales and its modes.
 
-        [fc] Prophet.make_all_seasonality_features, which returns the same
-        first two and a `component_cols` frame this implementation has no use
-        for -- it exists there for plotting and the component decomposition,
-        neither of which is implemented here.
+        [fc] Prophet.make_all_seasonality_features, including the four-tuple:
+        `(features, prior_scales, component_cols, modes)`. It returned three
+        of those until #114 -- the `component_cols` frame was described here
+        as something "this implementation has no use for", which stopped being
+        true when the component decomposition arrived.
+
+        The name was already shared with Prophet while the signature was not,
+        which the naming tests did not catch because they check that a member
+        exists rather than what it returns.
 
         Column order is Prophet's: every seasonal component in registry order,
         then holidays, then extra regressors. That order is what `beta`,
@@ -592,10 +603,100 @@ class AnalyticProphet:
             prior_scales.extend(data_scales)
             modes.extend(data_modes)
 
+        # [fc] modes, which is a dict of component *names* per mode -- not the
+        # per-column list above, which is what `s_a`/`s_m` are built from. Both
+        # are needed and they are different shapes: one indexes the design
+        # matrix, the other names the things a decomposition decomposes into.
+        grouped = {"additive": [], "multiplicative": []}
+        for name, props in self.seasonalities.items():
+            grouped[props["mode"]].append(name)
+        grouped[self.holidays_mode or self.seasonality_mode].extend(
+            self.train_holiday_names if self.train_holiday_names is not None else [])
+        for name, props in self.extra_regressors.items():
+            grouped[props["mode"]].append(name)
+
         if not blocks:
-            return pd.DataFrame(index=range(len(df))), [], []
+            empty = pd.DataFrame(index=range(len(df)))
+            return empty, [], self.regressor_column_matrix(empty, grouped)[0], grouped
         features = pd.concat([b.reset_index(drop=True) for b in blocks], axis=1)
-        return features, prior_scales, modes
+        component_cols, grouped = self.regressor_column_matrix(features, grouped)
+        return features, prior_scales, component_cols, grouped
+
+    def add_group_component(self, components, name, group):
+        """Mark the columns belonging to `group` as also belonging to `name`.
+
+        [fc] Prophet.add_group_component, line for line. It is how the totals
+        -- `additive_terms`, `holidays`, `extra_regressors_multiplicative` --
+        get built: each is a second label on columns that already have one
+        (#114).
+        """
+        new_comp = components[components['component'].isin(set(group))].copy()
+        group_cols = new_comp['col'].unique()
+        if len(group_cols) > 0:
+            new_comp = pd.DataFrame({'col': group_cols, 'component': name})
+            components = pd.concat([components, new_comp], ignore_index=True)
+        return components
+
+    def regressor_column_matrix(self, seasonal_features, modes):
+        """Which columns of the design matrix belong to which component.
+
+        [fc] Prophet.regressor_column_matrix. Returns `(component_cols,
+        modes)`: a binary indicator frame with one row per design column and
+        one column per named component, and the modes dict with the
+        combination components added to it.
+
+        This is the piece the decomposition is built on, and the reason
+        `predict_seasonal_components` had no counterpart here before #114.
+
+        The component name is the part of the column name before `_delim_`,
+        which is why the Fourier columns are named `{component}_delim_{i}` --
+        a naming decision made in #36 for Prophet-compatibility that turns out
+        to carry the grouping as well.
+        """
+        components = pd.DataFrame({
+            'col': np.arange(seasonal_features.shape[1]),
+            'component': [x.split('_delim_')[0]
+                          for x in seasonal_features.columns],
+        })
+        if self.train_holiday_names is not None:
+            # [fc] `self.train_holiday_names.unique()`. Ours is a list where
+            # Prophet's is a Series, so there is no `.unique()` to call -- and
+            # none is needed, because `add_group_component` takes a set of the
+            # group and the dedupe is implicit. A shared name with a different
+            # type, which the naming tests do not see.
+            components = self.add_group_component(
+                components, 'holidays', self.train_holiday_names)
+        for mode in ('additive', 'multiplicative'):
+            components = self.add_group_component(
+                components, mode + '_terms', modes[mode])
+            regressors_by_mode = [name for name, props
+                                  in self.extra_regressors.items()
+                                  if props['mode'] == mode]
+            components = self.add_group_component(
+                components, 'extra_regressors_' + mode, regressors_by_mode)
+            modes[mode].append(mode + '_terms')
+            modes[mode].append('extra_regressors_' + mode)
+        modes[self.holidays_mode or self.seasonality_mode].append('holidays')
+
+        component_cols = pd.crosstab(
+            components['col'], components['component'],
+        ).sort_index(level='col')
+        for name in ['additive_terms', 'multiplicative_terms']:
+            if name not in component_cols:
+                component_cols[name] = 0
+        component_cols.drop('zeros', axis=1, inplace=True, errors='ignore')
+
+        # [fc] both of Prophet's guards. A column in both modes would make the
+        # decomposition double-count it, and a predict-time matrix that does
+        # not match the fitted one means the columns moved underneath `beta`.
+        if len(component_cols) and max(component_cols['additive_terms']
+                                       + component_cols['multiplicative_terms']) > 1:
+            raise Exception('A bug occurred in seasonal components.')
+        if self.train_component_cols is not None:
+            component_cols = component_cols[self.train_component_cols.columns]
+            if not component_cols.equals(self.train_component_cols):
+                raise Exception('A bug occurred in constructing regressors.')
+        return component_cols, modes
 
     def _data_column_names(self):
         """Names for the holiday and regressor columns, [fc]'s own."""
@@ -1221,8 +1322,15 @@ class AnalyticProphet:
         self.set_changepoints()
         self._build_layout()
         # built once here, not per objective evaluation (#28)
+        features, _scales, component_cols, modes = \
+            self.make_all_seasonality_features(df)
         self._fit_design_matrix = np.ascontiguousarray(
-            self.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
+            features.to_numpy(dtype=float))
+        # [fc] the fitted grouping, which predict-time matrices are checked
+        # against: if the columns move underneath `beta`, the decomposition is
+        # silently wrong rather than loudly (#114).
+        self.train_component_cols = component_cols
+        self.component_modes = modes
         return df
 
     def calculate_initial_params(self, initial_params: dict=None) -> dict:
@@ -2123,6 +2231,71 @@ class AnalyticProphet:
 
         return future_df, quantiles
     
+    def predict_seasonal_components(self, df):
+        """Each named component's contribution, and its interval.
+
+        [fc] Prophet.predict_seasonal_components. One column per seasonality,
+        per holiday and per extra regressor, plus the totals
+        `additive_terms`, `multiplicative_terms`, `holidays` and
+        `extra_regressors_{mode}` -- with `_lower` and `_upper` beside each.
+
+        This had no counterpart here until #114, which is why `predict`
+        returned a single lumped `seasonality` column and why there was no
+        decomposition to plot.
+
+        **The intervals are degenerate under MAP, in Prophet too.** The
+        percentile is taken over `beta`'s sample axis, which a MAP fit gives
+        one row, so `_lower == point == _upper` exactly. Measured against
+        Prophet 1.4.0, which does the same thing: reproducing it is the
+        faithful answer, and widening it would be inventing an interval the
+        original does not have.
+        """
+        features, _scales, component_cols, _modes = \
+            self.make_all_seasonality_features(df)
+        lower_p = 100 * (1.0 - self.interval_width) / 2
+        upper_p = 100 * (1.0 + self.interval_width) / 2
+
+        X = features.values
+        beta = self.params['beta']
+        data = {}
+        for component in component_cols.columns:
+            beta_c = beta * component_cols[component].values
+            comp = np.matmul(X, beta_c.transpose())
+            if component in self.component_modes['additive']:
+                comp *= self.y_scale
+            data[component] = np.nanmean(comp, axis=1)
+            if self.uncertainty_samples:
+                data[component + '_lower'] = np.percentile(comp, lower_p, axis=1)
+                data[component + '_upper'] = np.percentile(comp, upper_p, axis=1)
+        return pd.DataFrame(data)
+
+    def predictive_samples(self, df, vectorized=True):
+        """The draws `predict` reduces to quantiles, returned instead.
+
+        [fc] Prophet.predictive_samples: a dict with keys `trend` and `yhat`,
+        each `(len(df), uncertainty_samples)`.
+
+        Not MCMC-adjacent, which is why #101 called it a gap while the rest of
+        the sampling surface is deliberate: it is exactly as meaningful for a
+        MAP fit, and this implementation already computed these draws and threw
+        them away behind `_quantiles` on every `predict`.
+
+        **Transposed at the boundary.** Everything internal here is
+        `(n_samples, T)` -- `_quantiles` reduces over axis 0 -- and Prophet
+        documents and returns `(T, n_samples)`. The whole point of the member
+        is that a ported script can use it, so the boundary is Prophet's and
+        the transpose happens here.
+        """
+        self._fitted()
+        prepared = self._ensure_regressor_values(df).copy()
+        prepared['t'] = ((pd.to_datetime(prepared['ds']) - self.ds.min())
+                         / (self.ds.max() - self.ds.min()))
+        cap_scaled, floor = self._future_capacity(prepared)
+        _x, trend_draws, _seasonality, yhat_draws = self._forecast_draws(
+            prepared, cap_scaled, floor, self.uncertainty_samples, vectorized)
+        return {'trend': np.asarray(trend_draws).T,
+                'yhat': np.asarray(yhat_draws).T}
+
     def predict(self, future_df, vectorized=True):
         """The forecast, and the interval around it.
 
