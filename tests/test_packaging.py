@@ -23,10 +23,6 @@ is exactly what a matrix is for.
 import os
 import subprocess
 import sys
-try:
-    import tomllib
-except ModuleNotFoundError:   # Python < 3.11, where it is `tomli` from pip
-    import tomli as tomllib
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -40,8 +36,9 @@ PYPROJECT = REPO / "pyproject.toml"
 
 @pytest.fixture(scope="module")
 def pyproject():
-    with open(PYPROJECT, "rb") as handle:
-        return tomllib.load(handle)
+    from conftest import load_pyproject
+
+    return load_pyproject()
 
 
 def test_the_package_version_is_the_one_pyproject_publishes(pyproject):

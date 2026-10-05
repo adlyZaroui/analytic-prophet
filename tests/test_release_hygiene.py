@@ -14,18 +14,18 @@ from the README, which stopped quoting a number that goes stale every time
 somebody adds a test.
 """
 import ast
-import tomllib
 from pathlib import Path
 
 import pytest
+
+from conftest import load_pyproject
 
 REPO = Path(__file__).parent.parent
 
 
 @pytest.fixture(scope="module")
 def pyproject():
-    with open(REPO / "pyproject.toml", "rb") as handle:
-        return tomllib.load(handle)
+    return load_pyproject()
 
 
 # -- bounds ---------------------------------------------------------------
@@ -130,6 +130,29 @@ def _dead_locals(path):
                   for name, line in assigned.items()
                   if name not in used and not name.startswith("_")]
     return found
+
+
+def test_no_test_module_imports_tomllib_unguarded():
+    """The bug this file shipped with, and the second time it was made.
+
+    #103 found it in `test_packaging.py` by building the matrix; #105
+    reintroduced it here, in a new module that imported `tomllib` at the top
+    again, and CI found it on 3.9 and 3.10. The fallback lives in
+    `conftest.load_pyproject` now, and this is what stops a third copy.
+    """
+    for module in sorted((REPO / "tests").glob("*.py")):
+        if module.name == "conftest.py":
+            continue
+        # parsed, not grepped: this file names `tomllib` in its own prose, and
+        # a text search finds that too
+        tree = ast.parse(module.read_text())
+        imported = {alias.name
+                    for node in tree.body                 # module level only
+                    if isinstance(node, ast.Import)
+                    for alias in node.names}
+        assert "tomllib" not in imported, (
+            f"{module.name} imports tomllib at module level; use "
+            f"conftest.load_pyproject, which carries the <3.11 fallback")
 
 
 @pytest.mark.parametrize("module", sorted(
