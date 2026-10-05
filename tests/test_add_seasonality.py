@@ -149,7 +149,7 @@ def test_the_model_wide_default_also_reaches_the_auto_selected_components(
     too, so an override is not silently confined to hand-registered ones."""
     model = AnalyticProphet()
     model.seasonality_prior_scale = 4.0
-    model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert list(model.seasonalities) == ["yearly", "weekly"]
@@ -162,7 +162,7 @@ def test_adding_after_a_fit_is_refused(peyton_manning_df, compiled_optimizer_mod
     read when the layout is built, so a later addition would be accepted and
     then ignored."""
     model = AnalyticProphet()
-    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     with pytest.raises(RuntimeError, match="before fitting"):
@@ -204,7 +204,7 @@ def test_a_custom_component_reaches_the_parameter_vector(peyton_manning_df,
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
     model = AnalyticProphet().add_seasonality("monthly", 30.5, 5)
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     # registered first, so its block comes first -- auto-selection appends
     assert list(model.seasonalities) == ["monthly", "yearly", "weekly"]
@@ -217,7 +217,7 @@ def test_a_custom_component_reaches_predict(peyton_manning_df, compiled_optimize
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
     model = AnalyticProphet().add_seasonality("monthly", 30.5, 5)
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
     forecast = model.predict(model.make_future_dataframe(periods=30))
 
     assert len(forecast) == len(df) + 30
@@ -233,7 +233,7 @@ def test_overwriting_a_built_in_survives_auto_selection(peyton_manning_df,
     """The point of the exemption: a hand-registered `weekly` must not be
     replaced by the order-3 built-in at fit time."""
     model = AnalyticProphet().add_seasonality("weekly", 7, 10, prior_scale=3.0)
-    model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert registered(model, "weekly") == {"period": 7.0, "fourier_order": 10,
@@ -249,10 +249,10 @@ def test_a_hand_registered_component_survives_a_refit(peyton_manning_df,
     """#41: only what the auto rule registered is cleared between fits. A
     component the user added is theirs."""
     model = AnalyticProphet().add_seasonality("monthly", 30.5, 5)
-    model.fit_cpp(peyton_manning_df, lib_path=compiled_optimizer_module)
+    model.fit(peyton_manning_df, lib_path=compiled_optimizer_module)
     assert list(model.seasonalities) == ["monthly", "yearly", "weekly"]
 
-    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     assert list(model.seasonalities) == ["monthly", "weekly"]
 
@@ -283,7 +283,7 @@ def test_registry_and_posterior_agree_with_prophet(prophet_comparison,
     ours = AnalyticProphet()
     configure(ours)
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     assert list(ours.seasonalities) == list(prophet_model.seasonalities)
     for name, props in ours.seasonalities.items():

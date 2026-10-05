@@ -78,7 +78,7 @@ def test_fit_starts_from_prophets_deterministic_initialization(prepared_model, p
     monkeypatch.setattr(forecaster, "from_dict_to_array", capture)
 
     model = AnalyticProphet()
-    model.fit(peyton_manning_df.iloc[:200].reset_index(drop=True), analytic=True)
+    model.fit(peyton_manning_df.iloc[:200].reset_index(drop=True), backend="python", analytic=True)
 
     expected_k, expected_m = linear_growth_init(model.t, model.y_scaled)
     assert seen["k"] == pytest.approx(expected_k)
@@ -92,15 +92,15 @@ def test_fit_starts_from_prophets_deterministic_initialization(prepared_model, p
     assert list(model.seasonalities) == ["weekly"]
 
 
-def test_fit_cpp_is_deterministic(peyton_manning_df, compiled_optimizer_module):
-    """fit_cpp() used to draw an unseeded 2.0 * N(0, 1) init, so repeated fits
+def test_the_compiled_path_is_deterministic(peyton_manning_df, compiled_optimizer_module):
+    """The compiled path used to draw an unseeded 2.0 * N(0, 1) init, so repeated fits
     on identical data disagreed. It now starts where fit() starts."""
     small_df = peyton_manning_df.iloc[:300].reset_index(drop=True)
 
     runs = []
     for _ in range(2):
         model = AnalyticProphet()
-        model.fit_cpp(small_df, lib_path=compiled_optimizer_module)
+        model.fit(small_df, lib_path=compiled_optimizer_module)
         runs.append(model.get_parameters())
 
     np.testing.assert_array_equal(runs[0], runs[1])
@@ -112,10 +112,10 @@ def test_both_fit_paths_start_from_the_same_point(peyton_manning_df, compiled_op
     small_df = peyton_manning_df.iloc[:300].reset_index(drop=True)
 
     python_model = AnalyticProphet()
-    python_model.fit(small_df, analytic=True)
+    python_model.fit(small_df, backend="python", analytic=True)
 
     cpp_model = AnalyticProphet()
-    cpp_model.fit_cpp(small_df, lib_path=compiled_optimizer_module)
+    cpp_model.fit(small_df, lib_path=compiled_optimizer_module)
 
     expected = linear_growth_init(python_model.t, python_model.y_scaled)
     assert linear_growth_init(cpp_model.t, cpp_model.y_scaled) == expected
@@ -192,7 +192,7 @@ def test_cpp_converges_within_prophets_iteration_cap(peyton_manning_df, compiled
     stopped the run.
     """
     model = AnalyticProphet()
-    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert model.opt_status == 0
@@ -256,7 +256,7 @@ def test_non_default_changepoint_count_fits(peyton_manning_df, compiled_optimize
     """
     model = AnalyticProphet()
     model.n_changepoints = n_changepoints
-    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert model.layout.n_changepoints == n_changepoints

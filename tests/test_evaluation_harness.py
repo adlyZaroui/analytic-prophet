@@ -30,7 +30,7 @@ from analytic_prophet import AnalyticProphet
 def test_measurements_round_trip_through_the_results_file(tmp_path):
     written = [
         harness.Measurement(2, "m4_daily_17", "plain", "prophet", "rmse", 1.5, "y"),
-        harness.Measurement(2, "m4_daily_17", "plain", "fit_cpp", "rmse", 1.25, "y", 7),
+        harness.Measurement(2, "m4_daily_17", "plain", "compiled", "rmse", 1.25, "y", 7),
     ]
     csv_path, json_path = harness.write("tier2_x", written, results_dir=tmp_path)
 
@@ -38,8 +38,8 @@ def test_measurements_round_trip_through_the_results_file(tmp_path):
 
     assert csv_path.exists() and json_path.exists()
     assert [r["metric"] for r in rows] == ["rmse", "rmse"]
-    # sorted, so fit_cpp precedes prophet regardless of the order written
-    assert rows[0]["implementation"] == "fit_cpp"
+    # sorted, so compiled precedes prophet regardless of the order written
+    assert rows[0]["implementation"] == "compiled"
     assert rows[0]["value"] == 1.25 and rows[0]["horizon"] == 7
     assert rows[1]["value"] == 1.5 and rows[1]["horizon"] is None
 
@@ -130,7 +130,7 @@ def test_the_local_corpus_yields_prophet_shaped_frames():
 def fitted(request):
     lib = request.getfixturevalue("compiled_optimizer_module")
     model = AnalyticProphet()
-    model.fit_cpp(corpora.peyton_manning(300), lib_path=lib)
+    model.fit(corpora.peyton_manning(300), lib_path=lib)
     return model
 
 
@@ -180,7 +180,7 @@ def test_the_curvature_spectrum_finds_the_flat_directions(peyton_manning_df,
     blocks = {}
     for growth in ("linear", "flat"):
         model = AnalyticProphet(growth=growth)
-        model.fit_cpp(df, lib_path=compiled_optimizer_module)
+        model.fit(df, lib_path=compiled_optimizer_module)
         hessian = metrics.smooth_hessian(model, model.get_parameters())
         layout = model.layout
         trend = np.r_[[layout.k_idx, layout.m_idx],

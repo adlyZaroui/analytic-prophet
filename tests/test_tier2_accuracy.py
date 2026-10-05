@@ -90,13 +90,13 @@ def test_the_model_for_a_cutoff_never_saw_past_it(weekly_series,
                                pd.Timedelta("120 D"))
 
     seen = []
-    real_fit = AnalyticProphet.fit_cpp
+    real_fit = AnalyticProphet.fit
 
     def record(self, df, *args, **kwargs):
         seen.append(pd.to_datetime(df["ds"]).max())
         return real_fit(self, df, *args, **kwargs)
 
-    monkeypatch.setattr(AnalyticProphet, "fit_cpp", record)
+    monkeypatch.setattr(AnalyticProphet, "fit", record)
     tier2._our_cross_validation(weekly_series, cutoffs, horizon,
                                 compiled_optimizer_module)
 

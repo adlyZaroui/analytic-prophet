@@ -75,7 +75,7 @@ def our_score(bridge, stan_model, stan_data, df, lib_path, algorithm=None):
     model = AnalyticProphet(n_changepoints=len(changepoints_t))
     model.set_changepoints = lambda: setattr(
         model, "changepoints_t", changepoints_t.copy())
-    model.fit_cpp(df, lib_path=lib_path, algorithm=algorithm)
+    model.fit(df, lib_path=lib_path, algorithm=algorithm)
     return model, bridge.stan_log_prob(
         stan_model, stan_data, model.params["k"][0][0], model.params["m"][0][0],
         model.params["delta"][0], model.sigma_obs, model.params["beta"][0])
@@ -159,9 +159,9 @@ def test_the_python_newton_also_matches_its_own_lbfgs(peyton_manning_df, n_rows)
     df = peyton_manning_df.iloc[:n_rows].reset_index(drop=True)
 
     newton = AnalyticProphet()
-    newton.fit(df, analytic=True, algorithm="Newton")
+    newton.fit(df, backend="python", analytic=True, algorithm="Newton")
     lbfgs = AnalyticProphet()
-    lbfgs.fit(df, analytic=True, algorithm="LBFGS")
+    lbfgs.fit(df, backend="python", analytic=True, algorithm="LBFGS")
 
     assert newton._minus_log_posterior(newton.get_parameters()) == pytest.approx(
         lbfgs._minus_log_posterior(lbfgs.get_parameters()), abs=NEWTON_MATCHES_LBFGS)
@@ -188,7 +188,7 @@ def test_the_compiled_path_follows_the_rule(peyton_manning_df,
                                             compiled_optimizer_module,
                                             n_rows, expected):
     model = AnalyticProphet()
-    model.fit_cpp(peyton_manning_df.iloc[:n_rows].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:n_rows].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     assert model.optimizer_used == expected
 
@@ -199,7 +199,7 @@ def test_the_python_path_follows_the_same_rule(peyton_manning_df, n_rows, expect
     """Both paths, or a script that switches between them changes optimizer
     without asking."""
     model = AnalyticProphet()
-    model.fit(peyton_manning_df.iloc[:n_rows].reset_index(drop=True), analytic=True)
+    model.fit(peyton_manning_df.iloc[:n_rows].reset_index(drop=True), backend="python", analytic=True)
     assert model.optimizer_used == expected
 
 
@@ -214,11 +214,11 @@ def test_an_explicit_algorithm_overrides_the_rule(peyton_manning_df,
 
     for df in (short, long):
         compiled = AnalyticProphet()
-        compiled.fit_cpp(df, lib_path=compiled_optimizer_module, algorithm=algorithm)
+        compiled.fit(df, lib_path=compiled_optimizer_module, algorithm=algorithm)
         assert compiled.optimizer_used == algorithm
 
         python = AnalyticProphet()
-        python.fit(df, analytic=True, algorithm=algorithm)
+        python.fit(df, backend="python", analytic=True, algorithm=algorithm)
         assert python.optimizer_used == algorithm
 
 
@@ -249,7 +249,7 @@ def test_a_failed_compiled_lbfgs_falls_back_to_newton(peyton_manning_df, cpp_mod
 
     model = AnalyticProphet()
     with caplog.at_level("WARNING", logger="analytic_prophet"):
-        model.fit_cpp(df, lib_path=compiled_optimizer_module)
+        model.fit(df, lib_path=compiled_optimizer_module)
 
     assert model.optimizer_used == "Newton"
     assert model.opt_status_message == "converged"
@@ -273,7 +273,7 @@ def test_a_failed_python_lbfgs_falls_back_to_newton(peyton_manning_df,
 
     model = AnalyticProphet()
     with caplog.at_level("WARNING", logger="analytic_prophet"):
-        model.fit(df, analytic=True)
+        model.fit(df, backend="python", analytic=True)
 
     assert model.optimizer_used == "Newton"
     assert model.opt.success
@@ -296,7 +296,7 @@ def test_the_iteration_cap_is_not_a_failure(peyton_manning_df, cpp_module,
                         lambda _: failing_cpp_module(cpp_module, cap_status))
 
     model = AnalyticProphet()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     assert model.optimizer_used == "LBFGS"
 
@@ -311,7 +311,7 @@ def test_the_fallback_can_be_switched_off(peyton_manning_df, cpp_module,
 
     model = AnalyticProphet()
     model.newton_fallback = False
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     assert model.optimizer_used == "LBFGS"
     assert model.opt_status_message == "provoked"
@@ -340,7 +340,7 @@ def test_the_fallback_fires_where_the_python_path_actually_fails(peyton_manning_
 
     without = pin_yearly_only(AnalyticProphet())
     without.newton_fallback = False
-    without.fit(df, analytic=True, initial_params=zero_init)
+    without.fit(df, backend="python", analytic=True, initial_params=zero_init)
     if without.opt.status != SCIPY_LINE_SEARCH_FAILURE:
         # Which configurations provoke scipy's line search is a property of the
         # scipy build. This one does on macOS/arm64, and in no CI job on Linux,
@@ -354,7 +354,7 @@ def test_the_fallback_fires_where_the_python_path_actually_fails(peyton_manning_
     assert without.opt.status == SCIPY_LINE_SEARCH_FAILURE
 
     with_fallback = pin_yearly_only(AnalyticProphet())
-    with_fallback.fit(df, analytic=True, initial_params=zero_init)
+    with_fallback.fit(df, backend="python", analytic=True, initial_params=zero_init)
 
     assert with_fallback.optimizer_used == "Newton"
     assert with_fallback.opt.success
@@ -369,11 +369,11 @@ def test_the_compiled_path_converges_on_every_short_series(peyton_manning_df,
                                                            compiled_optimizer_module,
                                                            n_rows):
     """The other half of #25: a fallback needs something to catch, and there is
-    still nothing here -- `fit_cpp` converges at every size down to ten
+    still nothing here -- the compiled path converges at every size down to ten
     observations, now under whichever algorithm the rule picks.
     """
     model = AnalyticProphet()
-    model.fit_cpp(peyton_manning_df.iloc[:n_rows].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:n_rows].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert model.opt_status_message == "converged", model.opt_status_message
@@ -392,7 +392,7 @@ def test_the_python_path_converges_on_every_short_series(peyton_manning_df, n_ro
     nearby. Better-conditioned, and it converges everywhere now.
     """
     model = AnalyticProphet()
-    model.fit(peyton_manning_df.iloc[:n_rows].reset_index(drop=True), analytic=True)
+    model.fit(peyton_manning_df.iloc[:n_rows].reset_index(drop=True), backend="python", analytic=True)
     assert model.opt.success, f"{model.optimizer_used} reports {model.opt.message} at T={n_rows}"
 
 
@@ -412,7 +412,7 @@ def test_newton_runs_on_the_split_reformulation(peyton_manning_df):
     member, which is the property that makes the two problems equivalent.
     """
     model = AnalyticProphet()
-    model.fit(peyton_manning_df.iloc[:50].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:50].reset_index(drop=True), backend="python",
               analytic=True, algorithm="Newton")
 
     assert model.optimizer_used == "Newton"

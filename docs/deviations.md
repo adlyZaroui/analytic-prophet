@@ -12,7 +12,7 @@ were measured and settled, and gaps that are still open.
 Three deviations are decisions rather than outstanding gaps. Each was measured before
 being settled.
 
-### Three names stay different
+### Two names stay different
 
 Names follow Prophet's. `tests/test_prophet_naming.py` enumerates the mapping and fails
 if one moves on either side — including if an exception stops being an exception, since a
@@ -23,9 +23,19 @@ Only these have no counterpart to match:
 
 | here | why |
 |---|---|
-| `fit_cpp` | Prophet has nothing like it. It is the point of the project. |
 | `sigma_k`, `sigma_m` | `[stan]` writes these as literals in `k ~ normal(0, 5)` rather than naming them in the data block, and Prophet does not expose them. |
 | `T` | `[stan] T`. Prophet reads the count off `history.shape[0]` rather than keeping an attribute. |
+
+`fit_cpp` was a third until [#98](https://github.com/adlyZaroui/analytic-prophet/issues/98),
+and it was the one that mattered: it named the deliverable, so the one call a ported
+script could not keep was the one that got the fast path. The compiled core is now what
+`fit` does, and the difference is closed rather than justified.
+
+What replaces it is smaller and is an argument rather than a name: `fit` takes
+`backend="cpp"|"python"`, which Prophet has no counterpart for because it has one
+backend. Arguments belonging to the backend not selected are **rejected**, not ignored —
+the rule [#52](https://github.com/adlyZaroui/analytic-prophet/issues/52) set for the
+constructor, for the same reason.
 
 Everything else that used to differ now matches, including the five that were argued for
 in an earlier revision of this section — `changepoint_prior_scale` (was `tau`),
@@ -117,7 +127,7 @@ is the one the refusal implies
 
 What the caller set survives. What the previous history produced does not.
 `FIT_DERIVED_ATTRIBUTES` in `analytic_prophet/forecaster.py` is the list that makes it true, and
-`_reset_fit_state` applies it at the top of both `fit()` and `fit_cpp()`.
+`_reset_fit_state` applies it at the top of both backends.
 
 Keeping refits is the more useful behaviour and costs nothing measurable — the
 [posterior and prediction agreement](../evaluation/results/report.md) are unchanged — but it is a divergence,
@@ -225,7 +235,7 @@ Tracked, deliberate, and not yet closed:
   **tighter** than Stan's `2.22e-12`, at `1e-16`. Taking Stan's number would put this
   path 4.43 nats *below* Prophet on the full series — see
   [What Stan's tolerance costs on the Python path](#what-stans-tolerance-costs-on-the-python-path).
-  `fit_cpp`, the deliverable, uses Stan's values unchanged.
+  The compiled backend, the deliverable, uses Stan's values unchanged.
 - **Overall fit**: on series past two years, predictions differ from Prophet's by
   0.17–0.59% of the series scale (history plus a 30-day horizon, measured at T = 730,
   800, 1000, 1500, 2000, 2500, 2905). On shorter series the trend decomposition is
@@ -303,8 +313,8 @@ What settles it is the comparison #24 was waiting on — what Prophet itself rea
 | 2905 | 8004.79800 | **8005.15920** | **8000.37110** |
 
 Matching Stan's number would put the reference path **4.43 nats below the model it
-reproduces**. Tightening instead costs iterations and nothing else. `fit_cpp`, the
-deliverable, uses Stan's values unchanged.
+reproduces**. Tightening instead costs iterations and nothing else. The compiled
+backend, the deliverable, uses Stan's values unchanged.
 
 The table is macOS/arm64, like the rest of this section. On Linux the same comparison
 gives a shortfall of **3.86 nats** — the same conclusion, a different size. CI also

@@ -143,7 +143,7 @@ def outcomes(compiled_optimizer_module):
 def test_every_bad_input_raises(outcomes, entry, case):
     """A `ValueError`, through both entry points, for every case.
 
-    Both matter: `optimize()` is what `fit_cpp` drives, and
+    Both matter: `optimize()` is what the compiled path drives, and
     `minus_log_posterior_and_gradient` is what the test fixtures and anyone
     reading the pybind11 signatures will call.
     """

@@ -50,7 +50,7 @@ def reference_trends(model, t, cap_scaled, floor, n_samples):
 @pytest.fixture
 def fitted(peyton_manning_df, compiled_optimizer_module):
     model = AnalyticProphet()
-    model.fit_cpp(peyton_manning_df.iloc[:1200].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:1200].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     return model
 
@@ -149,7 +149,7 @@ def test_the_seasonal_term_is_hoisted_only_when_it_is_invariant(
 
     model = AnalyticProphet(uncertainty_samples=200)
     model.add_regressor("temp", regressor_predictor=True)
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
     future = model.make_future_dataframe(periods=60)
 
     model.rng = np.random.default_rng(2)

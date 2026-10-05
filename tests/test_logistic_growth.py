@@ -141,7 +141,7 @@ def test_analytic_gradient_matches_finite_differences(peyton_manning_df,
     model = logistic_model()
     if multiplicative:
         model.seasonality_mode = "multiplicative"
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)
     params = np.concatenate(([1.2], [-0.4],
@@ -169,7 +169,7 @@ def test_both_languages_agree_under_logistic_growth(peyton_manning_df,
     the two transcriptions agree."""
     df = with_cap(peyton_manning_df.iloc[:400].reset_index(drop=True))
     model = logistic_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)
     params = np.concatenate(([1.2], [-0.4],
@@ -195,7 +195,7 @@ def test_logistic_growth_requires_a_cap_column(peyton_manning_df,
                                                compiled_optimizer_module):
     model = logistic_model()
     with pytest.raises(ValueError, match='column "cap"'):
-        model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+        model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                       lib_path=compiled_optimizer_module)
 
 
@@ -203,7 +203,7 @@ def test_a_cap_below_the_floor_is_rejected(peyton_manning_df,
                                            compiled_optimizer_module):
     df = peyton_manning_df.iloc[:300].reset_index(drop=True).assign(cap=-1.0)
     with pytest.raises(ValueError, match="cap must be greater than floor"):
-        logistic_model().fit_cpp(df, lib_path=compiled_optimizer_module)
+        logistic_model().fit(df, lib_path=compiled_optimizer_module)
 
 
 def test_an_unsupported_growth_mode_says_so(peyton_manning_df,
@@ -213,7 +213,7 @@ def test_an_unsupported_growth_mode_says_so(peyton_manning_df,
     model = AnalyticProphet()
     model.growth = "quadratic"
     with pytest.raises(ValueError, match="flat, linear, logistic"):
-        model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+        model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                       lib_path=compiled_optimizer_module)
 
 
@@ -222,7 +222,7 @@ def test_predict_requires_the_cap_column(peyton_manning_df, compiled_optimizer_m
     comes from the frame passed to predict rather than being carried over."""
     df = with_cap(peyton_manning_df.iloc[:400].reset_index(drop=True))
     model = logistic_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     future = model.make_future_dataframe(periods=30)
     with pytest.raises(ValueError, match='column "cap"'):
@@ -238,7 +238,7 @@ def test_a_forecast_stays_under_a_raised_capacity(peyton_manning_df,
     given, and a different future capacity changes the forecast."""
     df = with_cap(peyton_manning_df.iloc[:1000].reset_index(drop=True))
     model = logistic_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     future = model.make_future_dataframe(periods=365)
     low = model.predict(future.assign(cap=df["cap"].iloc[0]))
@@ -254,7 +254,7 @@ def test_compute_trend_agrees_with_the_fitted_trend(peyton_manning_df,
     has to produce the same logistic curve the objective fitted."""
     df = with_cap(peyton_manning_df.iloc[:400].reset_index(drop=True))
     model = logistic_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     k, m = model.params["k"][0][0], model.params["m"][0][0]
     delta = model.params["delta"][0]
@@ -299,7 +299,7 @@ def test_init_clamps_y_outside_the_capacity():
 
 def test_linear_growth_takes_its_own_path(peyton_manning_df, compiled_optimizer_module):
     model = AnalyticProphet()
-    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert model.growth == "linear"
@@ -327,7 +327,7 @@ def test_objective_and_posterior_agree_with_prophet(prophet_comparison,
 
     ours = logistic_model()
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     np.testing.assert_allclose(ours.cap_scaled,
                                np.asarray(stan_data["cap"], dtype=float), rtol=1e-12)

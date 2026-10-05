@@ -57,7 +57,7 @@ def scipy_options(monkeypatch):
 
         monkeypatch.setattr(forecaster, "minimize", patched)
         model = AnalyticProphet()
-        model.fit(df, analytic=True, algorithm="LBFGS")
+        model.fit(df, backend="python", analytic=True, algorithm="LBFGS")
         monkeypatch.setattr(forecaster, "minimize", real_minimize)
         return model, model._minus_log_posterior(model.get_parameters())
     return run
@@ -77,7 +77,7 @@ def test_the_settings_fit_passes_are_stans_except_for_one(peyton_manning_df, sci
     original = forecaster.minimize
     forecaster.minimize = patched
     try:
-        model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
+        model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True), backend="python",
                   analytic=True, algorithm="LBFGS")
     finally:
         forecaster.minimize = original
@@ -167,7 +167,7 @@ def test_the_run_stops_on_a_plateau_it_then_climbs_out_of(peyton_manning_df):
     below is Stan's test evaluated by hand on the trajectory.
     """
     model = AnalyticProphet()
-    model.fit(peyton_manning_df.reset_index(drop=True), analytic=True, algorithm="LBFGS")
+    model.fit(peyton_manning_df.reset_index(drop=True), backend="python", analytic=True, algorithm="LBFGS")
     trace = np.asarray(model.loss_over_iterations)
 
     scale = np.maximum.reduce([np.abs(trace[:-1]), np.abs(trace[1:]), np.ones(len(trace) - 1)])
@@ -221,7 +221,7 @@ def test_stans_objective_tolerance_would_score_below_prophet(prophet_comparison,
         original = forecaster.minimize
         forecaster.minimize = patched
         try:
-            model.fit(df, analytic=True, algorithm="LBFGS")
+            model.fit(df, backend="python", analytic=True, algorithm="LBFGS")
         finally:
             forecaster.minimize = original
         return bridge.stan_log_prob(
@@ -279,11 +279,12 @@ def test_the_recorded_trajectory_is_the_objective_being_minimized(peyton_manning
     d+ + d-, equal only where at most one of each pair is non-zero -- and they
     agree exactly at the answer, so the final value was right and nothing caught
     it. What it produced was a trajectory that rose (by 0.031 at T=1000) on a run
-    that descends monotonically, and a trace not comparable with `fit_cpp`'s.
+    that descends monotonically, and a trace not comparable with the compiled
+    path's.
     """
     df = peyton_manning_df.iloc[:n_rows].reset_index(drop=True)
     model = AnalyticProphet()
-    model.fit(df, analytic=True, algorithm="LBFGS")
+    model.fit(df, backend="python", analytic=True, algorithm="LBFGS")
     trace = np.asarray(model.loss_over_iterations)
 
     assert np.all(np.diff(trace) <= 0), "L-BFGS-B descends; the trace should too"

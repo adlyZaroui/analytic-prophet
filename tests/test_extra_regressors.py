@@ -46,10 +46,10 @@ def test_add_regressor_no_longer_silently_does_nothing(peyton_manning_df,
     df = with_regressors(peyton_manning_df.iloc[:1000].reset_index(drop=True))
 
     without = AnalyticProphet()
-    without.fit_cpp(df, lib_path=compiled_optimizer_module)
+    without.fit(df, lib_path=compiled_optimizer_module)
 
     with_one = AnalyticProphet().add_regressor("temp")
-    with_one.fit_cpp(df, lib_path=compiled_optimizer_module)
+    with_one.fit(df, lib_path=compiled_optimizer_module)
 
     assert with_one.layout.n_holiday_columns == without.layout.n_holiday_columns + 1
     assert with_one.layout.size == without.layout.size + 1
@@ -129,7 +129,7 @@ def test_the_same_regressor_may_be_re_registered():
 def test_adding_a_regressor_after_a_fit_is_refused(peyton_manning_df,
                                                    compiled_optimizer_module):
     model = AnalyticProphet()
-    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     with pytest.raises(RuntimeError, match="before fitting"):
         model.add_regressor("temp")
@@ -168,7 +168,7 @@ def test_standardization_matches_prophets(prophet_comparison, peyton_manning_df,
     prophet_model.fit(df)
 
     ours = AnalyticProphet().add_regressor("temp").add_regressor("promo")
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     for name in ("temp", "promo"):
         theirs, mine = prophet_model.extra_regressors[name], ours.extra_regressors[name]
@@ -183,7 +183,7 @@ def test_standardization_is_fitted_on_history_and_reused_at_predict(
     different scale has to be mapped through the *same* transformation."""
     df = with_regressors(peyton_manning_df.iloc[:400].reset_index(drop=True))
     model = AnalyticProphet().add_regressor("temp")
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     fitted_mu = model.extra_regressors["temp"]["mu"]
     fitted_std = model.extra_regressors["temp"]["std"]
@@ -204,7 +204,7 @@ def test_a_missing_regressor_column_is_rejected(peyton_manning_df,
     model = AnalyticProphet().add_regressor("temp")
 
     with pytest.raises(ValueError, match="Regressor 'temp' missing"):
-        model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+        model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                       lib_path=compiled_optimizer_module)
 
 
@@ -215,7 +215,7 @@ def test_a_nan_in_a_regressor_column_is_rejected(peyton_manning_df,
     model = AnalyticProphet().add_regressor("temp")
 
     with pytest.raises(ValueError, match="Found NaN in column 'temp'"):
-        model.fit_cpp(df, lib_path=compiled_optimizer_module)
+        model.fit(df, lib_path=compiled_optimizer_module)
 
 
 def test_predict_requires_the_regressor_column(peyton_manning_df,
@@ -224,7 +224,7 @@ def test_predict_requires_the_regressor_column(peyton_manning_df,
     future values, which a series handed over at registration cannot supply."""
     df = with_regressors(peyton_manning_df.iloc[:400].reset_index(drop=True))
     model = AnalyticProphet().add_regressor("temp")
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     future = model.make_future_dataframe(periods=30)
     with pytest.raises(ValueError, match="Regressor 'temp' missing"):
@@ -246,7 +246,7 @@ def test_regressor_columns_follow_the_holiday_ones(peyton_manning_df,
 
     model = (AnalyticProphet().add_holidays(frame, prior_scale=3.0)
              .add_regressor("temp", prior_scale=7.0))
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     data = model.sigmas[model.layout.holiday_block]
     assert data.shape == (2,)
@@ -259,7 +259,7 @@ def test_a_multiplicative_regressor_is_marked_as_such(peyton_manning_df,
     df = with_regressors(peyton_manning_df.iloc[:1000].reset_index(drop=True))
     model = (AnalyticProphet().add_regressor("temp")
              .add_regressor("promo", mode="multiplicative"))
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     assert model._multiplicative
     np.testing.assert_array_equal(model.s_m[model.layout.seasonality_block], 0.0)
@@ -276,7 +276,7 @@ def test_a_regressor_carrying_signal_is_actually_fitted(peyton_manning_df,
     df["y"] = df["y"] + 2.0 * df["driver"]
 
     model = AnalyticProphet().add_regressor("driver")
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     coefficient = model.params["beta"][0][model.layout.holiday_block][-1]
     std = model.extra_regressors["driver"]["std"]
@@ -306,7 +306,7 @@ def test_design_matrix_sigmas_and_posterior_match_prophets(prophet_comparison,
 
     ours = configure(AnalyticProphet())
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     _, X_ours = ours._design_matrices()
     X_stan = np.asarray(stan_data["X"], dtype=float)

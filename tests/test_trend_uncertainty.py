@@ -42,7 +42,7 @@ def fitted(compiled_optimizer_module):
     from pathlib import Path
     df = pd.read_csv(Path(__file__).parent / "data" / "peyton_manning.csv")
     model = AnalyticProphet(uncertainty_samples=400)
-    model.fit_cpp(df.iloc[:1000].reset_index(drop=True),
+    model.fit(df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     return model
 
@@ -140,7 +140,7 @@ def test_the_laplace_scale_has_prophets_epsilon(peyton_manning_df,
     })
     model = AnalyticProphet(uncertainty_samples=200, yearly_seasonality=False,
                           weekly_seasonality=False, daily_seasonality=False)
-    model.fit_cpp(straight, lib_path=compiled_optimizer_module)
+    model.fit(straight, lib_path=compiled_optimizer_module)
 
     assert np.abs(model.params["delta"][0]).mean() < 1e-6, (
         "the fixture must actually produce a flat delta for this to test anything")
@@ -188,7 +188,7 @@ def test_predict_does_not_write_into_a_frame_carrying_extra_columns(
     the regressor path already copied, the plain path did not."""
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
     model = AnalyticProphet()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     future = model.make_future_dataframe(periods=10)
     future["note"] = "unchanged"
@@ -219,7 +219,7 @@ def test_the_band_agrees_with_prophets(prophet_comparison, compiled_optimizer_mo
         prophet_model.make_future_dataframe(periods=365))
 
     ours = AnalyticProphet(uncertainty_samples=1000)
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
     our_forecast = ours.predict(ours.make_future_dataframe(periods=365))
 
     theirs = (prophet_forecast["trend_upper"] - prophet_forecast["trend_lower"]).values[len(df):]
@@ -242,7 +242,7 @@ def test_prophet_also_collapses_the_band_without_a_horizon(prophet_comparison,
     theirs = prophet_model.predict(prophet_model.make_future_dataframe(periods=0))
 
     ours = AnalyticProphet(uncertainty_samples=200)
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
     mine = ours.predict(ours.make_future_dataframe(periods=0))
 
     assert (theirs["trend_upper"] - theirs["trend_lower"]).abs().max() < 1e-9

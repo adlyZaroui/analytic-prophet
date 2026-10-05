@@ -73,22 +73,22 @@ def build_cpp_extension(out_dir):
 
     compiler = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
     if compiler is None:
-        print("no C++ compiler found; skipping fit_cpp", file=sys.stderr)
+        print("no C++ compiler found; skipping the compiled path", file=sys.stderr)
         return None
     try:
         import pybind11
     except ImportError:
-        print("pybind11 not installed; skipping fit_cpp", file=sys.stderr)
+        print("pybind11 not installed; skipping the compiled path", file=sys.stderr)
         return None
 
     eigen = _find_eigen()
     if eigen is None:
-        print("Eigen headers not found (set EIGEN_INCLUDE_DIR); skipping fit_cpp", file=sys.stderr)
+        print("Eigen headers not found (set EIGEN_INCLUDE_DIR); skipping the compiled path", file=sys.stderr)
         return None
 
     lbfgspp = _find_lbfgspp()
     if lbfgspp is None:
-        print("LBFGSpp headers not found (`brew install lbfgspp`); skipping fit_cpp", file=sys.stderr)
+        print("LBFGSpp headers not found (`brew install lbfgspp`); skipping the compiled path", file=sys.stderr)
         return None
 
     cmd = [compiler, "-std=c++17", "-shared", "-fPIC", "-O3",
@@ -163,18 +163,18 @@ def fit_prophet(df):
 def fit_python(df, analytic=True):
     from analytic_prophet import AnalyticProphet
     model = AnalyticProphet()
-    model.fit(df, analytic=analytic)
+    model.fit(df, backend="python", analytic=analytic)
     return model
 
 
-def fit_cpp(df, lib_path):
+def fit_compiled(df, lib_path):
     from analytic_prophet import AnalyticProphet
     model = AnalyticProphet()
-    model.fit_cpp(df, lib_path=lib_path)
+    model.fit(df, lib_path=lib_path)
     return model
 
 
-IMPLEMENTATIONS = ("prophet", "fit(analytic=True)", "fit(numeric grad)", "fit_cpp")
+IMPLEMENTATIONS = ("prophet", "python", "python(numeric grad)", "compiled")
 
 
 def run_one(name, df, lib_path=None):
@@ -182,14 +182,14 @@ def run_one(name, df, lib_path=None):
     unavailable, so callers decide how to report that."""
     if name == "prophet":
         return fit_prophet(df)
-    if name == "fit(analytic=True)":
+    if name == "python":
         return fit_python(df, analytic=True)
-    if name == "fit(numeric grad)":
+    if name == "python(numeric grad)":
         return fit_python(df, analytic=False)
-    if name == "fit_cpp":
+    if name == "compiled":
         if lib_path is None:
             raise RuntimeError("the C++ extension was not built")
-        return fit_cpp(df, lib_path)
+        return fit_compiled(df, lib_path)
     raise ValueError(f"unknown implementation {name!r}")
 
 

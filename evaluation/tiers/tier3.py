@@ -91,10 +91,10 @@ else:
     from analytic_prophet import AnalyticProphet
     imported = harness.peak_rss_bytes()
     model = AnalyticProphet(**harness.PROPHET_KWARGS)
-    if {name!r} == "fit_cpp":
-        model.fit_cpp(df, lib_path={lib!r})
+    if {name!r} == "compiled":
+        model.fit(df, lib_path={lib!r})
     else:
-        model.fit(df, analytic=True)
+        model.fit(df, backend="python", analytic=True)
 print("RESULT" + json.dumps({{"baseline": baseline, "imported": imported,
                               "peak": harness.peak_rss_bytes()}}))
 """
@@ -142,12 +142,12 @@ def _fitters(df, lib_path, **kwargs):
         Prophet(**settings).fit(df)
 
     def compiled():
-        AnalyticProphet(**settings).fit_cpp(df, lib_path=lib_path)
+        AnalyticProphet(**settings).fit(df, lib_path=lib_path)
 
     def python():
-        AnalyticProphet(**settings).fit(df, analytic=True)
+        AnalyticProphet(**settings).fit(df, backend="python", analytic=True)
 
-    return {"prophet": prophet, "fit_cpp": compiled, "fit(analytic=True)": python}
+    return {"prophet": prophet, "compiled": compiled, "python": python}
 
 
 def _predictors(df, lib_path, **kwargs):
@@ -169,15 +169,15 @@ def _predictors(df, lib_path, **kwargs):
     settings = dict(harness.PROPHET_KWARGS, **kwargs)
     prophet_model = Prophet(**settings).fit(df)
     ours = AnalyticProphet(**settings)
-    ours.fit_cpp(df, lib_path=lib_path)
+    ours.fit(df, lib_path=lib_path)
     prophet_future = prophet_model.make_future_dataframe(periods=90)
     our_future = ours.make_future_dataframe(periods=90)
     return {
         "prophet": lambda: prophet_model.predict(prophet_future),
         "prophet(exact)": lambda: prophet_model.predict(prophet_future,
                                                         vectorized=False),
-        "fit_cpp": lambda: ours.predict(our_future),
-        "fit_cpp(exact)": lambda: ours.predict(our_future, vectorized=False),
+        "compiled": lambda: ours.predict(our_future),
+        "compiled(exact)": lambda: ours.predict(our_future, vectorized=False),
     }
 
 
@@ -206,7 +206,7 @@ def collect(sizes=SIZES, repeats=REPEATS, lib_path=None, with_memory=True):
             row(series, "default", name, "predict_wall", wall, "s")
             row(series, "default", name, "predict_cpu", cpu, "s")
         if with_memory:
-            for name in ("prophet", "fit_cpp", "fit(analytic=True)"):
+            for name in ("prophet", "compiled", "python"):
                 usage = peak_memory(name, size, lib_path)
                 if usage is not None:
                     for metric, value in usage.items():

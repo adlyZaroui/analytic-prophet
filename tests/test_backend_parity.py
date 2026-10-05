@@ -1,6 +1,14 @@
 """
-Issue #5: fit() initializes every parameter at exactly zero; fit_cpp() draws
-a wide random Gaussian ("STAN initialization"). The underlying objective is
+The two backends must fit the same model.
+
+Renamed from test_fit_cpp_parity.py in #98, when `fit_cpp` became
+`fit(backend="cpp")` -- the default -- and the reference path became
+`fit(backend="python")`. The subject is unchanged and is the reason the
+Python path exists at all: it is the readable version of what the C++ does,
+and it is only worth reading if the two agree.
+
+Issue #5: the Python path initializes every parameter at exactly zero; the
+compiled path drew a wide random Gaussian ("STAN initialization"). The underlying objective is
 convex in (k, m, delta, beta) for any fixed sigma_obs -- trend and
 seasonality are both linear in the parameters, and every remaining
 likelihood/prior term is a convex function of an affine map, scaled by a
@@ -10,7 +18,8 @@ turns that claim into a check: a real mismatch points at an actual bug, not
 "found a different local optimum," since convexity says there shouldn't be
 one.
 
-Both sides now estimate sigma_obs (#4 for fit(), #18 for fit_cpp()), so no
+Both sides now estimate sigma_obs (#4 for the Python path, #18 for the
+compiled one), so no
 pinning is needed any more: the two objectives are identical term for term,
 and the comparison is over the whole parameter vector.
 
@@ -22,8 +31,9 @@ good. Loss is the quantity convexity actually promises will agree.
 
 Both sides were broken when this test was written, by the same root cause:
 the Laplace prior on delta makes the objective non-smooth, and neither
-optimizer handled that. fit_cpp() failed loudly (LBFGSERR_ROUNDING_ERROR
-after ~2 iterations); fit() failed silently, stalling 17.8% above the
+optimizer handled that. The compiled path failed loudly
+(LBFGSERR_ROUNDING_ERROR after ~2 iterations); the Python path failed
+silently, stalling 17.8% above the
 optimum while reporting success=True. Issue #8 fixed both, and this test
 went from xfail to asserting real equality.
 
@@ -43,7 +53,7 @@ from analytic_prophet import AnalyticProphet, N_CHANGE_POINTS, n_yearly
 from conftest import pin_yearly_only
 
 
-def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_df, compiled_optimizer_module):
+def test_the_two_backends_converge_to_same_loss_from_matched_init(peyton_manning_df, compiled_optimizer_module):
     small_df = peyton_manning_df.iloc[:300].reset_index(drop=True)
     matched_init = {
         "k": 0.0,
@@ -52,7 +62,7 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
         "beta": np.zeros(2 * n_yearly),
     }
     python_model = pin_yearly_only(AnalyticProphet())
-    python_model.fit(small_df, analytic=True, initial_params=matched_init)
+    python_model.fit(small_df, backend="python", analytic=True, initial_params=matched_init)
     # This configuration -- yearly forced at order 10 on 328 days, from an
     # all-zero start, neither of which the defaults would produce -- is the one
     # place scipy reports ABNORMAL, which is #24. Since #25 the Newton fallback
@@ -68,7 +78,7 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
     assert np.all(np.isfinite(python_model.get_parameters()))
 
     cpp_model = pin_yearly_only(AnalyticProphet())
-    cpp_model.fit_cpp(small_df, initial_params=matched_init, lib_path=compiled_optimizer_module)
+    cpp_model.fit(small_df, initial_params=matched_init, lib_path=compiled_optimizer_module)
 
     # Both sides share the exact same (k, m, delta, beta) objective for a
     # fixed sigma_obs, so evaluate both parameter vectors on the Python
@@ -108,7 +118,7 @@ def test_fit_and_fit_cpp_converge_to_same_loss_from_matched_init(peyton_manning_
 
 def test_compiled_extension_exposes_its_entry_points(cpp_module):
     """Sanity check on the build step itself, independent of convergence: the
-    extension imports and exposes the entry points fit_cpp() calls."""
+    extension imports and exposes the entry points the compiled path calls."""
     assert callable(cpp_module.optimize)
     assert callable(cpp_module.minus_log_posterior_and_gradient)
 
@@ -149,15 +159,15 @@ def test_both_paths_preprocess_the_history_identically(peyton_manning_df,
     """The invariant `preprocess` exists to guarantee.
 
     It used to hold by coincidence -- 45 lines copied into each of `fit` and
-    `fit_cpp`, which every change had to be made to twice. It now holds by
+    the compiled path, which every change had to be made to twice. It now holds by
     construction, and this is what notices if the two ever diverge again.
     """
     df = peyton_manning_df.iloc[:n_rows].reset_index(drop=True)
 
     python_model = AnalyticProphet()
-    python_model.fit(df, analytic=True)
+    python_model.fit(df, backend="python", analytic=True)
     cpp_model = AnalyticProphet()
-    cpp_model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    cpp_model.fit(df, lib_path=compiled_optimizer_module)
 
     differing = [name for name in PREPROCESSED
                  if not same(getattr(python_model, name), getattr(cpp_model, name))]
@@ -173,7 +183,7 @@ def test_preprocess_leaves_the_same_state_a_fit_would(peyton_manning_df):
     prepared.preprocess(df)
 
     fitted = AnalyticProphet()
-    fitted.fit(df, analytic=True)
+    fitted.fit(df, backend="python", analytic=True)
 
     differing = [name for name in PREPROCESSED
                  if not same(getattr(prepared, name), getattr(fitted, name))]
@@ -201,7 +211,8 @@ def test_both_paths_start_from_the_same_initial_params(peyton_manning_df):
 
 def test_caller_supplied_initial_params_override_the_defaults(peyton_manning_df):
     """Including `sigma_obs`, which is the one key the two paths used to handle
-    differently: `fit` seeded it and `fit_cpp` did not, reading it back with a
+    differently: the Python path seeded it and the compiled one did not,
+    reading it back with a
     `.get(..., SIGMA_OBS_INIT)` instead. The shared helper always sets it, so
     both now read the same key -- equivalent in every case, and the one place
     this refactor was not a literal move."""

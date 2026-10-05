@@ -28,7 +28,7 @@ def both(prophet_comparison, compiled_optimizer_module):
     df = common.load_data(1200)
 
     ours = AnalyticProphet(**common.PROPHET_KWARGS)
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
     theirs = Prophet(**common.PROPHET_KWARGS)
     theirs.fit(df)
     return (np.abs(ours.params["delta"][0]),
@@ -88,7 +88,7 @@ def test_we_also_fit_the_training_data_better(prophet_comparison,
         return float((residual ** 2).sum())
 
     ours = AnalyticProphet(**common.PROPHET_KWARGS)
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
     theirs = Prophet(**common.PROPHET_KWARGS)
     theirs.fit(df)
 

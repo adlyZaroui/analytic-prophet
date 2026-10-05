@@ -4,7 +4,7 @@ Issue #1: keep ctypes, or move to pybind11? Resolved as pybind11.
 The issue named two concrete problems with the ctypes binding:
 
 1. "the load path is a hardcoded relative string that breaks unless the
-   working directory happens to be right" -- fit_cpp() did
+   working directory happens to be right" -- the compiled path did
    ctypes.CDLL('./liboptimization.so'). The extension is now an ordinary
    importable module, so it is found on sys.path like anything else.
 
@@ -194,16 +194,16 @@ def test_missing_extension_raises_a_helpful_import_error(monkeypatch, tmp_path):
 
 
 def test_loaded_module_is_cached(compiled_optimizer_module):
-    """fit_cpp() calls this on every fit; loading the extension repeatedly
+    """The compiled path calls this on every fit; loading the extension repeatedly
     should not re-execute it."""
     assert load_cpp_module(compiled_optimizer_module) is load_cpp_module(compiled_optimizer_module)
 
 
-def test_fit_cpp_reports_the_termination_status_in_words(peyton_manning_df, compiled_optimizer_module):
+def test_the_compiled_path_reports_the_termination_status_in_words(peyton_manning_df, compiled_optimizer_module):
     """The old binding surfaced a bare integer; diagnosing issue #8 meant
     looking -1001 up in lbfgs.h by hand."""
     model = pin_yearly_only(AnalyticProphet())
-    model.fit_cpp(
+    model.fit(
         peyton_manning_df.iloc[:300].reset_index(drop=True),
         initial_params={
             "k": 0.0, "m": 0.0,

@@ -106,7 +106,7 @@ def test_the_same_holiday_may_repeat_across_years():
 
 def test_adding_holidays_after_a_fit_is_refused(peyton_manning_df, compiled_optimizer_module):
     model = AnalyticProphet()
-    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     with pytest.raises(RuntimeError, match="before fitting"):
         model.add_holidays(superbowls())
@@ -204,10 +204,10 @@ def test_holiday_columns_extend_the_parameter_vector(peyton_manning_df,
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
     plain = AnalyticProphet()
-    plain.fit_cpp(df, lib_path=compiled_optimizer_module)
+    plain.fit(df, lib_path=compiled_optimizer_module)
 
     with_holidays = AnalyticProphet().add_holidays(two_holidays())
-    with_holidays.fit_cpp(df, lib_path=compiled_optimizer_module)
+    with_holidays.fit(df, lib_path=compiled_optimizer_module)
 
     layout = with_holidays.layout
     assert layout.n_seasonality_columns == plain.layout.n_seasonality_columns
@@ -225,7 +225,7 @@ def test_the_holiday_prior_scale_lands_on_the_holiday_columns(peyton_manning_df,
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
 
     model = AnalyticProphet().add_holidays(two_holidays(), prior_scale=3.0)
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     assert model.sigmas.shape == (model.layout.n_regressor_columns,)
     np.testing.assert_array_equal(model.sigmas[model.layout.holiday_block], 3.0)
@@ -254,7 +254,7 @@ def test_both_objectives_agree_with_holidays(peyton_manning_df, cpp_mlp_and_grad
 
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
     model = AnalyticProphet().add_holidays(two_holidays())
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)
     params = np.concatenate((
@@ -284,7 +284,7 @@ def test_a_holiday_effect_is_actually_fitted(peyton_manning_df, compiled_optimiz
     frame = pd.DataFrame({"holiday": "bump", "ds": bump_dates,
                           "lower_window": 0, "upper_window": 0})
     model = AnalyticProphet().add_holidays(frame)
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     coefficients = model.params["beta"][0][model.layout.holiday_block]
     assert coefficients.shape == (1,)
@@ -298,7 +298,7 @@ def test_a_holiday_effect_is_actually_fitted(peyton_manning_df, compiled_optimiz
 def test_predict_carries_the_holiday_columns(peyton_manning_df, compiled_optimizer_module):
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
     model = AnalyticProphet().add_holidays(two_holidays())
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     forecast = model.predict(model.make_future_dataframe(periods=60))
 
@@ -312,7 +312,7 @@ def test_predict_drops_a_holiday_the_fit_never_saw(peyton_manning_df,
     there is no coefficient for them, so including them would misalign beta."""
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
     model = AnalyticProphet().add_holidays(superbowls(-1, 1))
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
     fitted_columns = model.layout.n_holiday_columns
 
     # a holiday appearing only now must not widen the design matrix
@@ -330,7 +330,7 @@ def test_a_training_holiday_absent_from_the_future_keeps_its_empty_column(
     its alignment, even with nothing in it."""
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
     model = AnalyticProphet().add_holidays(two_holidays())
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     far_future = pd.DataFrame({"ds": pd.date_range("2030-06-01", periods=30)})
     features, _ = model._holiday_design(far_future["ds"])
@@ -355,7 +355,7 @@ def test_design_matrix_and_sigmas_match_prophets(prophet_comparison,
 
     ours = AnalyticProphet().add_holidays(frame)
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     _, X_ours = ours._design_matrices()
     X_stan = np.asarray(stan_data["X"], dtype=float)
@@ -394,7 +394,7 @@ def test_our_objective_is_stans_with_holidays(prophet_comparison,
 
     ours = AnalyticProphet().add_holidays(frame)
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)
     sums = []

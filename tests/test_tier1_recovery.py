@@ -48,7 +48,7 @@ def test_the_generator_places_changepoints_where_a_fit_will(compiled_optimizer_m
     truth = synthetic.generate(300, seed=1)
 
     model = AnalyticProphet()
-    model.fit_cpp(truth.frame, lib_path=compiled_optimizer_module)
+    model.fit(truth.frame, lib_path=compiled_optimizer_module)
 
     np.testing.assert_array_equal(model.changepoints_t, truth.changepoints_t)
 
@@ -78,7 +78,7 @@ def test_recovery_improves_with_the_length_of_the_series(compiled_optimizer_modu
     for n_rows in (100, 300, 1000):
         truth = synthetic.generate(n_rows, noise=0.05, seed=1)
         model = AnalyticProphet()
-        model.fit_cpp(truth.frame, lib_path=compiled_optimizer_module)
+        model.fit(truth.frame, lib_path=compiled_optimizer_module)
         errors[n_rows] = float(np.linalg.norm(model.get_parameters() - truth.theta))
 
     assert errors[1000] < errors[300] < errors[100]
@@ -92,7 +92,7 @@ def test_the_identified_error_grows_with_the_sample(compiled_optimizer_module):
     for n_rows in (100, 1000):
         truth = synthetic.generate(n_rows, noise=0.05, seed=1)
         model = AnalyticProphet()
-        model.fit_cpp(truth.frame, lib_path=compiled_optimizer_module)
+        model.fit(truth.frame, lib_path=compiled_optimizer_module)
         sizes[n_rows] = metrics.quadratic_distance(
             model, truth.theta, model.get_parameters())
 
@@ -117,7 +117,7 @@ def test_the_recovery_metric_is_a_distance_not_a_loss_gap(compiled_optimizer_mod
     """
     truth = synthetic.generate(300, noise=0.1, seed=1)
     model = AnalyticProphet()
-    model.fit_cpp(truth.frame, lib_path=compiled_optimizer_module)
+    model.fit(truth.frame, lib_path=compiled_optimizer_module)
     design = model._design_matrices()
     fitted = model.get_parameters().copy()
 
@@ -144,7 +144,7 @@ def test_the_recovery_metric_is_a_distance_not_a_loss_gap(compiled_optimizer_mod
 def test_the_distance_is_zero_at_the_reference(compiled_optimizer_module):
     truth = synthetic.generate(300, seed=1)
     model = AnalyticProphet()
-    model.fit_cpp(truth.frame, lib_path=compiled_optimizer_module)
+    model.fit(truth.frame, lib_path=compiled_optimizer_module)
     assert metrics.quadratic_distance(model, truth.theta, truth.theta) == \
         pytest.approx(0.0, abs=1e-9)
 
@@ -154,7 +154,7 @@ def test_the_distance_uses_one_ruler_for_both_candidates(compiled_optimizer_modu
     cannot change either number."""
     truth = synthetic.generate(300, seed=1)
     model = AnalyticProphet()
-    model.fit_cpp(truth.frame, lib_path=compiled_optimizer_module)
+    model.fit(truth.frame, lib_path=compiled_optimizer_module)
     design = model._design_matrices()
     a = model.get_parameters().copy()
     b = a + 0.01

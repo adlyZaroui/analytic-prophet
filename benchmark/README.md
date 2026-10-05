@@ -43,11 +43,11 @@ are not named `test_*`. They are slow and measure the machine, not correctness.
 | name | what it runs |
 |---|---|
 | `prophet` | the original, via cmdstanpy (Stan's L-BFGS, autodiff gradient) |
-| `fit(analytic=True)` | scipy L-BFGS-B over the split reformulation, closed-form gradient |
-| `fit(numeric grad)` | same, but scipy approximates the gradient by finite differences |
-| `fit_cpp` | the compiled core: liblbfgs OWL-QN, closed-form gradient |
+| `python` | `fit(backend="python")`: scipy L-BFGS-B over the split reformulation, closed-form gradient |
+| `python(numeric grad)` | same, but scipy approximates the gradient by finite differences |
+| `compiled` | `fit(df)`: the compiled core, liblbfgs OWL-QN, closed-form gradient |
 
-`fit(numeric grad)` is not a serious candidate — it is included as the control
+`python(numeric grad)` is not a serious candidate — it is included as the control
 that shows what the analytic gradient buys, since it is the same optimizer on
 the same problem with the gradient obtained the expensive way.
 
@@ -143,14 +143,15 @@ What is left is a time cost, not an accuracy one. Newton reaches the same
 optimum as L-BFGS at every size measured, but pays `2n` gradient evaluations per
 iteration for its finite-difference Hessian:
 
-| T | rule picks | iterations | `fit()` | `fit_cpp()` |
+| T | rule picks | iterations | `python` | `compiled` |
 |---|---|---|---|---|
 | 50 | Newton | 44 | 0.247s | 0.016s |
 | 100 | L-BFGS | 149 | 0.026s | 0.005s |
 | 300 | L-BFGS | 546 | 0.112s | 0.017s |
 
-`fit_cpp` at T = 50 is 0.10x Prophet's 0.171s, so the Hessian is affordable
-where it matters. `fit()` is the readable reference rather than the deliverable,
+The compiled path at T = 50 is 0.10x Prophet's 0.171s, so the Hessian is
+affordable where it matters. The Python path is the readable reference rather
+than the deliverable,
 and Newton is where that shows most: at these sizes it is ~20x its own L-BFGS.
 `analytic=False` still selects finite differences under Newton as it does under
 L-BFGS, which is why the numeric-gradient column jumps to 52x at T = 50 --

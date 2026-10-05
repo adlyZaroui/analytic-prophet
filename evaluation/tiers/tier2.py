@@ -73,7 +73,7 @@ def _our_cross_validation(df, cutoffs, horizon, lib_path):
             continue
         model = AnalyticProphet(**harness.PROPHET_KWARGS)
         model.rng = np.random.default_rng(harness.SEED)
-        model.fit_cpp(history, lib_path=lib_path)
+        model.fit(history, lib_path=lib_path)
         forecast = model.predict(future[["ds"]].reset_index(drop=True))
         predictions.append(pd.DataFrame({
             "ds": future["ds"].to_numpy(),
@@ -151,7 +151,7 @@ def _one_series(name, df, frequency, lib_path):
     # zero and ours often are (#95).
     from analytic_prophet import AnalyticProphet
     ours = AnalyticProphet(**harness.PROPHET_KWARGS)
-    ours.fit_cpp(df, lib_path=lib_path)
+    ours.fit(df, lib_path=lib_path)
     theirs = Prophet(**harness.PROPHET_KWARGS).fit(df)
     # `implementation` rather than `name`: `row` closes over this function's
     # `name`, which is the *series*, and a loop variable called `name` shadows

@@ -62,7 +62,7 @@ def _compare(size, lib_path):
     # and the comparison is of optimizers rather than of specifications
     ours = AnalyticProphet()
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=lib_path)
+    ours.fit(df, lib_path=lib_path)
 
     X_ours = np.ascontiguousarray(
         ours.make_all_seasonality_features(df)[0].to_numpy(dtype=float))

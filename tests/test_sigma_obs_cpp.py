@@ -75,7 +75,7 @@ def test_fitted_sigma_obs_approaches_the_gaussian_mle(peyton_manning_df, compile
     model.changepoint_prior_scale = model.sigma_k = model.sigma_m = 1e4
     model.seasonality_prior_scale = 1e4
 
-    model.fit_cpp(peyton_manning_df.iloc[:600].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:600].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     k, m = model.params["k"][0][0], model.params["m"][0][0]
@@ -103,7 +103,7 @@ def test_sigma_obs_is_positive_by_construction():
         assert cpp_to_canonical(params)[SIGMA_OBS_IDX] > 0
 
 
-def test_fit_cpp_estimates_sigma_obs_rather_than_taking_it_as_given(peyton_manning_df, compiled_optimizer_module):
+def test_the_compiled_path_estimates_sigma_obs_rather_than_taking_it_as_given(peyton_manning_df, compiled_optimizer_module):
     """The behaviour change itself: sigma_obs comes out of the fit now, and
     whatever was sitting on the instance beforehand does not steer it."""
     small_df = peyton_manning_df.iloc[:300].reset_index(drop=True)
@@ -112,7 +112,7 @@ def test_fit_cpp_estimates_sigma_obs_rather_than_taking_it_as_given(peyton_manni
     for preset in (1.0, 0.5):
         model = pin_yearly_only(AnalyticProphet())
         model.sigma_obs = preset   # used to be the value the C++ optimized against
-        model.fit_cpp(small_df, lib_path=compiled_optimizer_module)
+        model.fit(small_df, lib_path=compiled_optimizer_module)
         fits.append(model.sigma_obs)
 
     assert fits[0] == pytest.approx(fits[1], rel=1e-9)
