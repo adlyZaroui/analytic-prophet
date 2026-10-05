@@ -19,3 +19,9 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Third-party licence texts, collected at build time by
+# tools/collect_licences.py out of the fetched Eigen and LBFGSpp trees (#97).
+# A build artifact, not source: nothing in the repository vendors either
+# library, which is why `package-data` names them with a glob.
+analytic_prophet/licences/

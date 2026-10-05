@@ -46,6 +46,20 @@ Regenerate it with `python evaluation/showcase.py`; the output is byte-identical
 both sides are seeded.
 
 ```bash
+pip install analytic-prophet        # once published — see below
+```
+
+The wheels carry the compiled core, so there is nothing to build: no compiler, no Eigen,
+no LBFGSpp. Linux and macOS, Python 3.9–3.14 — the versions and platforms CI actually
+runs the suite on. Windows is not built, because nothing here has ever been tested there;
+it falls back to the source distribution, which does need a C++17 compiler.
+
+> **Not on PyPI yet** ([#97](https://github.com/adlyZaroui/analytic-prophet/issues/97)).
+> The wheels, their verification and the release workflow are in place and run from a
+> tag; the publish step waits on a maintainer's approval and on the name being
+> registered. Until then, clone:
+
+```bash
 git clone https://github.com/adlyZaroui/analytic-prophet
 cd analytic-prophet
 brew install eigen lbfgspp          # or equivalent; header-only, nothing is linked

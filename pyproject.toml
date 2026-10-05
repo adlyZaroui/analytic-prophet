@@ -1,5 +1,10 @@
 [build-system]
-requires = ["setuptools>=61"]
+# pybind11 is a *build* requirement now as well as a dev one: setup.py compiles
+# `optimize.cpp` into the wheel, and needs its headers to do so (#97). The
+# extension is optional -- a build without a compiler, Eigen or LBFGSpp still
+# produces an installable package, and the core is compiled on first use as it
+# always was (#108).
+requires = ["setuptools>=61", "pybind11>=2.10"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -126,7 +131,51 @@ packages = ["analytic_prophet"]
 # Building it at install time would mean a build backend that handles
 # extensions and a compiler required of everyone -- worth revisiting if this is
 # ever distributed, and not before.
-analytic_prophet = ["optimize.cpp"]
+# The licence texts of Eigen (MPL-2.0) and LBFGSpp (MIT) go in the same way.
+# A binary wheel contains code compiled from both, so it has to carry their
+# terms; neither is vendored, so tools/collect_licences.py puts them here at
+# build time and this ships them (#97). The glob is empty in a source clone,
+# which is why it is a glob.
+analytic_prophet = ["optimize.cpp", "licences/*"]
+
+
+[tool.cibuildwheel]
+# Issue #97. Binary wheels are the only option that delivers what
+# `pip install analytic-prophet` promises: the user needs no compiler, no
+# Eigen and no LBFGSpp. The alternative -- a pure-Python wheel compiled on
+# first use -- moves the toolchain requirement from install time to first fit
+# rather than removing it.
+#
+# **Linux and macOS only, deliberately.** The suite has never run on Windows
+# and `analytic_prophet/build.py` only knows Unix compilers, so a Windows
+# wheel would ship for a platform nothing here has been tested on. Windows
+# users get the sdist, which needs a compiler and says so.
+#
+# One target per version the test matrix runs, so `requires-python = ">=3.9"`
+# names versions that are both built and tested. tests/test_packaging.py pins
+# the two lists together -- a version added to CI and not here would be a
+# claim with no wheel behind it.
+build = "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
+skip = "*-musllinux_*"
+build-frontend = "build"
+
+before-all = "bash tools/fetch_headers.sh && python tools/collect_licences.py"
+
+# Where the fetch put them. `analytic_prophet.build`'s finders read exactly
+# these two variables, so the wheel build and the on-demand build look in the
+# same place by the same rule.
+[tool.cibuildwheel.environment]
+AP_HEADERS = "/tmp/ap-headers"
+EIGEN_INCLUDE_DIR = "/tmp/ap-headers/eigen"
+LBFGSPP_INCLUDE_DIR = "/tmp/ap-headers/lbfgspp/include"
+EIGEN_VERSION = "3.4.0"
+LBFGSPP_VERSION = "v0.3.0"
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64"]
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64"]
 
 [tool.setuptools.dynamic]
 version = { attr = "analytic_prophet.__version__" }

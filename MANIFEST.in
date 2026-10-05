@@ -1,0 +1,13 @@
+# What a source distribution carries beyond the package itself.
+#
+# `tools/` is the part that matters: fetch_headers.sh and collect_licences.py
+# are how a wheel is built, and an sdist that cannot reproduce the wheel build
+# is an sdist nobody can check (#97). Windows has no wheel by decision, so the
+# sdist is the supported route there and needs them.
+include LICENSE
+include README.md
+include CONTRIBUTING.md
+include SECURITY.md
+include tools/fetch_headers.sh
+include tools/collect_licences.py
+recursive-include analytic_prophet *.cpp
