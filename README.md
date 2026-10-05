@@ -175,8 +175,10 @@ results and a generated report. One command regenerates everything.
 
 - **No MCMC.** MAP estimation only; `mcmc_samples > 0` is rejected rather than ignored.
 - **No plotting.** No `plot` or `plot_components`.
-- **Not a drop-in.** Three names have no counterpart to match, and a refit means something
-  here that it cannot mean in Prophet. See [deviations](docs/deviations.md).
+- **Not a drop-in, and here is how far off.** Of Prophet's 40 public methods, 13 are the
+  same, 8 are module-level functions here rather than methods, 15 are absent on purpose
+  and 4 are gaps — enumerated member by member, with the attributes a fit sets, in
+  [how far from a drop-in](docs/deviations.md#how-far-from-a-drop-in-enumerated).
 - **The intervals are not well calibrated — in either implementation.** On the M4 corpus
   the nominal 80% interval contains about **35%** of the points, for Prophet (0.342) as
   much as for this implementation (0.353). That is a property of the model on long
