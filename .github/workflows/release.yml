@@ -1,0 +1,158 @@
+# Wheels, built from a tag, verified, and published only when a human says so.
+#
+# Issue #97. `pip install analytic-prophet` has to work on a machine with no
+# compiler, which means binary wheels: the package compiles its C++ core on
+# first use otherwise, and moving a toolchain requirement from install time to
+# first-fit time is not removing it.
+#
+# **This workflow does not publish on its own.** The upload job targets a
+# GitHub environment named `pypi`, and an environment with a required reviewer
+# will not run until that reviewer approves it. Until the PyPI side is set up
+# -- the name registered and a trusted publisher configured -- the job simply
+# never runs, and the wheels are still built, tested and attached to the run as
+# artifacts. That is deliberate: publishing is irreversible and is the
+# maintainer's to do.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    name: ${{ matrix.os }} wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-13, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The matrix, the headers and the licences all come from
+      # [tool.cibuildwheel] in pyproject.toml, so there is one place to read
+      # and no second copy here to drift.
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.23.3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pipx run build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  verify:
+    # What the acceptance criteria actually ask: that an installed wheel runs
+    # the *compiled* core, rather than silently falling back to building one.
+    # A wheel that compiles on first use would pass a plain import test.
+    name: verify the wheels
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: wheelhouse
+          merge-multiple: true
+
+      - name: Install the Linux wheel somewhere with no toolchain
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install wheelhouse/*manylinux*x86_64.whl
+
+      - name: It must run the compiled core, not build one
+        env:
+          # an empty cache: if anything compiles at runtime, it lands here and
+          # the check below fails
+          ANALYTIC_PROPHET_CACHE: ${{ runner.temp }}/empty-cache
+        run: |
+          cd "$RUNNER_TEMP"          # away from the checkout, or it shadows the install
+          python - <<'PY'
+          import os
+          import pandas as pd
+          import analytic_prophet
+          from analytic_prophet import AnalyticProphet, load_cpp_module
+
+          package = os.path.dirname(analytic_prophet.__file__)
+          assert "site-packages" in package, package
+
+          core = load_cpp_module().__file__
+          assert core.startswith(package), f"the core came from {core}, not the wheel"
+
+          frame = pd.DataFrame({
+              "ds": pd.date_range("2015-01-01", periods=200),
+              "y": range(200),
+          })
+          AnalyticProphet().fit(frame).predict(
+              AnalyticProphet().fit(frame).make_future_dataframe(periods=5))
+
+          cache = os.environ["ANALYTIC_PROPHET_CACHE"]
+          assert not os.path.isdir(cache), (
+              f"something was compiled at runtime into {cache}; the wheel's "
+              f"extension was not used")
+          print("the wheel ships a working compiled core")
+          PY
+
+      - name: The wheel must carry the third-party licences
+        run: |
+          python - <<'PY'
+          import glob, zipfile
+          wheel = sorted(glob.glob("wheelhouse/*manylinux*x86_64.whl"))[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          for wanted in ("licences/LICENSE.eigen", "licences/LICENSE.lbfgspp",
+                         "licences/NOTICE"):
+              assert any(n.endswith(wanted) for n in names), f"{wanted} is missing"
+          assert any(n.endswith(".so") for n in names), "no compiled core in the wheel"
+          print("licences and core present")
+          PY
+
+  publish:
+    # Gated. `environment: pypi` is where a required reviewer is configured, so
+    # this waits for approval however the workflow was triggered. Nothing here
+    # runs until the name is registered and a trusted publisher is set up.
+    name: publish to PyPI
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/analytic-prophet
+    permissions:
+      id-token: write          # trusted publishing; no API token in the repo
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "wheels-*"
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
