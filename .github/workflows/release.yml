@@ -133,10 +133,18 @@ jobs:
           print(f"\nall of {sorted(wanted)} built for every platform")
           PY
 
+      # One wheel per interpreter, and this runner has one interpreter. The
+      # glob that used to be here expanded to all six and handed pip the
+      # cp310 one on a 3.12 runner, which it rightly refused: "not a supported
+      # wheel on this platform". Pick the wheel whose tag matches, and say
+      # which, so a failure names the file rather than the glob.
       - name: Install the Linux wheel somewhere with no toolchain
         run: |
           python -m pip install --upgrade pip
-          python -m pip install wheelhouse/*manylinux*x86_64.whl
+          tag="cp$(python -c 'import sys; print(f"{sys.version_info[0]}{sys.version_info[1]}")')"
+          wheel=$(ls wheelhouse/*${tag}-${tag}-manylinux*x86_64.whl)
+          echo "installing $wheel"
+          python -m pip install "$wheel"
 
       - name: It must run the compiled core, not build one
         env:
@@ -175,13 +183,18 @@ jobs:
         run: |
           python - <<'PY'
           import glob, zipfile
-          wheel = sorted(glob.glob("wheelhouse/*manylinux*x86_64.whl"))[0]
-          names = zipfile.ZipFile(wheel).namelist()
-          for wanted in ("licences/LICENSE.eigen", "licences/LICENSE.lbfgspp",
-                         "licences/NOTICE"):
-              assert any(n.endswith(wanted) for n in names), f"{wanted} is missing"
-          assert any(n.endswith(".so") for n in names), "no compiled core in the wheel"
-          print("licences and core present")
+
+          wheels = sorted(glob.glob("wheelhouse/*.whl"))
+          assert wheels, "no wheels to check"
+          for wheel in wheels:                      # every one, not whichever sorted first
+              names = zipfile.ZipFile(wheel).namelist()
+              for wanted in ("licences/LICENSE.eigen", "licences/LICENSE.lbfgspp",
+                             "licences/NOTICE"):
+                  assert any(n.endswith(wanted) for n in names), \
+                      f"{wanted} is missing from {wheel}"
+              assert any(n.endswith((".so", ".dylib")) for n in names), \
+                  f"no compiled core in {wheel}"
+          print(f"licences and core present in all {len(wheels)} wheels")
           PY
 
   publish:
