@@ -14,6 +14,37 @@ for.
 is no MCMC and no plotting, so this is not yet a drop-in replacement. See
 [what this is not](#what-this-is-not).
 
+![three held-out forecasts: the largest advantage, the median, and one Prophet wins](evaluation/results/figures/showcase.png)
+
+**What this shows, and what it does not.** Three M4 series, forecast past a cutoff
+neither model saw. Each coloured line is continuous through the cutoff: to its left the
+model's fit to data it was shown, to its right its forecast. The actual values over the
+horizon are drawn in black, and the bands are the nominal 80% intervals.
+
+They are **chosen by rule, not by eye.** Of Tier 2's 36 series, the ranking is taken over
+the **11 where a Prophet-shaped model fits at all** — both implementations within 10%
+sMAPE held out — because a panel where both miss badly shows the difficulty of the series
+rather than the difference between two optimizers. Within those: the series where our
+cross-validated RMSE beats Prophet's by the most, the one at the median of that ranking,
+and the one where Prophet beats us by the most.
+
+**The top panel is the mechanism; the bottom two are the typical case.** Prophet's
+optimizer stops short on the non-differentiable objective, and that costs most where the
+trend is doing the work — a regime change, as in the top panel, where the L1 kink is
+load-bearing. Elsewhere both implementations fit nearly the same model and the two lines
+sit on top of each other. Across all 36 series the median RMSE advantage is **0.45%**, and
+past two years of history predictions differ by **0.17–0.59%** of the series scale. A
+reader who runs this on their own data should expect the bottom two panels, not the top
+one.
+
+**Neither implementation's intervals are well calibrated.** On this corpus they contain
+about a third of the held-out points they claim four fifths of — mean coverage **0.356**
+for ours and **0.341** for Prophet's. That is a property of the model on long horizons, it
+is shared, and it is larger than anything separating the two.
+
+Regenerate it with `python evaluation/showcase.py`; the output is byte-identical because
+both sides are seeded.
+
 ```bash
 git clone https://github.com/adlyZaroui/analytic-prophet
 cd analytic-prophet
@@ -180,8 +211,8 @@ results and a generated report. One command regenerates everything.
   and 4 are gaps — enumerated member by member, with the attributes a fit sets, in
   [how far from a drop-in](docs/deviations.md#how-far-from-a-drop-in-enumerated).
 - **The intervals are not well calibrated — in either implementation.** On the M4 corpus
-  the nominal 80% interval contains about **35%** of the points, for Prophet (0.342) as
-  much as for this implementation (0.353). That is a property of the model on long
+  the nominal 80% interval contains about a third of the points it claims four fifths of
+  — mean coverage **0.341** for Prophet and **0.356** for this implementation. That is a property of the model on long
   horizons and volatile series, it is shared, and it is larger than anything separating
   the two. Nothing above should be read without it.
 
