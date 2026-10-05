@@ -22,13 +22,22 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from analytic_prophet.build import cache_root
 from harness import REPO
 
 PEYTON_MANNING = REPO / "tests" / "data" / "peyton_manning.csv"
 
 M4_BASE = "https://raw.githubusercontent.com/Mcompetitions/M4-methods/master/Dataset"
-M4_CACHE = Path(os.environ.get("ANALYTIC_PROPHET_CACHE",
-                               Path.home() / ".cache" / "analytic-prophet")) / "m4"
+def m4_cache():
+    """Where the M4 files are kept: `<cache root>/m4`.
+
+    A function rather than the module-level constant this was, so that
+    redirecting `ANALYTIC_PROPHET_CACHE` moves it -- as a constant it was
+    bound at import and a test that set the variable afterwards silently kept
+    using the real cache. The root is the package's, so the corpus and the
+    compiled core land under one directory by one rule (#111).
+    """
+    return cache_root() / "m4"
 
 # frequency -> (file stem, pandas offset, periods per year). Weekly and Daily
 # only: they are the M4 subsets whose spacing a Prophet-shaped model has
@@ -71,8 +80,8 @@ def m4_available(frequency="Weekly", download=True):
     a tier that cannot get its corpus should skip, not fail the whole run.
     """
     stem = M4_FREQUENCIES[frequency][0]
-    wanted = [("M4-info.csv", M4_CACHE / "M4-info.csv"),
-              (f"Train/{stem}-train.csv", M4_CACHE / f"{stem}-train.csv")]
+    wanted = [("M4-info.csv", m4_cache() / "M4-info.csv"),
+              (f"Train/{stem}-train.csv", m4_cache() / f"{stem}-train.csv")]
     for remote, local in wanted:
         if local.exists():
             continue
@@ -96,8 +105,8 @@ def m4(frequency="Weekly", n_series=20, seed=0, min_length=120, download=True):
     if not m4_available(frequency, download=download):
         return
     stem, offset, _ = M4_FREQUENCIES[frequency]
-    info = pd.read_csv(M4_CACHE / "M4-info.csv").set_index("M4id")
-    frame = pd.read_csv(M4_CACHE / f"{stem}-train.csv")
+    info = pd.read_csv(m4_cache() / "M4-info.csv").set_index("M4id")
+    frame = pd.read_csv(m4_cache() / f"{stem}-train.csv")
 
     lengths = frame.iloc[:, 1:].notna().sum(axis=1).to_numpy()
     eligible = np.flatnonzero(lengths >= min_length)

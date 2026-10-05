@@ -84,7 +84,12 @@ compiles `optimize.cpp` — about ten seconds, and it says so rather than appear
 a digest of the source and the compile command, so editing `optimize.cpp` rebuilds and
 nothing else does.
 
-It lands in the platform's cache directory, or wherever `ANALYTIC_PROPHET_CACHE` points.
+Everything this project caches hangs off **one root**, by the same rule on every
+platform: `$ANALYTIC_PROPHET_CACHE`, else `$XDG_CACHE_HOME/analytic-prophet`, else
+`~/.cache/analytic-prophet`. The compiled core goes in `build/` and the M4 corpus the
+evaluation suite downloads goes in `m4/`, so one variable moves both and deleting the
+root is how you start over ([#111](https://github.com/adlyZaroui/analytic-prophet/issues/111)).
+
 Without a compiler the build raises, naming the one thing that is missing — and
 `fit(df, backend="python")` needs no compiler at all. The tests that need the toolchain
 *skip* rather than fail when it is absent.

@@ -60,7 +60,8 @@ def test_the_cache_is_keyed_by_the_compile_command(tmp_path, monkeypatch):
 
 def test_the_cache_location_is_overridable(tmp_path, monkeypatch):
     monkeypatch.setenv("ANALYTIC_PROPHET_CACHE", str(tmp_path / "somewhere"))
-    assert build.cache_dir() == tmp_path / "somewhere"
+    assert build.cache_root() == tmp_path / "somewhere"
+    assert build.cache_dir() == tmp_path / "somewhere" / "build"
 
 
 def test_the_default_cache_is_not_inside_the_package(monkeypatch):
@@ -91,16 +92,16 @@ def test_the_cached_path_is_the_one_a_user_takes(tmp_path, monkeypatch):
     real code path runs without writing to the developer's cache.
     """
     monkeypatch.setenv("ANALYTIC_PROPHET_CACHE", str(tmp_path))
-    assert build.cache_dir() == tmp_path
+    assert build.cache_dir() == tmp_path / "build"
 
     built = Path(build.build_cpp_extension())
     assert built.exists()
-    assert tmp_path in built.parents, "it did not land in the cache"
+    assert build.cache_dir() in built.parents, "it did not land in the cache"
     suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
     assert built.name == build.CPP_MODULE_NAME + suffix
 
     # content-keyed: the digest is a directory under the cache, not the file
-    assert built.parent.parent == tmp_path
+    assert built.parent.parent == build.cache_dir()
 
     # and the second call is a lookup rather than a compile
     stamp = os.stat(built).st_mtime_ns

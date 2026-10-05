@@ -148,21 +148,41 @@ def find_lbfgspp_include():
     return None
 
 
-def cache_dir():
-    """Where a built extension is kept between runs.
+def cache_root():
+    """The one directory this project caches anything under.
 
-    `ANALYTIC_PROPHET_CACHE` wins, then the platform's cache directory. Not
-    beside the package: an installed one may be read-only, and writing into
-    site-packages is not this library's business.
+    `ANALYTIC_PROPHET_CACHE` wins, then `XDG_CACHE_HOME`, then `~/.cache` --
+    **the same rule on every platform**, which is the point of #111. The
+    variable was read in two places with two different defaults: here, and in
+    `evaluation/corpora.py` for the M4 corpus. Setting it moved both and
+    leaving it unset moved them apart, because this one took the platform
+    cache directory on macOS and that one did not. A reader could not say
+    where either landed without reading both modules.
+
+    `~/.cache` rather than `~/Library/Caches` on macOS, because that is what
+    the corpus loader already used: picking the other way round would have
+    orphaned every M4 download on disk to tidy up a build directory that
+    rebuilds itself in twelve seconds.
+
+    Never beside the package: an installed one may be read-only, and writing
+    into site-packages is not this library's business.
     """
     override = os.environ.get("ANALYTIC_PROPHET_CACHE")
     if override:
         return Path(override).expanduser()
-    if sys.platform == "darwin":
-        base = Path.home() / "Library" / "Caches"
-    else:
-        base = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
-    return base / "analytic-prophet"
+    base = os.environ.get("XDG_CACHE_HOME")
+    return (Path(base).expanduser() if base else Path.home() / ".cache") \
+        / "analytic-prophet"
+
+
+def cache_dir():
+    """Where a built extension is kept between runs: `<root>/build`.
+
+    A subdirectory rather than the root itself, so the compiled artefact and
+    the downloaded corpus cannot be mistaken for each other or for a stray
+    file somebody left there (#111).
+    """
+    return cache_root() / "build"
 
 
 def _build_command(compiler, eigen, lbfgspp, pybind11_include, out_path):
