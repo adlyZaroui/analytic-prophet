@@ -225,6 +225,117 @@ check, `Dataframe has less than 2 non-NaN rows.`, `Found infinity in column y.`,
 
 ---
 
+### How far from a drop-in, enumerated
+
+`tests/test_prophet_naming.py` registers the names that differ. This registers the
+whole surface: every public member of `Prophet`, and every attribute a `Prophet.fit`
+leaves on the instance, with one of four verdicts.
+
+| verdict | meaning |
+|---|---|
+| `same` | same name, same place |
+| `moved` | present, reachable differently — a module-level function rather than a method, or a different attribute name |
+| `absent, deliberate` | not implemented and not intended: MCMC, plotting, or an internal folded into something else |
+| `absent, gap` | should probably exist |
+
+Of Prophet's **40** public methods, **13** are the same, **8** moved, **15** are absent on purpose and **4** are gaps.
+
+Behavioural divergences are not in the table, because they are not members: refitting is
+allowed where Prophet refuses, `K = 0` where Prophet pads to 1, the Fourier basis is
+evaluated in a different order, and a not-fitted call raises `ValueError` rather than bare
+`Exception`. Each has its own section above.
+
+The table is the deliverable here. **Deciding what to add comes after**, now that
+the shape of the gap is visible rather than argued about. It is generated from the
+register in `tests/test_parity_surface.py`, which fails if Prophet grows a member,
+if a row describes something that no longer exists, or if one of the gaps is filled
+without the row being updated.
+
+<!-- parity-table:start -->
+
+#### Methods: the same
+
+| member | verdict | here |
+|---|---|---|
+| `add_country_holidays` | same | — |
+| `add_regressor` | same | — |
+| `add_seasonality` | same | — |
+| `calculate_initial_params` | same | — |
+| `construct_holiday_dataframe` | same | — |
+| `fit` | same | runs the compiled core; `backend="python"` for the reference path (#98) |
+| `make_all_seasonality_features` | same | — |
+| `make_future_dataframe` | same | — |
+| `predict` | same | — |
+| `preprocess` | same | also does `setup_dataframe`'s and `initialize_scales`' work |
+| `set_auto_seasonalities` | same | — |
+| `set_changepoints` | same | — |
+| `validate_column_name` | same | — |
+
+#### Methods: present, reachable differently
+
+| member | verdict | here |
+|---|---|---|
+| `flat_growth_init` | moved | `analytic_prophet.flat_growth_init` |
+| `fourier_series` | moved | `analytic_prophet.fourier_series` |
+| `linear_growth_init` | moved | `analytic_prophet.linear_growth_init` |
+| `logistic_growth_init` | moved | `analytic_prophet.logistic_growth_init` |
+| `make_holiday_features` | moved | `analytic_prophet.make_holiday_features` |
+| `make_seasonality_features` | moved | `analytic_prophet.make_seasonality_features` |
+| `parse_seasonality_args` | moved | `analytic_prophet.parse_seasonality_args` |
+| `predict_trend` | moved | `analytic_prophet.predict_trend` |
+
+#### Methods: absent, deliberate
+
+| member | verdict | here |
+|---|---|---|
+| `flat_trend` | absent, deliberate | inside `predict_trend` |
+| `initialize_scales` | absent, deliberate | folded into `preprocess` |
+| `percentile` | absent, deliberate | a thin `np.percentile` wrapper that honours `mcmc_samples` |
+| `piecewise_linear` | absent, deliberate | inside `predict_trend` |
+| `piecewise_logistic` | absent, deliberate | inside `logistic_trend_and_jacobian` |
+| `plot` | absent, deliberate | no plotting; the evaluation suite draws its own figures |
+| `plot_components` | absent, deliberate | no plotting, and no component decomposition to plot — see `predict_seasonal_components` |
+| `predict_uncertainty` | absent, deliberate | private here; `predict` returns its columns |
+| `sample_model` | absent, deliberate | MCMC; the MAP equivalent is private here |
+| `sample_model_vectorized` | absent, deliberate | MCMC; the MAP equivalent is private here |
+| `sample_posterior_predictive` | absent, deliberate | MCMC |
+| `sample_predictive_trend` | absent, deliberate | private here: `_sample_trends` |
+| `sample_predictive_trend_vectorized` | absent, deliberate | private here: the vectorized sampler of #93 |
+| `setup_dataframe` | absent, deliberate | folded into `preprocess` |
+| `validate_inputs` | absent, deliberate | folded into the constructor's rejections (#52) and `_clean_history` (#102, #104) |
+
+#### Methods: absent, and arguably should not be
+
+| member | verdict | here |
+|---|---|---|
+| `add_group_component` | absent, gap | builds the column groupings the decomposition needs |
+| `predict_seasonal_components` | absent, gap | no counterpart; this is why there is no component decomposition |
+| `predictive_samples` | absent, gap | the documented way to get raw draws out of a MAP fit. This computes exactly those draws and then discards them behind quantiles |
+| `regressor_column_matrix` | absent, gap | produces `train_component_cols`, same reason |
+
+#### Attributes a fit sets
+
+24 of Prophet's are set here too, under the same names. These are the rest:
+
+| member | verdict | here |
+|---|---|---|
+| `history_dates` | moved | `model.ds` |
+| `component_modes` | absent, gap | additive/multiplicative groupings, for the decomposition |
+| `history` | absent, gap | the fitted frame is not kept; a ported script reading `model.history` gets an `AttributeError` |
+| `train_component_cols` | absent, gap | which columns belong to which component |
+| `fit_kwargs` | absent, deliberate | Prophet keeps them to refit in `cross_validation`; refitting here is a fresh fit (#41) |
+| `mcmc_samples` | absent, deliberate | rejected by the constructor rather than ignored (#52) |
+| `scaling` | absent, deliberate | `'absmax'` only; `'minmax'` is rejected, not ignored (#52) |
+| `stan_backend` | absent, deliberate | there is no Stan; rejected by the constructor |
+| `stan_fit` | absent, deliberate | there is no Stan fit object; `model.opt` is the optimizer's result |
+| `start` | absent, deliberate | derived from `model.ds` where it is needed |
+| `t_scale` | absent, deliberate | derived from `model.ds` where it is needed |
+| `y_min` | absent, deliberate | 0 by construction: `scaling='absmax'` is the only mode here |
+
+<!-- parity-table:end -->
+
+---
+
 ## Known differences from Prophet
 
 Tracked, deliberate, and not yet closed:
