@@ -18,13 +18,34 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Mathematics",
 ]
 
-# The floor the source actually implies -- old-style `typing.Tuple`, no walrus,
-# no match statement, no PEP 604 unions. Only 3.14 is exercised, so anything
-# older is plausible rather than tested; the installed numpy/pandas will impose
-# their own, higher floor in practice.
+# Exercised rather than implied: CI runs the whole suite on 3.9 through 3.14
+# (#103), so this is a tested claim. It used to be reasoned from the source --
+# old-style `typing.Tuple`, no walrus, no match statement, no PEP 604 unions --
+# and building the matrix is what found the one thing that broke it, a
+# `tomllib` import that arrived in 3.11.
 requires-python = ">=3.9"
 
-dependencies = ["numpy", "pandas", "scipy"]
+# **Floors, each set by a specific API this code calls** (#105). They were
+# unbounded, which mattered more than it looks: every measured claim here is
+# relative to the libraries installed beside it.
+#
+#   numpy    `np.random.default_rng`, which is 1.17. Every sampler here takes
+#            a Generator rather than the legacy global functions.
+#   pandas   nothing newer than 1.0 is called. prophet pulls >=1.3.5 of its
+#            own accord, so the comparison runs above this anyway.
+#   scipy    the two-argument `approx_fprime(x, f)`. `epsilon` became optional
+#            in 1.9.0 -- its own docstring carries the `versionchanged` -- and
+#            the numeric-gradient control calls it that way.
+#
+# These are reasoned from the APIs, not tested below what CI resolves: pip
+# gives each Python version the newest compatible release, which on 3.9 is far
+# above every floor here. A floor that is wrong would therefore not fail the
+# suite. Naming the deciding API for each is what makes it checkable by hand.
+dependencies = [
+    "numpy>=1.17",
+    "pandas>=1.0",
+    "scipy>=1.9",
+]
 
 # Version lives in analytic_prophet/__init__.py so there is one source of truth;
 # tests/test_packaging.py checks that this file and that one cannot drift.
@@ -41,7 +62,19 @@ holidays = ["holidays"]
 # model -- a toolchain heavier than everything else here combined. The suite is
 # built to do without: conftest.py's prophet_comparison fixture skips when it is
 # absent, and benchmark/_common.py prints an install hint rather than failing.
-compare = ["prophet"]
+#
+# **This is the bound that matters.** Every measured claim in this repository
+# is relative to whatever Prophet is installed -- the posterior margin, the
+# four-way prediction table, the 36-series accuracy result. A Prophet release
+# could move the baselines and the suite would report the new numbers as fact
+# with nothing looking wrong.
+#
+# 1.4.0 is what produced every committed result under evaluation/results; each
+# tier's `.meta.json` records it, and tests/test_release_hygiene.py checks that
+# this line and those files cannot drift apart. The floor is where
+# `predict(vectorized=...)` arrives, which the four-way prediction comparison
+# needs.
+compare = ["prophet>=1.1.2"]
 
 # pybind11 is a *build*-time dependency of the C++ core, not a runtime one:
 # nothing imports it, but analytic_prophet/optimize.cpp cannot be compiled

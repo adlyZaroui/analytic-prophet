@@ -102,6 +102,23 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             f"  Run with {options} to make them failures instead.")
 
 
+def load_pyproject():
+    """`pyproject.toml` as a dict, with the fallback in one place.
+
+    `tomllib` arrived in 3.11, and `requires-python` claims 3.9. This was
+    discovered once already, in #103, by running the matrix -- and then
+    reintroduced in #105 by a second test module importing `tomllib` at the
+    top. Two copies of a workaround is one copy too many, so there is one.
+    """
+    try:
+        import tomllib
+    except ModuleNotFoundError:          # Python < 3.11, where it is `tomli`
+        import tomli as tomllib
+
+    with open(Path(__file__).parent.parent / "pyproject.toml", "rb") as handle:
+        return tomllib.load(handle)
+
+
 def pin_yearly_only(model):
     """Force the pre-#16-task-3 component set: yearly at order 10, nothing else.
 
