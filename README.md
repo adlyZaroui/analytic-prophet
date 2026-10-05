@@ -28,8 +28,8 @@ from analytic_prophet import AnalyticProphet
 df = pd.read_csv("tests/data/peyton_manning.csv")     # columns: ds, y
 
 model = AnalyticProphet(seasonality_mode="multiplicative")
-model.fit(df)                                          # the compiled core
-# model.fit(df, backend="python")                      # the readable reference path, no build needed
+model.fit(df)                                          # the compiled core, built on first use
+# model.fit(df, backend="python")                      # the readable reference path, no compiler
 
 future = model.make_future_dataframe(periods=90)
 forecast = model.predict(future)
@@ -46,16 +46,17 @@ arithmetic is a small C++ extension compiled on demand from one source file, and
 is linked beyond two header-only libraries.
 
 **No Stan toolchain to deploy.** `pip install` needs no cmdstan, no model compilation, no
-subprocess at fit time. The tests and benchmarks build the C++ core on demand, and the
-tests that need a compiler *skip* rather than fail when there is not one.
+subprocess at fit time. The C++ core is built on demand: the first `fit(df)` on a machine
+compiles `optimize.cpp` — about ten seconds, and it says so rather than appearing to hang
+— then caches the result and reuses it forever after
+([#108](https://github.com/adlyZaroui/analytic-prophet/issues/108)). The cache is keyed by
+a digest of the source and the compile command, so editing `optimize.cpp` rebuilds and
+nothing else does.
 
-> **`fit(df)` needs that extension to exist.** Nothing builds it for you at call time yet
-> — `load_cpp_module` imports a built extension or raises telling you how to build one,
-> which on a fresh clone is what the default call does. Until
-> [#108](https://github.com/adlyZaroui/analytic-prophet/issues/108) closes, either run
-> `pytest` once (its fixture builds the extension), compile it with the command in
-> `analytic_prophet/optimize.cpp`, or use `fit(df, backend="python")`, which needs no
-> compiler at all.
+It lands in the platform's cache directory, or wherever `ANALYTIC_PROPHET_CACHE` points.
+Without a compiler the build raises, naming the one thing that is missing — and
+`fit(df, backend="python")` needs no compiler at all. The tests that need the toolchain
+*skip* rather than fail when it is absent.
 
 **An analytic gradient instead of automatic differentiation.** This is the point of the
 project. Reverse-mode autodiff tapes a forward pass and reverses over it; the model is
@@ -211,6 +212,7 @@ analytic_prophet/
     trend.py          the three growth modes and their derivatives
     optimizer.py      projected Newton, and the stopping tolerances
     models.py         [fc] prophet/models.py — the compiled backend's loader
+    build.py          compiling optimize.cpp on demand, and caching it
     serialize.py      [fc] prophet/serialize.py — save and load
     optimize.cpp      that backend
 .github/workflows/    CI: the suite on every push, the tiers on request

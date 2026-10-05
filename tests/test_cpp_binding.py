@@ -25,7 +25,7 @@ import sys
 import numpy as np
 import pytest
 
-from analytic_prophet import forecaster, models
+from analytic_prophet import build, forecaster, models
 from analytic_prophet import (AnalyticProphet, CPP_MODULE_NAME, N_CHANGE_POINTS, n_yearly,
                            SIGMA_OBS_PRIOR_SCALE, YEARLY_PERIOD, load_cpp_module)
 from conftest import pin_yearly_only
@@ -173,24 +173,33 @@ def test_module_is_importable_by_name_not_just_by_path(compiled_optimizer_module
     assert callable(module.optimize)
 
 
-def test_missing_extension_raises_a_helpful_import_error(monkeypatch, tmp_path):
-    """Neither importable nor built in place -- the error should say how to
-    build it, rather than ctypes' bare OSError about a missing file.
+def test_an_unbuildable_extension_still_says_what_to_do(monkeypatch):
+    """Neither importable, nor built in place, nor buildable here.
 
-    Pointing the loader at a module name that cannot exist makes both lookups
-    miss for real -- the import and the glob for a build sitting next to the
-    source. Patching just the directory would leave the outcome depending on
-    whether the developer happens to have an extension built in place.
+    Until #108 the first two were enough to reach this error, because nothing
+    built anything; now the loader builds, so provoking it means taking the
+    compiler away. What has to survive is the thing the error was always for:
+    saying how to get one, rather than ctypes' bare OSError about a missing
+    file.
 
-    Patched on `models`, not on `forecaster`. `load_cpp_module` lives there and
-    reads the constant from that module's globals; rebinding the copy
+    Patched on `models`, not on `forecaster`. `load_cpp_module` lives there
+    and reads these names from that module's globals; rebinding the copy
     forecaster imported would leave the loader reading the original and the
-    test would pass while proving nothing.
+    test would pass while proving nothing. `_compiler` is patched on `build`
+    for the same reason -- it is where the build reads it.
     """
     monkeypatch.setattr(models, "CPP_MODULE_NAME", "analytic_prophet_cpp_not_built")
+    monkeypatch.setattr(build, "_compiler", lambda: None)
 
-    with pytest.raises(ImportError, match="optimize.cpp"):
+    with pytest.raises(ImportError) as raised:
         load_cpp_module()
+
+    message = str(raised.value)
+    assert "optimize.cpp" in message          # what to build
+    assert "no C++ compiler" in message       # what is actually missing
+    assert "backend='python'" in message      # what works without one
+    # still an ImportError, which is what callers were written against
+    assert isinstance(raised.value, ImportError)
 
 
 def test_loaded_module_is_cached(compiled_optimizer_module):

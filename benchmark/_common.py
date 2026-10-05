@@ -3,11 +3,7 @@
 Kept separate from tests/conftest.py on purpose: the benchmarks are standalone
 scripts, not part of `pytest tests/`, and should stay runnable without pytest.
 """
-import os
-import shutil
-import subprocess
 import sys
-import sysconfig
 from pathlib import Path
 
 import numpy as np
@@ -17,7 +13,14 @@ REPO = Path(__file__).resolve().parent.parent
 PACKAGE = REPO / "analytic_prophet"
 DATA_PATH = REPO / "tests" / "data" / "peyton_manning.csv"
 
+# Before importing the package: these are standalone scripts, so sys.path[0]
+# is benchmark/ and the repo root is not on it. Every other import of
+# analytic_prophet in this file is inside a function for the same reason.
 sys.path.insert(0, str(REPO))
+
+from analytic_prophet.build import ToolchainMissing  # noqa: E402
+from analytic_prophet.build import (  # noqa: E402
+    build_cpp_extension as build_cpp_extension_shared)
 
 # Sizes worth reporting. 50 is below the T < 100 cutoff, where both sides use
 # Newton rather than L-BFGS (see issue #25) -- kept in deliberately, since that
@@ -60,84 +63,26 @@ def load_data(n_rows=None):
 
 
 def build_cpp_extension(out_dir):
-    """Compile analytic_prophet/optimize.cpp into an importable extension.
+    """Compile the C++ core into `out_dir`, or return None with a reason.
 
-    Built once and reused: compilation is not part of what is being measured.
-    Returns the path, or None with a reason printed if the toolchain is absent.
+    The compile itself lives in `analytic_prophet.build` since #108, because
+    the package needs to be able to build -- `fit(df)` runs the compiled core
+    and nothing used to build it. This was a second copy of those ~45 lines,
+    and a drifted one: it compiled at -O3 where tests/conftest.py compiled at
+    -O2, so every published timing came from a different binary than the
+    parity tests verified. The shared builder compiles at -O3, which is the
+    one the timings were measured with.
+
+    None-with-a-message rather than raising, which is what the benchmarks
+    want: they report the paths they can run and say what they skipped.
     """
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / ("analytic_prophet_cpp" + sysconfig.get_config_var("EXT_SUFFIX"))
-    if out_path.exists():
-        return str(out_path)
-
-    compiler = shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
-    if compiler is None:
-        print("no C++ compiler found; skipping the compiled path", file=sys.stderr)
-        return None
     try:
-        import pybind11
-    except ImportError:
-        print("pybind11 not installed; skipping the compiled path", file=sys.stderr)
+        return build_cpp_extension_shared(dest=out_dir)
+    except ToolchainMissing as missing:
+        print(f"{missing}; skipping the compiled path", file=sys.stderr)
         return None
 
-    eigen = _find_eigen()
-    if eigen is None:
-        print("Eigen headers not found (set EIGEN_INCLUDE_DIR); skipping the compiled path", file=sys.stderr)
-        return None
 
-    lbfgspp = _find_lbfgspp()
-    if lbfgspp is None:
-        print("LBFGSpp headers not found (`brew install lbfgspp`); skipping the compiled path", file=sys.stderr)
-        return None
-
-    cmd = [compiler, "-std=c++17", "-shared", "-fPIC", "-O3",
-           "-o", str(out_path), str(PACKAGE / "optimize.cpp"),
-           f"-I{eigen}", f"-I{pybind11.get_include()}",
-           f"-I{sysconfig.get_paths()['include']}", f"-I{lbfgspp}"]
-    if sys.platform == "darwin":
-        cmd += ["-undefined", "dynamic_lookup"]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-    if result.returncode != 0:
-        print(f"could not build the C++ core: {result.stderr[-400:]}", file=sys.stderr)
-        return None
-    return str(out_path)
-
-
-def _find_lbfgspp():
-    """LBFGSpp headers (L-BFGS-B), header-only -- nothing is linked."""
-    candidates = [os.environ.get("LBFGSPP_INCLUDE_DIR")]
-    try:
-        prefix = subprocess.run(["brew", "--prefix", "lbfgspp"], capture_output=True,
-                                text=True, timeout=5).stdout.strip()
-        if prefix:
-            candidates.append(str(Path(prefix, "include")))
-    except (OSError, subprocess.SubprocessError):
-        pass
-    candidates += ["/opt/homebrew/include", "/usr/local/include", "/usr/include"]
-    for c in candidates:
-        if c and (Path(c) / "LBFGSB.h").exists():
-            return c
-    return None
-
-
-def _find_eigen():
-    candidates = [os.environ.get("EIGEN_INCLUDE_DIR")]
-    try:
-        prefix = subprocess.run(["brew", "--prefix", "eigen"], capture_output=True,
-                                text=True, timeout=5).stdout.strip()
-        if prefix:
-            candidates.append(str(Path(prefix, "include", "eigen3")))
-    except (OSError, subprocess.SubprocessError):
-        pass
-    candidates += ["/opt/homebrew/opt/eigen/include/eigen3",
-                   "/usr/local/opt/eigen/include/eigen3",
-                   "/usr/local/include/eigen3", "/usr/include/eigen3"]
-    for c in candidates:
-        if c and (Path(c) / "Eigen" / "Dense").exists():
-            return c
-    return None
 
 
 def prophet_available():
