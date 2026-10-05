@@ -99,7 +99,7 @@ def fit_one(peyton_manning_df, compiled_optimizer_module):
         build, prepare, prepare_future = CONFIGURATIONS[configuration]
         df = prepare(peyton_manning_df.iloc[:n_rows].reset_index(drop=True))
         model = build()
-        model.fit_cpp(df, lib_path=compiled_optimizer_module)
+        model.fit(df, lib_path=compiled_optimizer_module)
         future = prepare_future(model.make_future_dataframe(periods=periods))
         if "cap" in df and "cap" not in future:
             future = future.assign(cap=df["cap"].iloc[0])
@@ -181,7 +181,7 @@ def test_serializing_an_unfitted_model_is_refused():
 # -- what must not be written --------------------------------------------
 
 def test_no_handle_on_the_compiled_extension_is_written(fit_one):
-    """The reason pickle is not the route. A model fitted with fit_cpp must
+    """The reason pickle is not the route. A model fitted with the compiled path must
     load on a machine that has never built optimize.cpp, so nothing may carry a
     path to one machine's build."""
     model, _ = fit_one("plain")
@@ -235,7 +235,7 @@ def test_the_two_attribute_lists_account_for_the_model(peyton_manning_df,
     """
     df = with_regressor(peyton_manning_df.iloc[:400].reset_index(drop=True))
     model = AnalyticProphet().add_country_holidays("US").add_regressor("temp")
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     written = set(serialize.SIMPLE_ATTRIBUTES + serialize.PD_SERIES
                   + serialize.PD_DATAFRAME + serialize.NP_ARRAY
@@ -259,11 +259,11 @@ def test_a_loaded_model_still_undoes_the_changepoint_cap(peyton_manning_df,
     long = peyton_manning_df.iloc[:1200].reset_index(drop=True)
 
     model = AnalyticProphet()
-    model.fit_cpp(tiny, lib_path=compiled_optimizer_module)
+    model.fit(tiny, lib_path=compiled_optimizer_module)
     assert model.n_changepoints == 15, "the cap should bite on twenty rows"
 
     restored = model_from_json(model_to_json(model))
-    restored.fit_cpp(long, lib_path=compiled_optimizer_module)
+    restored.fit(long, lib_path=compiled_optimizer_module)
 
     assert restored.n_changepoints == 25
 
@@ -280,13 +280,13 @@ def test_a_loaded_model_still_drops_auto_components_it_cannot_identify(
     short = peyton_manning_df.iloc[:300].reset_index(drop=True)
 
     fresh = AnalyticProphet()
-    fresh.fit_cpp(short, lib_path=compiled_optimizer_module)
+    fresh.fit(short, lib_path=compiled_optimizer_module)
 
     model = AnalyticProphet()
-    model.fit_cpp(long, lib_path=compiled_optimizer_module)
+    model.fit(long, lib_path=compiled_optimizer_module)
     assert "yearly" in model.seasonalities
     restored = model_from_json(model_to_json(model))
-    restored.fit_cpp(short, lib_path=compiled_optimizer_module)
+    restored.fit(short, lib_path=compiled_optimizer_module)
 
     assert sorted(restored.seasonalities) == sorted(fresh.seasonalities)
     assert "yearly" not in restored.seasonalities
@@ -305,10 +305,10 @@ def test_a_loaded_model_can_be_refitted_with_its_explicit_changepoints(
     df = peyton_manning_df.iloc[:1200].reset_index(drop=True)
 
     model = AnalyticProphet(changepoints=given)
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
     restored = model_from_json(model_to_json(model))
 
-    restored.fit_cpp(df, lib_path=compiled_optimizer_module)
+    restored.fit(df, lib_path=compiled_optimizer_module)
 
     assert restored.specified_changepoints
     assert len(restored.changepoints) == 3

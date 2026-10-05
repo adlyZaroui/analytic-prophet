@@ -69,7 +69,7 @@ def test_timed_reports_the_best_of_several_runs():
 
 def test_memory_separates_what_the_import_cost_from_what_the_fit_did(
         compiled_optimizer_module):
-    usage = tier3.peak_memory("fit_cpp", 300, compiled_optimizer_module)
+    usage = tier3.peak_memory("compiled", 300, compiled_optimizer_module)
 
     assert set(usage) == {"import_rss", "fit_peak_rss_added", "peak_rss"}
     # `>= 0` rather than `> 0`, which is not pedantry. The probe's baseline is
@@ -88,8 +88,8 @@ def test_each_measurement_gets_a_process_that_has_done_nothing_else(
     """Peak RSS is a high-water mark: two fits in one process and the second's
     delta is whatever the first left behind. Two calls must therefore agree
     rather than the second reading zero."""
-    first = tier3.peak_memory("fit_cpp", 300, compiled_optimizer_module)
-    second = tier3.peak_memory("fit_cpp", 300, compiled_optimizer_module)
+    first = tier3.peak_memory("compiled", 300, compiled_optimizer_module)
+    second = tier3.peak_memory("compiled", 300, compiled_optimizer_module)
 
     assert second["import_rss"] == pytest.approx(first["import_rss"], rel=0.25)
 
@@ -100,14 +100,14 @@ def test_scaling_exponents_come_from_at_least_three_points():
     """A slope through two points is a line through two points."""
     from harness import Measurement
 
-    rows = [Measurement(3, f"peyton_manning[:{t}]", "default", "fit_cpp",
+    rows = [Measurement(3, f"peyton_manning[:{t}]", "default", "compiled",
                         "fit_wall", t / 1000.0, "s") for t in (100, 1000, 10000)]
     rows.append(Measurement(3, "peyton_manning[:100]", "default", "other",
                             "fit_wall", 1.0, "s"))
 
     summaries = {(m.implementation, m.metric): m.value for m in tier3._scaling(rows)}
 
-    assert summaries[("fit_cpp", "fit_wall_exponent")] == pytest.approx(1.0, abs=1e-9)
+    assert summaries[("compiled", "fit_wall_exponent")] == pytest.approx(1.0, abs=1e-9)
     assert ("other", "fit_wall_exponent") not in summaries
 
 
@@ -144,7 +144,7 @@ def test_both_fitting_and_predicting_are_measured(small_run):
 
 def test_every_implementation_is_measured_the_same_way(small_run):
     fit = {(m.implementation, m.metric) for m in small_run if m.metric == "fit_wall"}
-    assert {"prophet", "fit_cpp", "fit(analytic=True)"} == {i for i, _ in fit}
+    assert {"prophet", "compiled", "python"} == {i for i, _ in fit}
 
 
 def test_reported_times_are_positive_and_finite(small_run):

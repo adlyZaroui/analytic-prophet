@@ -74,7 +74,7 @@ def _one(truth, lib_path):
     from analytic_prophet import AnalyticProphet
 
     ours = AnalyticProphet()
-    ours.fit_cpp(truth.frame, lib_path=lib_path)
+    ours.fit(truth.frame, lib_path=lib_path)
     layout = ours.layout
     theta_ours = ours.get_parameters().copy()
 

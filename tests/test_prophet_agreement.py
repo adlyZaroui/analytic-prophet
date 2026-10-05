@@ -90,7 +90,7 @@ def fit_ours(df, lib_path, changepoints_t=None):
     model = AnalyticProphet()
     if changepoints_t is not None:
         model.set_changepoints = lambda: setattr(model, "changepoints_t", changepoints_t.copy())
-    model.fit_cpp(df, lib_path=lib_path)
+    model.fit(df, lib_path=lib_path)
     return model
 
 

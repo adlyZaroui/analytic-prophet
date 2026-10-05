@@ -46,9 +46,12 @@ SHARED_CALLABLES = ["add_seasonality", "add_regressor", "add_country_holidays",
                     "fit", "predict", "make_future_dataframe"]
 
 # ours -> (theirs, why it stays different)
+#
+# `fit_cpp` left this table in #98. It was the one name a ported Prophet
+# script could not keep, and the compiled core is now what `fit` does -- so
+# the difference was closed rather than justified. `fit` is in
+# SHARED_CALLABLES above, which is the whole point.
 DELIBERATE = {
-    "fit_cpp": (None, "No counterpart in Prophet. It is the point of the project: "
-                      "the compiled path with the hand-derived gradient."),
     "sigma_k": (None, "[stan] the prior scale on k. Stan writes it as a literal "
                       "in `k ~ normal(0, 5)` rather than naming it in the data "
                       "block, and Prophet does not expose it at all."),
@@ -120,7 +123,7 @@ def test_the_renamed_quantities_hold_what_prophet_holds(prophet_comparison,
     _, stan_data, _ = bridge.capture_stan_model(prophet_model, df)
 
     ours = AnalyticProphet()
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     # y_scale: the divisor, shared name as of #54
     assert ours.y_scale == pytest.approx(prophet_model.y_scale)

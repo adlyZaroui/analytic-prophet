@@ -28,7 +28,8 @@ from analytic_prophet import AnalyticProphet
 df = pd.read_csv("tests/data/peyton_manning.csv")     # columns: ds, y
 
 model = AnalyticProphet(seasonality_mode="multiplicative")
-model.fit_cpp(df)                                      # or model.fit(df) for the reference path
+model.fit(df)                                          # the compiled core
+# model.fit(df, backend="python")                      # the readable reference path, no build needed
 
 future = model.make_future_dataframe(periods=90)
 forecast = model.predict(future)
@@ -45,13 +46,21 @@ arithmetic is a small C++ extension compiled on demand from one source file, and
 is linked beyond two header-only libraries.
 
 **No Stan toolchain to deploy.** `pip install` needs no cmdstan, no model compilation, no
-subprocess at fit time. The C++ core is built on demand, and the tests that need a
-compiler *skip* rather than fail when there is not one.
+subprocess at fit time. The tests and benchmarks build the C++ core on demand, and the
+tests that need a compiler *skip* rather than fail when there is not one.
+
+> **`fit(df)` needs that extension to exist.** Nothing builds it for you at call time yet
+> — `load_cpp_module` imports a built extension or raises telling you how to build one,
+> which on a fresh clone is what the default call does. Until
+> [#108](https://github.com/adlyZaroui/analytic-prophet/issues/108) closes, either run
+> `pytest` once (its fixture builds the extension), compile it with the command in
+> `analytic_prophet/optimize.cpp`, or use `fit(df, backend="python")`, which needs no
+> compiler at all.
 
 **An analytic gradient instead of automatic differentiation.** This is the point of the
 project. Reverse-mode autodiff tapes a forward pass and reverses over it; the model is
 small and entirely explicit, so the gradient can be written down instead. Both
-consequences are measured rather than assumed — fitting is **1.5–10× faster** than
+consequences are measured rather than assumed — fitting is **1.4–10× faster** than
 Prophet and the fit's peak memory is **about a third** of Prophet's at T = 2905, with the
 gap widening as the series grows, which is what a retained tape predicts. Predicting is
 faster on both of the paths described below — **1.8×** on the approximate one and **2.6×**
@@ -139,10 +148,15 @@ equivalent to a fresh instance carrying the same user configuration, fit on the 
 That is a divergence, so it is a stated contract rather than an accident.
 → [deviations](docs/deviations.md#refitting-is-allowed-and-a-refit-means-something-specific)
 
-**Two fit paths that agree to 1.5e-8.** `fit()` is a readable pure-Python reference;
-`fit_cpp()` is the compiled core and the deliverable. Both solve the same reformulated
-problem and follow Prophet's algorithm rule — Newton below 100 observations, L-BFGS at or
-above, one Newton retry when L-BFGS fails.
+**Two backends that agree to 1.5e-8.** `fit(df)` runs the compiled core, which is the
+deliverable, so a script ported from Prophet keeps its fit call and gets it.
+`fit(df, backend="python")` runs the readable pure-Python reference. Both solve the same
+reformulated problem and follow Prophet's algorithm rule — Newton below 100 observations,
+L-BFGS at or above, one Newton retry when L-BFGS fails.
+
+Arguments belonging to the backend you did not select are **rejected rather than
+ignored**, so `fit(df, analytic=False)` says that `analytic` is the Python backend's
+rather than quietly running the compiled one.
 
 **Verified against Stan's own density.** The objective is checked to *be* Prophet's, not
 to resemble it: `CmdStanModel.log_prob` evaluated at our parameters must differ from ours

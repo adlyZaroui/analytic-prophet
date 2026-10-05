@@ -89,6 +89,34 @@ FIT_DERIVED_ATTRIBUTES = (
 # through the other path would otherwise read a status its own run never wrote.
 FIT_ONLY_ATTRIBUTES = ("opt_status", "opt_status_message", "optimizer_used")
 
+# `fit` takes the union of two backends' arguments, so "was it passed?" cannot
+# be answered by comparing against a default -- `analytic=False` is both a
+# default and a thing a caller can mean. Hence a sentinel (#98), with a repr
+# so that `help(AnalyticProphet.fit)` reads `analytic=<unset>` rather than
+# `analytic=<object object at 0x...>`.
+class _Unset:
+    __slots__ = ()
+
+    def __repr__(self):
+        return "<unset>"
+
+
+_UNSET = _Unset()
+
+# Which backend each of the non-shared arguments belongs to. `df`,
+# `initial_params` and `algorithm` are shared and are not listed.
+#
+# The map is the whole rejection rule: an argument passed to the backend that
+# cannot honour it raises rather than being ignored. [fc] nothing -- Prophet
+# has one backend -- but it is the rule #52 set for the constructor, and the
+# reason is the same. A `fit(df, analytic=False)` that silently ran the
+# compiled core would be a measurement the caller did not ask for and has no
+# way to notice (#98).
+BACKEND_ARGUMENTS = {
+    "cpp": ("lib_path", "verbose"),
+    "python": ("analytic", "use_combined", "optimizer", "fixed_sigma_obs"),
+}
+
 def regressor_standardization(column, standardize):
     """(mu, std) for one regressor. [fc] initialize_scales.
 
@@ -663,7 +691,7 @@ class AnalyticProphet:
             raise RuntimeError(
                 "seasonality must be added before fitting; this model has "
                 "already been fit. Add it to a fresh model, or register it "
-                "before calling fit()/fit_cpp().")
+                "before calling fit().")
 
         # Built-in names are exempt: overwriting `weekly` with a different
         # order is a supported thing to want. [fc] passes
@@ -1132,7 +1160,7 @@ class AnalyticProphet:
         Prophet's also returns a `ModelInputData`; this one only saves to
         `self`, because both callers read the attributes rather than a record.
 
-        It exists because `fit` and `fit_cpp` each carried this block verbatim
+        It exists because the two backends each carried this block verbatim
         -- 45 identical lines, differing in one comment. Every change to
         preprocessing had to be made twice, and #41 is what that costs: both
         paths needed `_reset_fit_state()` added separately, and a miss would
@@ -1202,7 +1230,7 @@ class AnalyticProphet:
         the growth mode's initializer, delta and beta are zero, sigma_obs is 1.
 
         Prophet passes these to Stan explicitly, so Stan's random init is never
-        reached. `fit_cpp` used to draw `init_r * N(0, 1)` here instead,
+        reached. The compiled path used to draw `init_r * N(0, 1)` here instead,
         described as "STAN initialization" -- from an unseeded generator, which
         made it non-reproducible run to run.
         """
@@ -1263,9 +1291,85 @@ class AnalyticProphet:
         self._store_params(vector)
         return True
 
-    def fit(self, df: pd.DataFrame, analytic: bool=False, use_combined: bool=False, optimizer: str='L-BFGS-B',
-            initial_params: dict=None, fixed_sigma_obs: float=None,
-            algorithm: str=None) -> Tuple[float, float, np.array, np.array]:
+    def fit(self, df: pd.DataFrame, backend: str="cpp",
+            initial_params: dict=None, algorithm: str=None,
+            lib_path=_UNSET, verbose=_UNSET,
+            analytic=_UNSET, use_combined=_UNSET, optimizer=_UNSET,
+            fixed_sigma_obs=_UNSET) -> "AnalyticProphet":
+        """Fit the model. Returns self, so calls chain.
+
+        [fc] Prophet.fit in name, in the frame it takes and in returning
+        `self`. A script ported from Prophet keeps its fit call unchanged and
+        gets the compiled core with the analytic gradient -- which is the
+        point of this project and, before #98, was the one path a ported
+        script could not reach without editing it. `fit` ran the readable
+        reference implementation and `fit_cpp` ran the deliverable, so the
+        natural call got the slow one.
+
+            model.fit(df)                     # the compiled core
+            model.fit(df, backend="python")   # the reference path
+
+        **No argument is silently ignored.** The two backends do not take the
+        same arguments, and passing one to the backend that cannot honour it
+        raises rather than being dropped -- the rule #52 set for the
+        constructor, for the same reason: a flag that does nothing is worse
+        than one that is rejected, because nothing in the result says so.
+        `initial_params` and `algorithm` are the two both honour.
+
+        `backend="python"` runs the **analytic** gradient by default, where
+        the old `fit` defaulted to finite differences. The reference path is
+        the readable version of what the C++ does, and the numeric gradient is
+        a control for measuring what the analytic one buys, which is a thing
+        to ask for rather than a thing to land on. `analytic=False` still asks
+        for it.
+        """
+        if backend not in BACKEND_ARGUMENTS:
+            raise ValueError(
+                f"backend={backend!r} is not supported; it must be one of "
+                f"{', '.join(repr(name) for name in sorted(BACKEND_ARGUMENTS))}")
+
+        passed = {"lib_path": lib_path, "verbose": verbose,
+                  "analytic": analytic, "use_combined": use_combined,
+                  "optimizer": optimizer, "fixed_sigma_obs": fixed_sigma_obs}
+        for name, value in passed.items():
+            if value is _UNSET or name in BACKEND_ARGUMENTS[backend]:
+                continue
+            owner, = (which for which, names in BACKEND_ARGUMENTS.items()
+                      if name in names)
+            raise ValueError(
+                f"{name!r} applies to backend={owner!r}, and this call asked "
+                f"for backend={backend!r}. Pass backend={owner!r} to use it, "
+                f"or drop it -- it is rejected rather than ignored so that it "
+                f"cannot quietly not apply.")
+
+        def given(value, default):
+            return default if value is _UNSET else value
+
+        if backend == "cpp":
+            self._fit_cpp(df, initial_params=initial_params,
+                          lib_path=given(lib_path, None),
+                          verbose=given(verbose, False),
+                          algorithm=algorithm)
+        else:
+            self._fit_python(df, analytic=given(analytic, True),
+                             use_combined=given(use_combined, False),
+                             optimizer=given(optimizer, "L-BFGS-B"),
+                             initial_params=initial_params,
+                             fixed_sigma_obs=given(fixed_sigma_obs, None),
+                             algorithm=algorithm)
+        return self
+
+    def _fit_python(self, df: pd.DataFrame, analytic: bool=True, use_combined: bool=False,
+                    optimizer: str='L-BFGS-B', initial_params: dict=None,
+                    fixed_sigma_obs: float=None, algorithm: str=None) -> None:
+        """The reference path: scipy over the split reformulation.
+
+        Reached as `fit(df, backend="python")`. It is readable rather than
+        fast -- 2.6-5.3x slower than the compiled core at the sizes measured --
+        and it exists so that the thing the C++ implements can be read in a
+        page of Python and checked against it (to 1.5e-8, in
+        tests/test_backend_parity.py).
+        """
         if analytic and use_combined:
             raise ValueError("Both 'analytic' and 'use_combined' cannot be True at the same time.")
 
@@ -1303,14 +1407,14 @@ class AnalyticProphet:
             # the final value was right and the defect stayed invisible, but the
             # recorded trajectory could rise (0.031 at T=1000) where the run
             # itself descends monotonically, and it was not comparable with
-            # fit_cpp's trace, which is the split objective throughout.
+            # the compiled path's trace, which is the split objective throughout.
             loss_over_iterations.append(self._split_minus_log_posterior(z, design=design))
 
         initial_params_array = from_dict_to_array(initial_params_dict, self.layout)
 
         # sigma_obs must stay positive, mirroring Stan's `real<lower=0> sigma_obs`.
         # fixed_sigma_obs collapses that bound to a single point, pinning sigma_obs
-        # for parity with fit_cpp()'s compiled optimizer, which never estimates it.
+        # for parity with the compiled optimizer, which never estimates it.
         sigma_obs_bounds = (fixed_sigma_obs, fixed_sigma_obs) if fixed_sigma_obs is not None else (1e-6, None)
         n_delta = self.layout.n_changepoints
         # Split-space bounds: k, m free; delta_pos/delta_neg >= 0; then sigma_obs, beta
@@ -1441,9 +1545,13 @@ class AnalyticProphet:
         self._fit_regressor_models(df)
         self.loss_over_iterations = loss_over_iterations
     
-    def fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None,
-                verbose: bool=False, algorithm: str=None) -> Tuple[float, float, np.array, np.array]:
-        """Fit via the compiled C++ core (see load_cpp_module for how it's found)."""
+    def _fit_cpp(self, df: pd.DataFrame, initial_params: dict=None, lib_path: str=None,
+                 verbose: bool=False, algorithm: str=None) -> None:
+        """The deliverable: the compiled core, with the analytic gradient.
+
+        Reached as `fit(df)`, which is the default. See load_cpp_module for
+        how the extension is found and built.
+        """
         # the cleaned history, not the caller's frame: rows with a missing y
         # are dropped, and the regressor models below must see the same rows
         # the optimizer did (#102)
@@ -1626,9 +1734,13 @@ class AnalyticProphet:
             logger.info("Fitting regressor model %r with %d observations",
                         name, regressor_df.shape[0])
             if self._fitted_with_cpp:
-                predictor.fit_cpp(regressor_df, lib_path=self._fit_lib_path)
+                predictor.fit(regressor_df, lib_path=self._fit_lib_path)
             else:
-                predictor.fit(regressor_df)
+                # the analytic gradient, which is now the python backend's
+                # default -- before #98 this line inherited `analytic=False`
+                # and fitted every nested regressor model by finite
+                # differences, which nothing asked for
+                predictor.fit(regressor_df, backend="python")
             props["predictor"] = predictor
 
     def _ensure_regressor_values(self, future_df):

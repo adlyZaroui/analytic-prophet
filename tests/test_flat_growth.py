@@ -40,7 +40,7 @@ def flat_model():
 def test_the_trend_is_constant(peyton_manning_df, compiled_optimizer_module):
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
     model = flat_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     forecast = model.predict(model.make_future_dataframe(periods=60))
     trend = forecast["trend"].values
@@ -54,7 +54,7 @@ def test_k_and_delta_are_driven_to_zero(peyton_manning_df, compiled_optimizer_mo
     Laplace -- but the likelihood does not see them, so the only pull is
     toward zero."""
     model = flat_model()
-    model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert model.params["k"][0][0] == pytest.approx(0.0, abs=1e-8)
@@ -67,7 +67,7 @@ def test_the_gradient_carries_only_the_priors_on_k_and_delta(
     k/sigma_k^2 and (with the L1 prior) sign(delta)/changepoint_prior_scale."""
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
     model = flat_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)
     params = np.concatenate(([0.4], [0.6],
@@ -84,7 +84,7 @@ def test_the_gradient_carries_only_the_priors_on_k_and_delta(
 def test_the_l1_prior_still_reaches_delta(peyton_manning_df, compiled_optimizer_module):
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
     model = flat_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     params = model.get_parameters().copy()
     params[model.layout.delta] = 0.5
@@ -101,7 +101,7 @@ def test_analytic_gradient_matches_finite_differences(peyton_manning_df,
     model = flat_model()
     if multiplicative:
         model.seasonality_mode = "multiplicative"
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)
     params = np.concatenate(([0.4], [0.6],
@@ -126,7 +126,7 @@ def test_both_languages_agree_under_flat_growth(peyton_manning_df, cpp_mlp_and_g
                                                 compiled_optimizer_module):
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
     model = flat_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)
     params = np.concatenate(([0.4], [0.6],
@@ -163,7 +163,7 @@ def test_compute_trend_agrees_with_the_fitted_trend(peyton_manning_df,
                                                     compiled_optimizer_module):
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
     model = flat_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     shared = predict_trend(model.params["k"][0][0], model.params["m"][0][0],
                            model.params["delta"][0], model.changepoints_t,
@@ -175,7 +175,7 @@ def test_compute_trend_agrees_with_the_fitted_trend(peyton_manning_df,
 def test_flat_growth_needs_no_cap(peyton_manning_df, compiled_optimizer_module):
     """Unlike logistic, which requires one on every frame."""
     model = flat_model()
-    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert model.cap_scaled is None
@@ -215,7 +215,7 @@ def test_the_fit_is_prophets_fit_exactly(prophet_comparison, compiled_optimizer_
 
     ours = flat_model()
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
                                    ours.params["m"][0][0], ours.params["delta"][0],
@@ -243,7 +243,7 @@ def test_our_objective_is_stans_under_flat_growth(prophet_comparison,
 
     ours = flat_model()
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     rng = np.random.default_rng(0)
     sums = []

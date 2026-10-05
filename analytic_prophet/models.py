@@ -25,7 +25,7 @@ BUILD_HINT = (
 _cpp_module_cache = {}
 
 def load_cpp_module(lib_path=None):
-    """Import the compiled pybind11 extension backing fit_cpp().
+    """Import the compiled pybind11 extension backing `fit()`.
 
     With lib_path=None this is an ordinary import, so a built or installed
     extension is found on sys.path like any other module; failing that, it

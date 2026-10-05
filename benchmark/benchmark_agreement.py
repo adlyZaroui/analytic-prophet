@@ -47,7 +47,7 @@ def posterior_comparison(df, lib_path):
     # our fit, on Prophet's changepoints so delta indexes the same breakpoints
     ours = AnalyticProphet()
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=lib_path)
+    ours.fit(df, lib_path=lib_path)
 
     X_ours = np.ascontiguousarray(ours.make_all_seasonality_features(df)[0].to_numpy(dtype=float))
     beta_ours = ours.params["beta"][0]
@@ -70,7 +70,7 @@ def prediction_comparison(df, lib_path, horizon):
     prophet_forecast = prophet_model.predict(prophet_model.make_future_dataframe(periods=horizon))
 
     ours = AnalyticProphet()
-    ours.fit_cpp(df, lib_path=lib_path)
+    ours.fit(df, lib_path=lib_path)
     our_forecast = ours.predict(ours.make_future_dataframe(periods=horizon))
 
     n = min(len(prophet_forecast), len(our_forecast))
@@ -119,7 +119,7 @@ def short_series_comparison(df, lib_path):
         model = AnalyticProphet(n_changepoints=len(changepoints_t))
         model.set_changepoints = lambda: setattr(
             model, "changepoints_t", changepoints_t.copy())
-        model.fit_cpp(df, lib_path=lib_path, **fit_kwargs)
+        model.fit(df, lib_path=lib_path, **fit_kwargs)
         return model.optimizer_used, bridge.stan_log_prob(
             stan_model, stan_data, model.params["k"][0][0], model.params["m"][0][0],
             model.params["delta"][0], model.sigma_obs, model.params["beta"][0])

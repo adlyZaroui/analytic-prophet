@@ -93,7 +93,7 @@ def test_bad_input_raises_prophets_sentence(case, short_df):
     build, message = BAD_FRAMES[case]
     model = AnalyticProphet()
     with pytest.raises(ValueError) as raised:
-        model.fit(build(short_df), analytic=True)
+        model.fit(build(short_df), backend="python", analytic=True)
     assert str(raised.value) == message
 
 
@@ -104,7 +104,7 @@ def test_both_fit_paths_reject_identically(case, short_df, compiled_optimizer_mo
     build, message = BAD_FRAMES[case]
     model = AnalyticProphet()
     with pytest.raises(ValueError) as raised:
-        model.fit_cpp(build(short_df), lib_path=compiled_optimizer_module)
+        model.fit(build(short_df), lib_path=compiled_optimizer_module)
     assert str(raised.value) == message
 
 
@@ -120,7 +120,7 @@ def test_a_gappy_series_fits_on_the_rows_it_has(peyton_manning_df):
     assert 0 < usable < len(gappy)        # the test would be vacuous otherwise
 
     model = AnalyticProphet()
-    model.fit(gappy, analytic=True)
+    model.fit(gappy, backend="python", analytic=True)
     assert model.T == usable
     assert len(model.y) == usable
     assert np.all(np.isfinite(model.get_parameters()))
@@ -141,7 +141,7 @@ def test_dropped_rows_are_logged(peyton_manning_df, caplog):
     df = peyton_manning_df.iloc[:60].reset_index(drop=True)
     gappy = df.assign(y=df["y"].mask(df.index < 4))
     with caplog.at_level(logging.INFO, logger="analytic_prophet"):
-        AnalyticProphet().fit(gappy, analytic=True)
+        AnalyticProphet().fit(gappy, backend="python", analytic=True)
     assert any("4" in record.message and "missing y" in record.message
                for record in caplog.records)
 
@@ -168,7 +168,7 @@ def test_preprocess_returns_the_cleaned_history(peyton_manning_df):
 
     model_with_regressor = AnalyticProphet().add_regressor(
         "temperature", regressor_predictor={})
-    model_with_regressor.fit(gappy, analytic=True)
+    model_with_regressor.fit(gappy, backend="python", analytic=True)
     assert len(model_with_regressor._regressor_history) == len(cleaned)
 
 
@@ -182,7 +182,7 @@ def test_a_constant_series_skips_the_optimizer(peyton_manning_df, growth):
     """
     df = peyton_manning_df.iloc[:200].reset_index(drop=True).assign(y=3.0)
     model = AnalyticProphet(growth=growth)
-    model.fit(df, analytic=True)
+    model.fit(df, backend="python", analytic=True)
 
     assert model.sigma_obs == CONSTANT_SERIES_SIGMA_OBS
     assert model.optimizer_used is None       # nothing ran to name
@@ -197,7 +197,7 @@ def test_the_compiled_path_short_circuits_too(peyton_manning_df):
     to minimise a function with no interior minimum."""
     df = peyton_manning_df.iloc[:200].reset_index(drop=True).assign(y=3.0)
     model = AnalyticProphet()
-    model.fit_cpp(df, lib_path="/nonexistent/path/to/no/library.so")
+    model.fit(df, lib_path="/nonexistent/path/to/no/library.so")
 
     assert model.sigma_obs == CONSTANT_SERIES_SIGMA_OBS
     assert np.allclose(model.predict(
@@ -210,7 +210,7 @@ def test_logistic_growth_does_not_short_circuit(peyton_manning_df):
     df = peyton_manning_df.iloc[:60].reset_index(drop=True)
     df = df.assign(y=3.0, cap=10.0)
     model = AnalyticProphet(growth="logistic")
-    model.fit(df, analytic=True)
+    model.fit(df, backend="python", analytic=True)
 
     assert model.sigma_obs != CONSTANT_SERIES_SIGMA_OBS
     assert model.optimizer_used is not None
@@ -226,7 +226,7 @@ def test_an_all_zero_series_forecasts_zero(peyton_manning_df):
     """
     df = peyton_manning_df.iloc[:60].reset_index(drop=True).assign(y=0.0)
     model = AnalyticProphet()
-    model.fit(df, analytic=True)
+    model.fit(df, backend="python", analytic=True)
 
     assert model.y_scale == 1.0
     assert np.all(np.isfinite(model.y_scaled))
@@ -264,7 +264,7 @@ def test_a_history_with_a_floor_requires_one_at_predict(peyton_manning_df):
     df = peyton_manning_df.iloc[:150].reset_index(drop=True)
     df = df.assign(floor=df["y"].min() - 1.0, cap=df["y"].max() + 2.0)
     model = AnalyticProphet(growth="logistic")
-    model.fit(df, analytic=True)
+    model.fit(df, backend="python", analytic=True)
     assert model.logistic_floor
 
     future = model.make_future_dataframe(periods=5).assign(cap=df["cap"].iloc[0])
@@ -291,7 +291,7 @@ def test_a_history_without_a_floor_still_does_not_require_one(peyton_manning_df)
     df = peyton_manning_df.iloc[:60].reset_index(drop=True)
     df = df.assign(cap=df["y"].max() + 2.0)
     model = AnalyticProphet(growth="logistic")
-    model.fit(df, analytic=True)
+    model.fit(df, backend="python", analytic=True)
     assert not model.logistic_floor
 
     future = model.make_future_dataframe(periods=5).assign(cap=df["cap"].iloc[0])

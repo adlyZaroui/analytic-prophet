@@ -33,7 +33,7 @@ def fitted(compiled_optimizer_module):
     from pathlib import Path
     df = pd.read_csv(Path(__file__).parent / "data" / "peyton_manning.csv")
     model = AnalyticProphet(uncertainty_samples=600)
-    model.fit_cpp(df.iloc[:1000].reset_index(drop=True), lib_path=compiled_optimizer_module)
+    model.fit(df.iloc[:1000].reset_index(drop=True), lib_path=compiled_optimizer_module)
     return model
 
 
@@ -66,7 +66,7 @@ def test_the_band_collapses_to_the_trend_band_without_noise(peyton_manning_df,
     """#63's acceptance criterion. With sigma_obs at zero the only remaining
     source of width is the trend, so the two bands must coincide."""
     model = AnalyticProphet(uncertainty_samples=600)
-    model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     # exactly zero, not merely small: the first few horizon points have no
     # sampled changepoints yet, so their trend band is exactly 0 and any
@@ -105,7 +105,7 @@ def test_the_width_matches_the_normal_interval_it_should_be(peyton_manning_df,
     from scipy.stats import norm
 
     model = AnalyticProphet(uncertainty_samples=2000, interval_width=0.8)
-    model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     forecast = model.predict(model.make_future_dataframe(periods=0))
@@ -117,12 +117,12 @@ def test_the_width_matches_the_normal_interval_it_should_be(peyton_manning_df,
 
 def test_interval_width_still_controls_it(peyton_manning_df, compiled_optimizer_module):
     model = AnalyticProphet(uncertainty_samples=1000, interval_width=0.5)
-    model.fit_cpp(peyton_manning_df.iloc[:400].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:400].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     narrow = model.predict(model.make_future_dataframe(periods=30))
 
     wide_model = AnalyticProphet(uncertainty_samples=1000, interval_width=0.95)
-    wide_model.fit_cpp(peyton_manning_df.iloc[:400].reset_index(drop=True),
+    wide_model.fit(peyton_manning_df.iloc[:400].reset_index(drop=True),
                        lib_path=compiled_optimizer_module)
     wide = wide_model.predict(wide_model.make_future_dataframe(periods=30))
 
@@ -136,9 +136,9 @@ def test_yhat_itself_is_unchanged_by_the_draws(peyton_manning_df,
     must not move it."""
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
     few = AnalyticProphet(uncertainty_samples=10)
-    few.fit_cpp(df, lib_path=compiled_optimizer_module)
+    few.fit(df, lib_path=compiled_optimizer_module)
     many = AnalyticProphet(uncertainty_samples=500)
-    many.fit_cpp(df, lib_path=compiled_optimizer_module)
+    many.fit(df, lib_path=compiled_optimizer_module)
 
     future = few.make_future_dataframe(periods=30)
     np.testing.assert_array_equal(few.predict(future)["yhat"].values,
@@ -156,7 +156,7 @@ def test_the_band_agrees_with_prophets(prophet_comparison, compiled_optimizer_mo
     theirs = prophet_model.predict(prophet_model.make_future_dataframe(periods=90))
 
     ours = AnalyticProphet(uncertainty_samples=1000)
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
     mine = ours.predict(ours.make_future_dataframe(periods=90))
 
     horizon = slice(len(df), None)

@@ -70,7 +70,7 @@ def test_a_fit_fixes_sigmas_alongside_the_layout(peyton_manning_df,
     """`sigmas` is data in Stan's sense -- fixed for the whole fit, at the same
     moment `K` is."""
     model = configured(AnalyticProphet(), two_scales())
-    model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert model.sigmas.shape == (model.layout.n_seasonality_columns,)
@@ -228,7 +228,7 @@ def test_a_tighter_scale_shrinks_by_the_amount_the_prior_implies(
         model = configured(AnalyticProphet(),
                            {"yearly": seasonality(365.25, 10, prior_scale=10.0),
                             "weekly": seasonality(7.0, 3, prior_scale=weekly_scale)})
-        model.fit_cpp(df, lib_path=compiled_optimizer_module)
+        model.fit(df, lib_path=compiled_optimizer_module)
         return model
 
     loose, tight = fit(10.0), fit(scale)
@@ -268,7 +268,7 @@ def test_matches_the_prior_term_stan_computes(prophet_comparison, compiled_optim
 
     ours = configured(AnalyticProphet(), two_scales())
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     # the vector itself, element for element -- ordering included
     np.testing.assert_array_equal(ours.sigmas, np.asarray(stan_data["sigmas"], dtype=float))

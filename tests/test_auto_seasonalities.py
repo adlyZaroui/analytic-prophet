@@ -196,11 +196,11 @@ def test_the_rule_decides_what_a_fit_estimates(peyton_manning_df,
     """The selected components have to reach the parameter vector, or the rule
     is decoration. 328 days gives weekly only; the full series adds yearly."""
     short = AnalyticProphet()
-    short.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+    short.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     long = AnalyticProphet()
-    long.fit_cpp(peyton_manning_df, lib_path=compiled_optimizer_module)
+    long.fit(peyton_manning_df, lib_path=compiled_optimizer_module)
 
     assert list(short.seasonalities) == ["weekly"]
     assert short.layout.n_seasonality_columns == 6
@@ -213,15 +213,15 @@ def test_the_rule_decides_what_a_fit_estimates(peyton_manning_df,
 
 def test_both_fit_paths_select_the_same_components(peyton_manning_df,
                                                    compiled_optimizer_module):
-    """fit() and fit_cpp() must fit the same model, which now includes agreeing
+    """The two backends must fit the same model, which now includes agreeing
     on what that model is."""
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
 
     python_model = AnalyticProphet()
-    python_model.fit(df, analytic=True)
+    python_model.fit(df, backend="python", analytic=True)
 
     cpp_model = AnalyticProphet()
-    cpp_model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    cpp_model.fit(df, lib_path=compiled_optimizer_module)
 
     assert python_model.seasonalities == cpp_model.seasonalities
     assert python_model.layout.size == cpp_model.layout.size
@@ -232,10 +232,10 @@ def test_selection_is_not_sticky_across_fits(peyton_manning_df, compiled_optimiz
     a shorter series must not keep a component the new history cannot support.
     """
     model = AnalyticProphet()
-    model.fit_cpp(peyton_manning_df, lib_path=compiled_optimizer_module)
+    model.fit(peyton_manning_df, lib_path=compiled_optimizer_module)
     assert list(model.seasonalities) == ["yearly", "weekly"]
 
-    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     assert list(model.seasonalities) == ["weekly"]
     assert model.get_parameters().shape == (model.layout.size,)

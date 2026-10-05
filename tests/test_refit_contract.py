@@ -134,9 +134,9 @@ def fit_fresh_and_refit(build, first, second, lib_path, path="cpp"):
     """(a fresh instance fit on `second`, one fit on `first` then on `second`)."""
     def run(model, frame):
         if path == "cpp":
-            model.fit_cpp(frame, lib_path=lib_path)
+            model.fit(frame, lib_path=lib_path)
         else:
-            model.fit(frame, analytic=True)
+            model.fit(frame, backend="python", analytic=True)
         return model
 
     fresh = run(build(), second)
@@ -165,8 +165,8 @@ def test_this_implementation_allows_one(peyton_manning_df, compiled_optimizer_mo
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
     model = AnalyticProphet()
 
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     assert np.all(np.isfinite(model.get_parameters()))
 
@@ -193,11 +193,11 @@ def test_a_refit_matches_a_fresh_instance(histories, compiled_optimizer_module,
         # hold them -- so that is asserted instead of skipped.
         message = "Changepoints must fall within training data"
         with pytest.raises(ValueError, match=message):
-            build().fit_cpp(frames[second], lib_path=compiled_optimizer_module)
+            build().fit(frames[second], lib_path=compiled_optimizer_module)
         reused = build()
-        reused.fit_cpp(frames[first], lib_path=compiled_optimizer_module)
+        reused.fit(frames[first], lib_path=compiled_optimizer_module)
         with pytest.raises(ValueError, match=message):
-            reused.fit_cpp(frames[second], lib_path=compiled_optimizer_module)
+            reused.fit(frames[second], lib_path=compiled_optimizer_module)
         return
 
     fresh, refit = fit_fresh_and_refit(
@@ -228,19 +228,20 @@ def test_the_python_path_keeps_the_same_contract(histories, configuration):
 
 def test_switching_paths_between_fits_leaves_no_stale_status(histories,
                                                              compiled_optimizer_module):
-    """`opt_status` is written by fit_cpp and not by fit, so a fit() following a
-    fit_cpp() would otherwise report the compiled run's status as its own."""
+    """`opt_status` is written by the compiled backend and not by the Python one,
+    so a `backend="python"` fit following a compiled one would otherwise report
+    the compiled run's status as its own."""
     df = histories["short"]
     model = AnalyticProphet()
 
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
     assert model.opt_status_message == "converged"
 
-    model.fit(df, analytic=True)
+    model.fit(df, backend="python", analytic=True)
     assert not hasattr(model, "opt_status")
     assert not hasattr(model, "opt_status_message")
 
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
     assert model.opt_status_message == "converged"
 
 
@@ -313,13 +314,13 @@ def test_a_short_first_fit_does_not_cap_the_changepoints_forever(histories,
     and overwrites the attribute, which Prophet can do because it never fits
     twice. Here the cap has to be undone."""
     fresh = AnalyticProphet()
-    fresh.fit_cpp(histories["long"], lib_path=compiled_optimizer_module)
+    fresh.fit(histories["long"], lib_path=compiled_optimizer_module)
 
     refit = AnalyticProphet()
-    refit.fit_cpp(histories["tiny"], lib_path=compiled_optimizer_module)
+    refit.fit(histories["tiny"], lib_path=compiled_optimizer_module)
     assert refit.n_changepoints == 15, "the cap should bite on twenty rows"
 
-    refit.fit_cpp(histories["long"], lib_path=compiled_optimizer_module)
+    refit.fit(histories["long"], lib_path=compiled_optimizer_module)
 
     assert refit.n_changepoints == fresh.n_changepoints == 25
     assert refit.layout == fresh.layout
@@ -333,11 +334,11 @@ def test_setting_the_changepoint_count_between_fits_is_respected(histories,
     they set. Undoing the cap only while the capped value still stands is what
     tells the two apart."""
     model = AnalyticProphet()
-    model.fit_cpp(histories["tiny"], lib_path=compiled_optimizer_module)
+    model.fit(histories["tiny"], lib_path=compiled_optimizer_module)
     assert model.n_changepoints == 15
 
     model.n_changepoints = 8
-    model.fit_cpp(histories["long"], lib_path=compiled_optimizer_module)
+    model.fit(histories["long"], lib_path=compiled_optimizer_module)
 
     assert model.n_changepoints == 8
     assert model.layout.n_changepoints == 8
@@ -353,12 +354,12 @@ def test_holiday_names_come_from_the_history_being_fitted(histories,
     holiday sets differ: observed-day holidays land in some years and not others.
     """
     fresh = AnalyticProphet().add_country_holidays("US")
-    fresh.fit_cpp(histories["late"], lib_path=compiled_optimizer_module)
+    fresh.fit(histories["late"], lib_path=compiled_optimizer_module)
 
     refit = AnalyticProphet().add_country_holidays("US")
-    refit.fit_cpp(histories["long"], lib_path=compiled_optimizer_module)
+    refit.fit(histories["long"], lib_path=compiled_optimizer_module)
     stale = set(refit.train_holiday_names)
-    refit.fit_cpp(histories["late"], lib_path=compiled_optimizer_module)
+    refit.fit(histories["late"], lib_path=compiled_optimizer_module)
 
     assert stale != set(fresh.train_holiday_names), (
         "the two histories no longer disagree, so this test proves nothing")
@@ -378,8 +379,8 @@ def test_user_configuration_survives_a_refit(histories, compiled_optimizer_modul
              .add_regressor("temp"))
     frames = {name: with_regressor(frame) for name, frame in histories.items()}
 
-    model.fit_cpp(frames["long"], lib_path=compiled_optimizer_module)
-    model.fit_cpp(frames["short"], lib_path=compiled_optimizer_module)
+    model.fit(frames["long"], lib_path=compiled_optimizer_module)
+    model.fit(frames["short"], lib_path=compiled_optimizer_module)
 
     assert model.seasonality_mode == "multiplicative"
     assert model.changepoint_prior_scale == 0.123
@@ -398,8 +399,8 @@ def test_an_explicit_changepoint_list_survives_a_refit(histories,
     given = pd.to_datetime(["2008-06-01", "2008-09-01", "2009-02-01"])
     model = AnalyticProphet(changepoints=given)
 
-    model.fit_cpp(histories["long"], lib_path=compiled_optimizer_module)
-    model.fit_cpp(histories["long"], lib_path=compiled_optimizer_module)
+    model.fit(histories["long"], lib_path=compiled_optimizer_module)
+    model.fit(histories["long"], lib_path=compiled_optimizer_module)
 
     assert model.specified_changepoints
     pd.testing.assert_series_equal(
@@ -412,10 +413,10 @@ def test_generated_changepoints_do_not_become_a_specified_list(histories,
     """The mirror case: dates this implementation generated must not be read
     back on the next fit as though the user had supplied them."""
     model = AnalyticProphet()
-    model.fit_cpp(histories["long"], lib_path=compiled_optimizer_module)
+    model.fit(histories["long"], lib_path=compiled_optimizer_module)
     first = np.asarray(model.changepoints_t)
 
-    model.fit_cpp(histories["late"], lib_path=compiled_optimizer_module)
+    model.fit(histories["late"], lib_path=compiled_optimizer_module)
 
     assert not model.specified_changepoints
     assert not np.array_equal(first, np.asarray(model.changepoints_t))
@@ -439,7 +440,7 @@ def test_the_reset_restores_the_constructed_values(histories,
                 for name in FIT_DERIVED_ATTRIBUTES}
 
     model = AnalyticProphet()
-    model.fit_cpp(histories["short"], lib_path=compiled_optimizer_module)
+    model.fit(histories["short"], lib_path=compiled_optimizer_module)
     model._reset_fit_state()
 
     for name, value in baseline.items():

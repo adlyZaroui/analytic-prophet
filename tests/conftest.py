@@ -251,7 +251,7 @@ def _find_lbfgspp_include():
 
 @pytest.fixture(scope="session")
 def compiled_optimizer_module(tmp_path_factory, pytestconfig):
-    """Path to the freshly built pybind11 extension, as fit_cpp(lib_path=...)
+    """Path to the freshly built pybind11 extension, as fit(lib_path=...)
     wants it."""
     return _build_cpp_extension(tmp_path_factory, pytestconfig)
 

@@ -110,7 +110,7 @@ def test_holidays_can_be_given_to_the_constructor(peyton_manning_df,
     model = AnalyticProphet(holidays=frame)
     assert model.holidays is not None
 
-    model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     # one column per (holiday, window offset), not per occurrence: two dates of
     # the same holiday with a zero window share the column `bump_delim_+0`
@@ -164,9 +164,9 @@ def test_interval_width_sets_the_quantiles(peyton_manning_df,
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
 
     narrow = AnalyticProphet(interval_width=0.5, uncertainty_samples=400)
-    narrow.fit_cpp(df, lib_path=compiled_optimizer_module)
+    narrow.fit(df, lib_path=compiled_optimizer_module)
     wide = AnalyticProphet(interval_width=0.95, uncertainty_samples=400)
-    wide.fit_cpp(df, lib_path=compiled_optimizer_module)
+    wide.fit(df, lib_path=compiled_optimizer_module)
 
     future = narrow.make_future_dataframe(periods=60)
     narrow_band = narrow.predict(future)
@@ -181,7 +181,7 @@ def test_uncertainty_samples_is_the_draw_count(peyton_manning_df,
                                                compiled_optimizer_module):
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
     model = AnalyticProphet(uncertainty_samples=7)
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     class CountingGenerator:
         """Generator's methods are read-only, so the whole thing is wrapped."""
@@ -210,7 +210,7 @@ def test_the_draws_come_from_the_models_own_generator(peyton_manning_df,
     model did not make its intervals reproducible."""
     df = peyton_manning_df.iloc[:300].reset_index(drop=True)
     model = AnalyticProphet(uncertainty_samples=50)
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     state = model.rng.bit_generator.state
     _, first = model.trend_forecast_uncertainty(horizon=20)
@@ -229,7 +229,7 @@ def test_the_uncertainty_trend_follows_the_fitted_growth_mode(
     df = df.assign(cap=df["y"].max() * 1.25)
 
     model = AnalyticProphet(growth="logistic", uncertainty_samples=200)
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     future = model.make_future_dataframe(periods=200).assign(cap=df["cap"].iloc[0])
     forecast = model.predict(future)

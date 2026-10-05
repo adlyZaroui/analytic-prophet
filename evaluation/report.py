@@ -18,9 +18,9 @@ import sys
 import harness
 
 FIGURES = harness.RESULTS / "figures"
-IMPLEMENTATIONS = ("prophet", "analytic_prophet", "fit_cpp", "fit(analytic=True)")
+IMPLEMENTATIONS = ("prophet", "analytic_prophet", "compiled", "python")
 COLOURS = {"prophet": "#c44e52", "analytic_prophet": "#4c72b0",
-           "fit_cpp": "#4c72b0", "fit(analytic=True)": "#55a868"}
+           "compiled": "#4c72b0", "python": "#55a868"}
 
 
 def load(tier_name, results_dir=None):
@@ -274,12 +274,12 @@ def tier3_section(rows, figures):
     sizes = sorted({k for k in table if k[0].startswith("peyton") and k[1] == "default"},
                    key=lambda k: _size_of(k[0]))
     lines = ["## Tier 3 — what it costs", "",
-             "| T | Prophet | `fit_cpp` | `fit(analytic=True)` |", "|---|---|---|---|"]
+             "| T | Prophet | `compiled` | `python` |", "|---|---|---|---|"]
     for key in sizes:
         cell = table[key]
         lines.append(f"| {_size_of(key[0])} | {cell[('prophet','fit_wall')]:.3f} s | "
-                     f"**{cell[('fit_cpp','fit_wall')]:.3f} s** | "
-                     f"{cell[('fit(analytic=True)','fit_wall')]:.3f} s |")
+                     f"**{cell[('compiled','fit_wall')]:.3f} s** | "
+                     f"{cell[('python','fit_wall')]:.3f} s |")
 
     memory = [k for k in sizes if ("prophet", "fit_peak_rss_added") in table[k]]
     if memory:
@@ -294,9 +294,9 @@ def tier3_section(rows, figures):
             mib = lambda v: v / 1048576
             lines.append(
                 f"| {_size_of(key[0])} | {mib(cell[('prophet','fit_peak_rss_added')]):.1f} MiB "
-                f"| **{mib(cell[('fit_cpp','fit_peak_rss_added')]):.1f} MiB** "
+                f"| **{mib(cell[('compiled','fit_peak_rss_added')]):.1f} MiB** "
                 f"| **{mib(cell[('prophet','import_rss')]):.1f} MiB** "
-                f"| {mib(cell[('fit_cpp','import_rss')]):.1f} MiB |")
+                f"| {mib(cell[('compiled','import_rss')]):.1f} MiB |")
         lines += ["", "We win the fit and lose the import — the latter almost "
                   "entirely scipy, which Prophet does not pull. A library that is "
                   "expensive to merely import is still expensive to deploy.", ""]
@@ -313,8 +313,8 @@ def tier3_section(rows, figures):
         for key in predict:
             cell = table[key]
             get = lambda name: cell.get((name, "predict_wall"))
-            cells = [get("prophet"), get("fit_cpp"), get("prophet(exact)"),
-                     get("fit_cpp(exact)")]
+            cells = [get("prophet"), get("compiled"), get("prophet(exact)"),
+                     get("compiled(exact)")]
             lines.append(f"| {_size_of(key[0])} | " + " | ".join(
                 ("—" if v is None else f"{v:.3f} s") for v in cells) + " |")
         lines += ["", "Read down the diagonals, not across: approximate against"
@@ -350,7 +350,7 @@ def _cost_plot(table, sizes):
 
     observations = [_size_of(k[0]) for k in sizes]
     figure, axes = plt.subplots(1, 2, figsize=(9.5, 4))
-    for name in ("prophet", "fit_cpp", "fit(analytic=True)"):
+    for name in ("prophet", "compiled", "python"):
         values = [table[k].get((name, "fit_wall")) for k in sizes]
         axes[0].plot(observations, values, marker="o", label=name,
                      color=COLOURS.get(name, "0.5"))
@@ -358,7 +358,7 @@ def _cost_plot(table, sizes):
                 ylabel="fit, seconds", title="Fit time")
     axes[0].legend(frameon=False, fontsize=9)
 
-    for name in ("prophet", "fit_cpp"):
+    for name in ("prophet", "compiled"):
         values = [table[k].get((name, "fit_peak_rss_added")) for k in sizes]
         if all(v is not None for v in values):
             axes[1].plot(observations, [v / 1048576 for v in values], marker="o",

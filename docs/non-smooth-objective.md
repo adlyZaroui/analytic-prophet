@@ -213,7 +213,7 @@ only the optimizer differs:
 All four of our columns agree to five decimals at every size, so a default fit under the
 rule lands exactly where L-BFGS would — still ahead of Prophet at every size. The cost is
 time, not accuracy: Newton converges in 36–85 iterations but pays `2n` gradient
-evaluations per iteration for its Hessian, which makes `fit_cpp` about 6× slower at these
+evaluations per iteration for its Hessian, which makes the compiled path about 6× slower at these
 sizes — 0.016s against 0.003s at T=50, where Prophet takes 0.171s.
 
 That agreement is a property of the damping schedule, not of the objective, and the
@@ -247,10 +247,11 @@ to be. It is central differences of the **analytic** gradient — `2n` gradient
 evaluations, accurate to about 1e-8. Differencing an exact gradient is a different thing
 from differencing an objective, and at these sizes it is cheap.
 
-**The fallback has something to catch on one path.** `fit_cpp` still converges at every
-size down to ten observations, so its retry has never fired outside a test. `fit()` does
-fail in one configuration — yearly forced at order 10 on 328 days from an all-zero start,
-which is `test_fit_cpp_parity`'s matched-initialization setup and not one the auto rule
+**The fallback has something to catch on one backend.** The compiled path still converges
+at every size down to ten observations, so its retry has never fired outside a test.
+`fit(backend="python")` does fail in one configuration — yearly forced at order 10 on 328
+days from an all-zero start, which is `test_backend_parity`'s matched-initialization
+setup and not one the auto rule
 would select. There the retry converges and lands on the same objective to within 1e-9:
 it corrects the reported status without moving the answer.
 

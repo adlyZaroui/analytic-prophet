@@ -19,7 +19,7 @@ from analytic_prophet import AnalyticProphet
 @pytest.fixture
 def fitted(peyton_manning_df, compiled_optimizer_module):
     model = AnalyticProphet(uncertainty_samples=400)
-    model.fit_cpp(peyton_manning_df.iloc[:1200].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:1200].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
     return model
 
@@ -122,7 +122,7 @@ def test_flat_growth_has_no_slope_to_change(peyton_manning_df,
     """[fc] the flat branch returns zeros: there is no rate for a changepoint
     to adjust."""
     model = AnalyticProphet(growth="flat", uncertainty_samples=200)
-    model.fit_cpp(peyton_manning_df.iloc[:600].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:600].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert np.all(model._sample_uncertainty(np.linspace(0, 1.5, 100), 20) == 0.0)
@@ -152,7 +152,7 @@ def test_logistic_growth_uses_the_exact_sampler(peyton_manning_df,
     df = df.assign(cap=df["y"].max() * 1.5)
 
     model = AnalyticProphet(growth="logistic", uncertainty_samples=100)
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
     future = model.make_future_dataframe(periods=60).assign(cap=df["cap"].iloc[0])
 
     model.rng = np.random.default_rng(1)

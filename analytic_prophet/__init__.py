@@ -3,7 +3,7 @@
     from analytic_prophet import AnalyticProphet
 
     model = AnalyticProphet()
-    model.fit_cpp(df)
+    model.fit(df)
     forecast = model.predict(model.make_future_dataframe(periods=30))
 
 Where things are:

@@ -1,5 +1,5 @@
 """
-Issue #8: fit_cpp()'s compiled optimizer terminated after ~2 iterations with
+Issue #8: the compiled optimizer terminated after ~2 iterations with
 LBFGSERR_ROUNDING_ERROR, nowhere near converged.
 
 The issue proposed two directions. Both were investigated:
@@ -56,7 +56,7 @@ MATCHED_INIT = {
 def fit_both(df):
     """Run both fit paths from the same start with sigma_obs pinned the same."""
     python_model = pin_yearly_only(AnalyticProphet())
-    python_model.fit(df, analytic=True, initial_params=MATCHED_INIT, fixed_sigma_obs=SIGMA_OBS)
+    python_model.fit(df, backend="python", analytic=True, initial_params=MATCHED_INIT, fixed_sigma_obs=SIGMA_OBS)
 
     cpp_model = pin_yearly_only(AnalyticProphet())
     cpp_model.sigma_obs = SIGMA_OBS
@@ -147,7 +147,7 @@ def test_cpp_optimizer_no_longer_bails_out_early(small_df, compiled_optimizer_mo
     """The regression test for the bug as reported: it used to stop after 2
     iterations with LBFGSERR_ROUNDING_ERROR."""
     model = pin_yearly_only(AnalyticProphet())
-    model.fit_cpp(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_module)
+    model.fit(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_module)
 
     assert model.opt_status != LBFGSERR_ROUNDING_ERROR
     assert len(model.loss_over_iterations) > 50
@@ -158,7 +158,7 @@ def test_cpp_optimizer_reaches_first_order_optimum(small_df, compiled_optimizer_
     is the optimum of a convex objective -- not merely 'where the optimizer
     happened to stop'."""
     reference, model = fit_both(small_df)
-    model.fit_cpp(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_module)
+    model.fit(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_module)
 
     smooth_residual, delta_violation = first_order_residuals(reference, model.get_parameters())
 
@@ -182,7 +182,7 @@ def test_fit_reaches_first_order_optimum(small_df):
     """Same certificate for the Python path, which the same non-smoothness
     used to leave stranded 17.8% above the optimum while reporting success."""
     model = pin_yearly_only(AnalyticProphet())
-    model.fit(small_df, analytic=True, initial_params=MATCHED_INIT, fixed_sigma_obs=SIGMA_OBS)
+    model.fit(small_df, backend="python", analytic=True, initial_params=MATCHED_INIT, fixed_sigma_obs=SIGMA_OBS)
 
     smooth_residual, delta_violation = first_order_residuals(model, model.get_parameters())
 
@@ -194,7 +194,7 @@ def test_first_order_residuals_reject_a_near_miss(small_df):
     """Guards the certificate itself: a point a hair off the optimum has to
     fail it, otherwise the two tests above would pass on anything."""
     model = pin_yearly_only(AnalyticProphet())
-    model.fit(small_df, analytic=True, initial_params=MATCHED_INIT, fixed_sigma_obs=SIGMA_OBS)
+    model.fit(small_df, backend="python", analytic=True, initial_params=MATCHED_INIT, fixed_sigma_obs=SIGMA_OBS)
 
     perturbed = model.get_parameters().copy()
     perturbed[K_IDX] += 0.05
@@ -235,10 +235,10 @@ def test_both_fit_paths_record_a_monotone_decreasing_trajectory(small_df, compil
     """Both optimizers now expose a per-iteration loss, and neither should ever
     move uphill on a convex objective."""
     python_model, cpp_model = fit_both(small_df)
-    cpp_model.fit_cpp(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_module)
+    cpp_model.fit(small_df, initial_params=MATCHED_INIT, lib_path=compiled_optimizer_module)
 
     for name, trajectory in (("fit", python_model.loss_over_iterations),
-                             ("fit_cpp", cpp_model.loss_over_iterations)):
+                             ("compiled", cpp_model.loss_over_iterations)):
         trajectory = np.asarray(trajectory)
         assert len(trajectory) > 1, f"{name} recorded no trajectory"
         assert np.all(np.diff(trajectory) <= 1e-9), f"{name} loss increased between iterations"

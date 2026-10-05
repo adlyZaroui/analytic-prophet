@@ -57,7 +57,7 @@ def test_s_a_and_s_m_partition_the_columns(peyton_manning_df, compiled_optimizer
     """[stan] s_a and s_m are complementary indicators over the K columns."""
     model = AnalyticProphet()
     model.add_seasonality("monthly", 30.5, 5, mode="multiplicative")
-    model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert model.s_m.shape == (model.layout.n_regressor_columns,)
@@ -70,7 +70,7 @@ def test_the_model_wide_mode_reaches_auto_selected_components(
         peyton_manning_df, compiled_optimizer_module):
     """[fc] set_auto_seasonalities registers with self.seasonality_mode."""
     model = multiplicative_model()
-    model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert list(model.seasonalities) == ["yearly", "weekly"]
@@ -87,7 +87,7 @@ def test_holidays_carry_their_own_mode(peyton_manning_df, compiled_optimizer_mod
                           "ds": [pd.Timestamp(f"{y}-03-15") for y in (2008, 2009, 2010)],
                           "lower_window": 0, "upper_window": 0})
     model = AnalyticProphet().add_holidays(frame, mode="multiplicative")
-    model.fit_cpp(peyton_manning_df.iloc[:1000].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:1000].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     np.testing.assert_array_equal(model.s_m[model.layout.seasonality_block], 0.0)
@@ -129,7 +129,7 @@ def test_analytic_gradient_matches_finite_differences(peyton_manning_df,
         # mode does not pass
         model.weekly_seasonality = False
         model.add_seasonality("weekly", 7.0, 3, mode="multiplicative")
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
     assert model._multiplicative
 
     params = non_optimal_point(model)
@@ -154,7 +154,7 @@ def test_the_fused_objective_agrees_with_the_separate_ones(peyton_manning_df,
     """Three methods compute this; they must not drift apart."""
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
     model = multiplicative_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
     params = non_optimal_point(model)
 
     fused_value, fused_gradient = model._minus_log_posteriorAndGradient(params)
@@ -170,7 +170,7 @@ def test_both_languages_agree_in_multiplicative_mode(peyton_manning_df,
     two transcriptions agree."""
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
     model = multiplicative_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
     params = non_optimal_point(model)
 
     expected, expected_gradient = model._minus_log_posteriorAndGradient(params)
@@ -190,7 +190,7 @@ def test_both_languages_agree_in_multiplicative_mode(peyton_manning_df,
 def test_an_all_additive_model_takes_the_additive_branch(peyton_manning_df,
                                                          compiled_optimizer_module):
     model = AnalyticProphet()
-    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert not model._multiplicative
@@ -204,11 +204,11 @@ def test_an_explicitly_additive_model_fits_exactly_as_before(peyton_manning_df,
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
 
     default = AnalyticProphet()
-    default.fit_cpp(df, lib_path=compiled_optimizer_module)
+    default.fit(df, lib_path=compiled_optimizer_module)
 
     explicit = AnalyticProphet()
     explicit.seasonality_mode = "additive"
-    explicit.fit_cpp(df, lib_path=compiled_optimizer_module)
+    explicit.fit(df, lib_path=compiled_optimizer_module)
 
     np.testing.assert_array_equal(default.get_parameters(), explicit.get_parameters())
     assert default.opt.n_iterations == explicit.opt.n_iterations
@@ -223,7 +223,7 @@ def test_the_multiplicative_formulas_reduce_to_the_additive_ones(peyton_manning_
     """
     df = peyton_manning_df.iloc[:400].reset_index(drop=True)
     model = AnalyticProphet()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
     params = non_optimal_point(model)
 
     fast_value, fast_gradient = model._minus_log_posteriorAndGradient(params)
@@ -243,7 +243,7 @@ def test_a_multiplicative_component_scales_with_the_trend(peyton_manning_df,
     larger effect where the trend is larger."""
     df = peyton_manning_df.iloc[:1000].reset_index(drop=True)
     model = multiplicative_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     forecast = model.predict(model.make_future_dataframe(periods=0))
     trend = forecast["trend"].values
@@ -275,7 +275,7 @@ def test_objective_and_posterior_agree_with_prophet(prophet_comparison,
 
     ours = multiplicative_model()
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     np.testing.assert_array_equal(ours.s_m, np.asarray(stan_data["s_m"], dtype=float))
     np.testing.assert_array_equal(ours.s_a, np.asarray(stan_data["s_a"], dtype=float))

@@ -40,7 +40,7 @@ def test_a_missing_condition_column_is_rejected(peyton_manning_df, compiled_opti
     model = conditioned_model()
 
     with pytest.raises(ValueError, match=f"Condition '{CONDITION}' missing"):
-        model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+        model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                       lib_path=compiled_optimizer_module)
 
 
@@ -77,7 +77,7 @@ def test_an_unconditioned_registry_needs_no_columns(peyton_manning_df,
                                                     compiled_optimizer_module):
     """The common case must not start demanding columns."""
     model = AnalyticProphet()
-    model.fit_cpp(peyton_manning_df.iloc[:300].reset_index(drop=True),
+    model.fit(peyton_manning_df.iloc[:300].reset_index(drop=True),
                   lib_path=compiled_optimizer_module)
 
     assert model.condition_masks == {}
@@ -216,7 +216,7 @@ def test_the_condition_reaches_the_fit(peyton_manning_df, compiled_optimizer_mod
     df = with_condition(peyton_manning_df.iloc[:1000].reset_index(drop=True))
 
     model = conditioned_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     assert "on_season_weekly" in model.condition_masks
     assert list(model.seasonalities) == ["on_season_weekly", "yearly", "weekly"]
@@ -230,7 +230,7 @@ def test_predict_requires_the_condition_column(peyton_manning_df,
     too. make_future_dataframe emits only `ds`, so the caller must add it."""
     df = with_condition(peyton_manning_df.iloc[:400].reset_index(drop=True))
     model = conditioned_model()
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
 
     future = model.make_future_dataframe(periods=30)
     with pytest.raises(ValueError, match="missing from dataframe"):
@@ -252,7 +252,7 @@ def test_predict_uses_the_mask_it_is_given(peyton_manning_df, compiled_optimizer
     df = with_condition(peyton_manning_df.iloc[:400].reset_index(drop=True))
     model = conditioned_model()
     model.yearly_seasonality = model.weekly_seasonality = model.daily_seasonality = False
-    model.fit_cpp(df, lib_path=compiled_optimizer_module)
+    model.fit(df, lib_path=compiled_optimizer_module)
     assert list(model.seasonalities) == ["on_season_weekly"]
 
     future = model.make_future_dataframe(periods=30)
@@ -318,7 +318,7 @@ def test_the_feature_matrix_reproduces_prophets_column_for_column(
     ours = conditioned_model()
     ours.set_changepoints = lambda: setattr(
         ours, "changepoints_t", np.asarray(stan_data["t_change"], dtype=float))
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     assert list(ours.seasonalities) == list(prophet_model.seasonalities)
     X_ours = ours._design_matrices()[1]
@@ -347,7 +347,7 @@ def test_posterior_agrees_with_prophet_on_a_conditioned_model(prophet_comparison
 
     ours = conditioned_model()
     ours.set_changepoints = lambda: setattr(ours, "changepoints_t", changepoints_t.copy())
-    ours.fit_cpp(df, lib_path=compiled_optimizer_module)
+    ours.fit(df, lib_path=compiled_optimizer_module)
 
     lp_ours = bridge.stan_log_prob(stan_model, stan_data, ours.params["k"][0][0],
                                    ours.params["m"][0][0], ours.params["delta"][0],
