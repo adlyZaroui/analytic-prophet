@@ -29,7 +29,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-13, macos-14]
+        # macOS is one runner, not two. `[tool.cibuildwheel.macos]` asks for
+        # both architectures, and cibuildwheel cross-compiles the x86_64 wheel
+        # on the arm64 runner -- the v0.1.0 attempt proved it, building all ten
+        # macosx wheels (x86_64 and arm64, cp39-cp313) on macos-14 alone.
+        #
+        # The macos-13 leg it used to carry was therefore redundant *and*
+        # fatal: GitHub has retired the Intel runner image, so the job sat
+        # queued with no runner for the whole run. `verify` needs `wheels` and
+        # `publish` needs `verify`, so one unschedulable leg blocked the
+        # release permanently rather than failing it visibly.
+        #
+        # The cross-compiled x86_64 wheels cannot be executed on an arm64
+        # runner, so cibuildwheel does not test them. They are built and
+        # audited, not run.
+        os: [ubuntu-latest, macos-14]
     steps:
       - uses: actions/checkout@v4
 
@@ -40,8 +54,12 @@ jobs:
       # The matrix, the headers and the licences all come from
       # [tool.cibuildwheel] in pyproject.toml, so there is one place to read
       # and no second copy here to drift.
+      # v2 predates CPython 3.14: the v0.1.0 attempt built cp39-cp313 and
+      # silently nothing for cp314, while `requires-python = ">=3.9"` and the
+      # test matrix both claim it. The `verify` job below now checks the built
+      # set against the configured one rather than trusting either.
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.23.3
+        uses: pypa/cibuildwheel@v4.2.1
 
       - uses: actions/upload-artifact@v4
         with:
@@ -81,6 +99,39 @@ jobs:
           pattern: wheels-*
           path: wheelhouse
           merge-multiple: true
+
+      # The check that would have caught cp314 going missing. `pyproject.toml`
+      # names the interpreters to build; this asserts the wheels that came out
+      # cover every one of them, for every platform the matrix ran. A config
+      # listing cp314 proves nothing if the tool that reads it is too old to
+      # know what cp314 is -- which is exactly what happened to v0.1.0.
+      - name: Every configured Python must have a wheel
+        run: |
+          python - <<'PY'
+          import glob, re, sys, tomllib
+
+          with open("pyproject.toml", "rb") as handle:
+              configured = tomllib.load(handle)["tool"]["cibuildwheel"]["build"]
+          wanted = set(re.findall(r"cp(\d+)-", configured))
+
+          built = sorted(glob.glob("wheelhouse/*.whl"))
+          assert built, "no wheels were downloaded"
+
+          missing = {}
+          for platform in ("manylinux", "macosx_11_0_arm64", "macosx_10_"):
+              have = {m.group(1) for name in built
+                      if platform in name
+                      for m in [re.search(r"-cp(\d+)-", name)] if m}
+              absent = wanted - have
+              if absent:
+                  missing[platform] = sorted(absent)
+
+          for name in built:
+              print("  ", name.split("/")[-1])
+          assert not missing, (
+              f"configured to build {sorted(wanted)} but missing: {missing}")
+          print(f"\nall of {sorted(wanted)} built for every platform")
+          PY
 
       - name: Install the Linux wheel somewhere with no toolchain
         run: |
