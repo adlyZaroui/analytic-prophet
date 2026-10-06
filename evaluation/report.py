@@ -277,6 +277,34 @@ def _recovery_plot(table):
     plt.close(figure)
 
 
+# The rows that are comparisons, in the order the table prints them. The
+# sparsity readouts are deliberately not here: they describe the fits rather
+# than ranking them, so counting them in a multiple-comparison family would
+# make the correction harsher on the strength of tests nobody is using to
+# claim anything (#124).
+TIER2_COMPARISONS = ("mae", "rmse", "mape", "smape", "coverage", "interval_width")
+
+
+def holm(p_values):
+    """Holm-Bonferroni adjusted p-values.
+
+    Holm rather than Bonferroni because these metrics are computed on the same
+    forecasts and are heavily correlated, and plain Bonferroni assumes an
+    independence nobody believes -- it is valid but needlessly blunt. Holm is
+    valid under *arbitrary* dependence and uniformly more powerful, so there is
+    no case for the cruder one.
+
+    Step-down: sort ascending, scale the i-th by (m - i), and keep the running
+    maximum so the sequence cannot decrease.
+    """
+    ordered = sorted(p_values.items(), key=lambda item: item[1])
+    count, running, adjusted = len(ordered), 0.0, {}
+    for index, (name, value) in enumerate(ordered):
+        running = max(running, min(1.0, (count - index) * value))
+        adjusted[name] = running
+    return adjusted
+
+
 def tier2_section(rows, figures):
     paired = {r["metric"]: r["value"] for r in rows if r["series"] == "paired"}
     lines = ["## Tier 2 — does the better MAP point forecast better?", "",
@@ -284,25 +312,65 @@ def tier2_section(rows, figures):
              "evaluation on cutoffs from `prophet.diagnostics.generate_cutoffs`, "
              "scored by `prophet.diagnostics.performance_metrics` — both sides get "
              "the same splits and the same scorer.", "",
-             "| metric | median difference | lower on | p |", "|---|---|---|---|"]
+             "Differences are paired per series and tested with the **Wilcoxon "
+             "signed-rank test** (`scipy.stats.wilcoxon`), which is why the summary "
+             "is a median rather than a mean: forecast errors across series are "
+             "heavy-tailed, and one series here differs by about 35% while most "
+             "differ by under 2%.", "",
+             "| metric | median difference | lower on | p | Holm p |",
+             "|---|---|---|---|---|"]
     # Metrics where lower is simply better. For coverage it is not -- higher is
     # better up to the nominal 0.8 -- and for the sparsity readouts neither
     # direction is good or bad, so a "wins" column would read as a scoreboard
     # for quantities that are not a contest.
     SCORED = {"mae", "rmse", "mape", "smape"}
+    # Raw-unit rows: medians of differences across series whose levels differ by
+    # orders of magnitude. They rank direction; they are not a pooled effect
+    # size, because a unit of MAE means something different on every series
+    # (#124). The scale-free rows beside them are what magnitude should be read
+    # from.
+    RAW_UNITS = {"mae", "rmse", "interval_width", "sum_abs_delta", "l1_penalty"}
+
+    adjusted = holm({metric: paired[f"{metric}_p_value"]
+                     for metric in TIER2_COMPARISONS
+                     if f"{metric}_p_value" in paired})
+
     for metric in ("mae", "rmse", "mape", "smape", "coverage", "interval_width",
                    "sum_abs_delta", "exact_zeros", "l1_penalty"):
         if f"{metric}_n" not in paired:
             continue
         count = (f"{paired[f'{metric}_wins']:.0f}/{paired[f'{metric}_n']:.0f}"
                  if metric in SCORED else "—")
-        lines.append(f"| {metric} | {paired[f'{metric}_median']:+.4f} | {count} | "
-                     f"{paired[f'{metric}_p_value']:.4f} |")
+        label = f"{metric} ⁑" if metric in RAW_UNITS else metric
+        holm_cell = (f"{adjusted[metric]:.4f}" if metric in adjusted else "—")
+        lines.append(f"| {label} | {paired[f'{metric}_median']:+.4f} | {count} | "
+                     f"{paired[f'{metric}_p_value']:.4f} | {holm_cell} |")
+    survivors = [m for m in ("mae", "rmse", "mape", "smape", "coverage")
+                 if adjusted.get(m, 1.0) < 0.05]
     lines += ["", "Negative means we are lower. That is better for the four error"
               " rows, worse for coverage — which should be near the nominal 0.8 —"
               " and neither for the sparsity rows, which are reported because they"
               " describe the fits rather than rank them. The count column is left"
               " blank where a win is not defined.", "",
+              "**⁑ These rows are in the series' own units**, and the 36 M4 series"
+              " differ in level by orders of magnitude. The median of a raw"
+              " difference across them ranks direction and is *not* a pooled effect"
+              " size — a unit of MAE means something different on every series. Read"
+              " magnitude from the scale-free rows: `mape`, `smape` and `coverage`."
+              " (MASE, the M4 standard, would be the better answer and needs the"
+              " tier re-run with a new metric; it is not here.)", "",
+              "**On testing nine things at once.** The comparisons are the six rows"
+              f" above the sparsity readouts, and the `Holm p` column adjusts across"
+              f" them. Holm rather than Bonferroni because these metrics are computed"
+              f" on the same forecasts and are far from independent: Bonferroni is"
+              f" valid but needlessly blunt, and Holm is valid under arbitrary"
+              f" dependence and uniformly more powerful."
+              f" **{len(survivors)} of the 5 comparative metrics survive"
+              f" adjustment** — {', '.join(f'`{m}`' for m in survivors)} — and"
+              " `interval_width` does not, which claims nothing it was not already"
+              " declining to claim at p = 0.47. Plain Bonferroni would reject"
+              " `rmse` and `smape`; including the three sparsity rows in the family"
+              " changes none of it.", "",
               "**The better MAP point does forecast better** on this corpus.", ""]
 
     coverage = collections.defaultdict(list)
@@ -311,6 +379,23 @@ def tier2_section(rows, figures):
             coverage[row["implementation"]].append(row["value"])
     if coverage:
         means = {k: sum(v) / len(v) for k, v in coverage.items()}
+        # the shape behind the gap between the median difference and the
+        # difference of means, counted rather than described (#124)
+        # paired by series name, not by position: the two lists happen to be
+        # in the same order because the results file is sorted, which is not a
+        # property worth depending on
+        _by_series = collections.defaultdict(dict)
+        for row in rows:
+            if row["metric"] == "coverage" and row["series"] != "paired":
+                _by_series[row["series"]][row["implementation"]] = row["value"]
+        _differences = sorted(
+            pair["analytic_prophet"] - pair["prophet"]
+            for pair in _by_series.values()
+            if {"analytic_prophet", "prophet"} <= set(pair))
+        _paired_count = len(_differences)
+        _near = sum(1 for d in _differences if abs(d) < 0.02)
+        _above = sum(1 for d in _differences if d > 0.05)
+        _largest = _differences[-1] if _differences else float("nan")
         lines += ["### The finding that is not about us", "",
                   "**Both implementations badly under-cover.** Mean coverage of the "
                   f"nominal 80% interval is **{means.get('analytic_prophet', float('nan')):.3f}** "
@@ -318,7 +403,21 @@ def tier2_section(rows, figures):
                   "Prophet's — the intervals contain about a third of the points they "
                   "claim four fifths of. That is the model on long horizons and "
                   "volatile series, shared by both, and it is larger than anything "
-                  "separating them.", ""]
+                  "separating them.", "",
+                  "*These two coverage numbers are different quantities, and the gap "
+                  "between them is informative rather than a discrepancy.* The table "
+                  f"reports **{paired.get('coverage_median', float('nan')):+.4f}**, the "
+                  "median of the per-series *differences*; here it is the difference "
+                  f"of the *means*, "
+                  f"**{means.get('analytic_prophet', float('nan')) - means.get('prophet', float('nan')):+.3f}** "
+                  "— about six times larger. A median of paired differences is not the "
+                  "difference of means, and the two separating this far says the "
+                  "per-series differences are skewed — which they are: "
+                  f"**{_near} of the {_paired_count} series differ by less than 0.02**, "
+                  f"{_above} differ by more than +0.05 (the largest, {_largest:+.2f}), "
+                  "and none differs by more than 0.05 the other way. The mean is "
+                  "carried by those few; the median is what the other thirty-odd "
+                  "look like.", ""]
         if figures:
             _coverage_plot(coverage)
             lines += captioned(

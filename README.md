@@ -256,6 +256,13 @@ results and a generated report. One command regenerates everything.
   and **none is a gap** — [#114](https://github.com/adlyZaroui/analytic-prophet/issues/114)
   closed the last four. Enumerated member by member, with the attributes a fit sets, in
   [how far from a drop-in](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/deviations.md#how-far-from-a-drop-in-enumerated).
+- **The held-out evidence is 36 series.** M4 has 100,000. Thirty-six weekly and daily
+  series, rolling-origin, both sides on the same splits and the same scorer, is a
+  defensible first pass and it is what every accuracy claim here rests on — but it is a
+  small sample for a forecasting result, and the showcase figure ranks within the
+  **11** of them where a Prophet-shaped model fits at all. The direction has survived
+  multiplicity adjustment on five metrics; the magnitude should be read as "measured on
+  this corpus" rather than as a property of the method.
 - **The intervals are not well calibrated — in either implementation.** On the M4 corpus
   the nominal 80% interval contains about a third of the points it claims four fifths of
   — mean coverage **0.341** for Prophet and **0.356** for this implementation. That is a property of the model on long
