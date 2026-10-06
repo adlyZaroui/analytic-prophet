@@ -268,3 +268,41 @@ def test_the_doc_reports_the_counts_it_claims():
         assert int(quoted.group(1)) == tally[verdict], (
             f"the doc says {quoted.group(1)} {phrase}, the register has "
             f"{tally[verdict]}")
+
+
+def test_the_readme_quotes_the_register_correctly():
+    """The README carries its own copy of these counts, and it went stale.
+
+    It said "13 are the same ... 4 are gaps" after #114 had closed all four
+    and made it 17 and none. The table in docs/deviations.md was right the
+    whole time, because `test_the_doc_reports_the_counts_it_claims` checks it
+    -- and nothing checked the second copy a reader meets first.
+
+    A third hand-maintained copy would go stale the same way, so this reads
+    the register rather than a number somebody typed.
+    """
+    readme = (REPO / "README.md").read_text()
+    one_line = " ".join(readme.split())
+
+    tally = {verdict: sum(1 for v, _ in METHODS.values() if v == verdict)
+             for verdict in VERDICTS}
+
+    quoted = re.search(
+        r"Of Prophet's (\d+) public methods, (\d+) are the\s+same, (\d+) are "
+        r"module-level functions here rather than methods, (\d+) are absent on "
+        r"purpose", one_line)
+    assert quoted, "the README no longer states the parity counts in the form checked here"
+
+    total, same, moved, deliberate = (int(g) for g in quoted.groups())
+    assert total == len(METHODS), f"README says {total} methods, the register has {len(METHODS)}"
+    assert same == tally[SAME], f"README says {same} same, the register has {tally[SAME]}"
+    assert moved == tally[MOVED], f"README says {moved} moved, the register has {tally[MOVED]}"
+    assert deliberate == tally[DELIBERATE], (
+        f"README says {deliberate} deliberate, the register has {tally[DELIBERATE]}")
+
+    # and the gap count, which is the one that went stale
+    if tally[GAP] == 0:
+        assert "none is a gap" in one_line, (
+            "the register has no gaps left and the README does not say so")
+    else:
+        assert f"{tally[GAP]} are gaps" in one_line
