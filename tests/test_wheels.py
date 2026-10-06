@@ -231,6 +231,36 @@ def test_publishing_uses_trusted_publishing_rather_than_a_token(release):
     assert "PYPI_TOKEN" not in str(release)
 
 
+def test_the_verify_step_installs_one_wheel_and_the_right_one(release):
+    """A glob over the wheelhouse matches every interpreter's wheel.
+
+    The v0.1.0 retry failed here: `pip install wheelhouse/*manylinux*.whl`
+    expanded to all six and handed pip the cp310 one on a 3.12 runner, which
+    it refused -- "not a supported wheel on this platform". The step has to
+    choose the wheel whose tag matches the interpreter running it.
+    """
+    verify = release["jobs"]["verify"]
+    install = next(step for step in verify["steps"]
+                   if "pip install" in step.get("run", "")
+                   and "wheelhouse" in step.get("run", ""))
+    run = install["run"]
+    assert "version_info" in run, (
+        "the install step does not select by interpreter tag, so it will hand "
+        "pip a wheel built for a different Python")
+    assert "wheelhouse/*manylinux*x86_64.whl" not in run, (
+        "the bare glob is back; it matches every interpreter's wheel")
+
+
+def test_the_licence_check_covers_every_wheel(release):
+    """It used to check whichever wheel sorted first, which is cp310 by
+    accident of naming -- so a licence missing from exactly one wheel would
+    ship."""
+    verify = release["jobs"]["verify"]
+    shell = " ".join(step.get("run", "") for step in verify["steps"])
+    assert "for wheel in wheels" in shell, (
+        "the licence check still looks at a single wheel")
+
+
 def test_the_release_verifies_the_wheel_runs_the_compiled_core(release):
     """The acceptance criterion, and the one a plain import test would pass
     while the wheel quietly compiled its core on first use."""
