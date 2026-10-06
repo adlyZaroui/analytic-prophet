@@ -130,8 +130,11 @@ Without a compiler the build raises, naming the one thing that is missing — an
 project. Reverse-mode autodiff tapes a forward pass and reverses over it; the model is
 small and entirely explicit, so the gradient can be written down instead. Both
 consequences are measured rather than assumed — fitting is **1.4–10× faster** than
-Prophet and the fit's peak memory is **about a third** of Prophet's at T = 2905, with the
-gap widening as the series grows, which is what a retained tape predicts. Predicting is
+Prophet, and which end you get depends on the series: **10× at T = 50, falling to 1.4×
+by T = 1000**, because Prophet pays a fixed cmdstan subprocess cost that matters most
+when there is least to do. The fit's peak memory is **about a third** of Prophet's at
+T = 2905, with the gap widening as the series grows, which is what a retained tape
+predicts. Predicting is
 faster on both of the paths described below — **1.8×** on the approximate one and **2.6×**
 on the exact one.
 → [cost](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md#tier-3--what-it-costs)
@@ -139,8 +142,13 @@ on the exact one.
 **Prophet's non-differentiable objective, handled.** The Laplace prior on the changepoint
 rates puts `Σ|δ|/τ` in the posterior, which is not differentiable at `δ = 0` — exactly
 where the optimum sits, because that prior is what drives most rates to zero. Prophet's
-own optimizer stops short there, and so did three others until the objective was
-reformulated. Splitting `δ` into non-negative parts makes the problem smooth with simple
+own optimizer stops short there, and so did three others before the objective was
+reformulated: **liblbfgs**, which died after two iterations with
+`LBFGSERR_ROUNDING_ERROR`; **scipy's L-BFGS-B** on the natural parameterization, which
+stalled 17.8% above the optimum while reporting success; and **Stan's own Newton**, which
+Prophet uses below 100 observations and which lands short at every size measured. That
+last one is the informative one — a second-order method defeated in the same place is
+not a statement about L-BFGS, because curvature is exactly what a kink does not have. Splitting `δ` into non-negative parts makes the problem smooth with simple
 bounds, and the same solution.
 → [the argument and the evidence](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/non-smooth-objective.md)
 
@@ -243,9 +251,10 @@ results and a generated report. One command regenerates everything.
 
 - **No MCMC.** MAP estimation only; `mcmc_samples > 0` is rejected rather than ignored.
 - **No plotting.** No `plot` or `plot_components`.
-- **Not a drop-in, and here is how far off.** Of Prophet's 40 public methods, 13 are the
+- **Not a drop-in, and here is how far off.** Of Prophet's 40 public methods, 17 are the
   same, 8 are module-level functions here rather than methods, 15 are absent on purpose
-  and 4 are gaps — enumerated member by member, with the attributes a fit sets, in
+  and **none is a gap** — [#114](https://github.com/adlyZaroui/analytic-prophet/issues/114)
+  closed the last four. Enumerated member by member, with the attributes a fit sets, in
   [how far from a drop-in](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/deviations.md#how-far-from-a-drop-in-enumerated).
 - **The intervals are not well calibrated — in either implementation.** On the M4 corpus
   the nominal 80% interval contains about a third of the points it claims four fifths of
