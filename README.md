@@ -14,7 +14,7 @@ for.
 is no MCMC and no plotting, so this is not yet a drop-in replacement. See
 [what this is not](#what-this-is-not).
 
-![three held-out forecasts: the largest advantage, the median, and one Prophet wins](evaluation/results/figures/showcase.png)
+![three held-out forecasts: the largest advantage, the median, and one Prophet wins](https://raw.githubusercontent.com/adlyZaroui/analytic-prophet/main/evaluation/results/figures/showcase.png)
 
 **What this shows, and what it does not.** Three M4 series, forecast past a cutoff
 neither model saw. Each coloured line is continuous through the cutoff: to its left the
@@ -46,18 +46,24 @@ Regenerate it with `python evaluation/showcase.py`; the output is byte-identical
 both sides are seeded.
 
 ```bash
-pip install analytic-prophet        # once published — see below
+pip install analytic-prophet
 ```
 
-The wheels carry the compiled core, so there is nothing to build: no compiler, no Eigen,
-no LBFGSpp. Linux and macOS, Python 3.9–3.14 — the versions and platforms CI actually
-runs the suite on. Windows is not built, because nothing here has ever been tested there;
-it falls back to the source distribution, which does need a C++17 compiler.
+**On Linux and macOS, Python 3.9–3.14, that is the whole of it.** The wheels carry the
+compiled core, so nothing is built at install time and nothing is built at your first
+`fit` either: no compiler, no Eigen, no LBFGSpp. Those are the platforms and versions CI
+runs the suite on.
 
-> **Not on PyPI yet** ([#97](https://github.com/adlyZaroui/analytic-prophet/issues/97)).
-> The wheels, their verification and the release workflow are in place and run from a
-> tag; the publish step waits on a maintainer's approval and on the name being
-> registered. Until then, clone:
+**Anywhere else — Windows, or any `pip install` that falls back to the source
+distribution — there is no wheel**, and the C++ core is compiled on demand instead: the
+first `fit(df)` takes about ten seconds, says so while it does it, and caches the result
+for every later run. That path needs a C++17 compiler and the two header-only libraries.
+`fit(df, backend="python")` needs neither and works everywhere.
+
+Windows has no wheel because nothing here has ever been tested there, and shipping a
+binary for an untested platform is a claim with nothing behind it.
+
+### From a clone, to work on it
 
 ```bash
 git clone https://github.com/adlyZaroui/analytic-prophet
@@ -99,10 +105,13 @@ which spawns a subprocess for every fit. This carries neither. The model is Pyth
 arithmetic is a small C++ extension compiled on demand from one source file, and nothing
 is linked beyond two header-only libraries.
 
-**No Stan toolchain to deploy.** `pip install` needs no cmdstan, no model compilation, no
-subprocess at fit time. The C++ core is built on demand: the first `fit(df)` on a machine
-compiles `optimize.cpp` — about ten seconds, and it says so rather than appearing to hang
-— then caches the result and reuses it forever after
+**No Stan toolchain to deploy.** `pip install` needs no cmdstan, no model compilation and
+no subprocess at fit time, on any path.
+
+**From a wheel**, the core is already compiled and nothing is built, ever. **From the
+source distribution or a clone** — Windows, or any platform without a wheel — it is built
+on demand: the first `fit(df)` compiles `optimize.cpp`, takes about ten seconds, says so
+rather than appearing to hang, and caches the result for every later run
 ([#108](https://github.com/adlyZaroui/analytic-prophet/issues/108)). The cache is keyed by
 a digest of the source and the compile command, so editing `optimize.cpp` rebuilds and
 nothing else does.
@@ -125,7 +134,7 @@ Prophet and the fit's peak memory is **about a third** of Prophet's at T = 2905,
 gap widening as the series grows, which is what a retained tape predicts. Predicting is
 faster on both of the paths described below — **1.8×** on the approximate one and **2.6×**
 on the exact one.
-→ [cost](evaluation/results/report.md#tier-3--what-it-costs)
+→ [cost](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md#tier-3--what-it-costs)
 
 **Prophet's non-differentiable objective, handled.** The Laplace prior on the changepoint
 rates puts `Σ|δ|/τ` in the posterior, which is not differentiable at `δ = 0` — exactly
@@ -133,7 +142,7 @@ where the optimum sits, because that prior is what drives most rates to zero. Pr
 own optimizer stops short there, and so did three others until the objective was
 reformulated. Splitting `δ` into non-negative parts makes the problem smooth with simple
 bounds, and the same solution.
-→ [the argument and the evidence](docs/non-smooth-objective.md)
+→ [the argument and the evidence](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/non-smooth-objective.md)
 
 **A better optimum, by Prophet's own objective.** Scored under Stan's `log_prob` on
 identical changepoints, so only the optimizer differs:
@@ -144,7 +153,7 @@ identical changepoints, so only the optimizer differs:
 | 1000 | 2852.768 | **2855.528** |
 | 2905 | 8004.798 | **8005.159** |
 
-→ [the correctness gate](evaluation/results/report.md#tier-0--are-the-two-fitting-the-same-model)
+→ [the correctness gate](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md#tier-0--are-the-two-fitting-the-same-model)
 
 **Better forecasts, held out.** 36 M4 series, rolling-origin evaluation on cutoffs from
 Prophet's own `generate_cutoffs` and scored by its own `performance_metrics`, so neither
@@ -160,7 +169,7 @@ the splits nor the definitions are ours:
 
 More accurate points, and **higher** coverage at statistically indistinguishable width —
 negative is better for the error rows, positive for coverage.
-→ [forecast accuracy](evaluation/results/report.md#tier-2--does-the-better-map-point-forecast-better)
+→ [forecast accuracy](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md#tier-2--does-the-better-map-point-forecast-better)
 
 **Two uncertainty samplers, and Prophet's default is the approximate one.** This is
 worth knowing before comparing any interval or any prediction time.
@@ -179,7 +188,7 @@ the Poisson process over the horizon with one coin per timestep and integrates t
 by a double cumulative sum; the exact sampler places changepoints in continuous time and
 evaluates the piecewise-linear trend from its definition. Under logistic growth the exact
 sampler runs regardless, and `model.predicted_vectorized` records which one did.
-→ [all four paths timed](evaluation/results/report.md#tier-3--what-it-costs)
+→ [all four paths timed](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md#tier-3--what-it-costs)
 
 **Feature-complete against Prophet's model.** Linear, logistic and flat growth;
 seasonality selected from the history by Prophet's own rule, with per-component Fourier
@@ -206,7 +215,7 @@ extension — so a model fitted on one machine loads on one that has never built
 **Refitting is allowed**, where `Prophet.fit` refuses a second call. A refit is
 equivalent to a fresh instance carrying the same user configuration, fit on the new data.
 That is a divergence, so it is a stated contract rather than an accident.
-→ [deviations](docs/deviations.md#refitting-is-allowed-and-a-refit-means-something-specific)
+→ [deviations](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/deviations.md#refitting-is-allowed-and-a-refit-means-something-specific)
 
 **Two backends that agree to 1.5e-8.** `fit(df)` runs the compiled core, which is the
 deliverable, so a script ported from Prophet keeps its fit call and gets it.
@@ -221,12 +230,12 @@ rather than quietly running the compiled one.
 **Verified against Stan's own density.** The objective is checked to *be* Prophet's, not
 to resemble it: `CmdStanModel.log_prob` evaluated at our parameters must differ from ours
 by a constant, and it does to 1e-12.
-→ [verification](docs/model.md#verification-the-objective-is-stans-objective)
+→ [verification](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/model.md#verification-the-objective-is-stans-objective)
 
 **A reproducible evaluation suite.** Four tiers — a correctness gate, parameter recovery
 on synthetic data with known truth, held-out forecast accuracy, and cost — with committed
 results and a generated report. One command regenerates everything.
-→ [evaluation/](evaluation/)
+→ [evaluation/](https://github.com/adlyZaroui/analytic-prophet/tree/main/evaluation/)
 
 ---
 
@@ -237,7 +246,7 @@ results and a generated report. One command regenerates everything.
 - **Not a drop-in, and here is how far off.** Of Prophet's 40 public methods, 13 are the
   same, 8 are module-level functions here rather than methods, 15 are absent on purpose
   and 4 are gaps — enumerated member by member, with the attributes a fit sets, in
-  [how far from a drop-in](docs/deviations.md#how-far-from-a-drop-in-enumerated).
+  [how far from a drop-in](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/deviations.md#how-far-from-a-drop-in-enumerated).
 - **The intervals are not well calibrated — in either implementation.** On the M4 corpus
   the nominal 80% interval contains about a third of the points it claims four fifths of
   — mean coverage **0.341** for Prophet and **0.356** for this implementation. That is a property of the model on long
@@ -250,13 +259,13 @@ results and a generated report. One command regenerates everything.
 
 | | |
 |---|---|
-| [The model](docs/model.md) | what is fitted, term for term, and the proof that it is Stan's objective |
-| [The non-smooth objective](docs/non-smooth-objective.md) | the central argument: where Prophet's optimizer stops short, and why |
-| [Deviations from Prophet](docs/deviations.md) | deliberate divergences, and the gaps still open |
-| [Evaluation report](evaluation/results/report.md) | every measured number, generated from committed results |
-| [Benchmarks](benchmark/) | the fast micro-benchmarks, for running against a change |
-| [Evaluation suite](evaluation/) | the claim-level study and its methodology |
-| [Changelog](CHANGELOG.md) | what was wrong, and how it was found |
+| [The model](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/model.md) | what is fitted, term for term, and the proof that it is Stan's objective |
+| [The non-smooth objective](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/non-smooth-objective.md) | the central argument: where Prophet's optimizer stops short, and why |
+| [Deviations from Prophet](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/deviations.md) | deliberate divergences, and the gaps still open |
+| [Evaluation report](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md) | every measured number, generated from committed results |
+| [Benchmarks](https://github.com/adlyZaroui/analytic-prophet/tree/main/benchmark/) | the fast micro-benchmarks, for running against a change |
+| [Evaluation suite](https://github.com/adlyZaroui/analytic-prophet/tree/main/evaluation/) | the claim-level study and its methodology |
+| [Changelog](https://github.com/adlyZaroui/analytic-prophet/blob/main/CHANGELOG.md) | what was wrong, and how it was found |
 
 ---
 
@@ -340,7 +349,7 @@ lazily, so nothing else needs it.
 
 ### Continuous integration
 
-Two workflows, under [`.github/workflows/`](.github/workflows):
+Two workflows, under [`.github/workflows/`](https://github.com/adlyZaroui/analytic-prophet/blob/main/.github/workflows):
 
 - **`tests.yml`**, on every push and pull request: the suite across Python 3.9–3.14,
   which is what gives `requires-python = ">=3.9"` any basis — before it, the suite had
@@ -362,4 +371,4 @@ be readable.
 
 ## Licence
 
-See [LICENSE](LICENSE).
+See [LICENSE](https://github.com/adlyZaroui/analytic-prophet/blob/main/LICENSE).
