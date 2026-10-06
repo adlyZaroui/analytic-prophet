@@ -43,6 +43,7 @@ import _prophet_bridge as _bridge                    # noqa: E402
 build_extension = _benchmark.build_cpp_extension
 prophet_available = _benchmark.prophet_available
 peak_rss_bytes = _benchmark.peak_rss_bytes
+peak_rss_split = _benchmark.peak_rss_split
 human_bytes = _benchmark.human_bytes
 PROPHET_KWARGS = _benchmark.PROPHET_KWARGS
 PROPHET_INSTALL_HINT = _benchmark.PROPHET_INSTALL_HINT

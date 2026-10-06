@@ -138,17 +138,46 @@ def run_one(name, df, lib_path=None):
     raise ValueError(f"unknown implementation {name!r}")
 
 
-def peak_rss_bytes():
-    """Peak resident set size of this process and any children it waited on.
+def peak_rss_split():
+    """`(this process, its children)` peak resident bytes, as a pair.
 
-    Children matter: Prophet runs the actual optimization in a cmdstan
-    subprocess, so measuring only RUSAGE_SELF would report almost none of its
-    memory. ru_maxrss is bytes on macOS and kilobytes on Linux.
+    Reported separately because the two answer different questions. Prophet
+    fits in a cmdstan child, so the child side is where its optimizer lives;
+    the parent side is cmdstanpy writing a data file and reading draws back.
+    `ru_maxrss` is bytes on macOS and kilobytes on Linux, which is the only
+    thing this normalizes.
+
+    Both numbers are high-water marks that never fall, and the children's one
+    is a maximum over *every* child waited on so far -- so a compiler spawned
+    by an earlier build, or a `brew --prefix` from a header search, sets a floor
+    that a later and smaller child never rises above. Measure in a fresh process
+    if that matters.
     """
     import resource
     scale = 1 if sys.platform == "darwin" else 1024
-    return scale * max(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
-                       resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
+    return tuple(scale * resource.getrusage(who).ru_maxrss
+                 for who in (resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN))
+
+
+def peak_rss_bytes():
+    """Peak resident bytes of this process **plus** its children.
+
+    **A sum rather than a max, and the choice changes the number.** Prophet
+    blocks inside cmdstanpy while its cmdstan child optimizes, so the two are
+    resident at the same time and the sum is the footprint a machine has to
+    provide. This function returned the max until #125, which measured
+    something else entirely: the parent is 75-120 MiB of interpreter, pandas
+    and prophet while the cmdstan child peaks at 4-10 MiB, so the max returned
+    the parent at every size and never counted the child once -- defeating the
+    only reason to look at children.
+
+    Both conventions are one-sided and the direction is worth naming. The two
+    sides need not peak at the same instant, so the sum is an **upper** bound on
+    simultaneous residency; the max is a **lower** bound, and here it is just
+    the parent. Tier 3 records the two sides separately so a reader can apply
+    either convention and see that neither changes the ordering.
+    """
+    return sum(peak_rss_split())
 
 
 def human_bytes(n):

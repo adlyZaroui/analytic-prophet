@@ -16,7 +16,9 @@ two reasons:
     peak and report nonsense.
   - Prophet does the real work in a cmdstan subprocess. Measuring only this
     process would attribute almost none of its memory to it. The child sums
-    RUSAGE_SELF with RUSAGE_CHILDREN, which covers cmdstan.
+    RUSAGE_SELF with RUSAGE_CHILDREN, which covers cmdstan -- a maximum over
+    the two, which is what this used to take, never reaches the child here at
+    all (#125).
 
 Each implementation is also measured with the fit skipped, giving the cost of
 interpreter plus imports. The difference is what fitting itself added, which is

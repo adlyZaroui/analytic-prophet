@@ -10,7 +10,10 @@ zero for its fit. Adding CPU time naively would show Prophet using no processor
 at all and hand this project a flattering result that is entirely an artefact.
 Every measurement here sums RUSAGE_SELF with RUSAGE_CHILDREN, which is what
 benchmark_memory.py already does and benchmark_fit_time.py does not, because it
-only reports wall clock.
+only reports wall clock. The memory measurement records the two sides separately
+as well as summed: the sum is the footprint a machine must provide, and the
+split is the only way to say whether what grows with the series grows in the
+process that runs the autodiff (#125).
 
 **Wall time and CPU time answer different questions.** Prophet's wall clock
 includes spawning that subprocess, which at T=100 is a large fraction of the
@@ -81,39 +84,49 @@ import json, sys, warnings
 warnings.filterwarnings("ignore")
 sys.path[:0] = {paths!r}
 import harness, corpora
-baseline = harness.peak_rss_bytes()
+baseline = harness.peak_rss_split()
 df = corpora.peyton_manning({size!r})
 if {name!r} == "prophet":
     from prophet import Prophet
-    imported = harness.peak_rss_bytes()
+    imported = harness.peak_rss_split()
     Prophet(**harness.PROPHET_KWARGS).fit(df)
 else:
     from analytic_prophet import AnalyticProphet
-    imported = harness.peak_rss_bytes()
+    imported = harness.peak_rss_split()
     model = AnalyticProphet(**harness.PROPHET_KWARGS)
     if {name!r} == "compiled":
         model.fit(df, lib_path={lib!r})
     else:
         model.fit(df, backend="python", analytic=True)
 print("RESULT" + json.dumps({{"baseline": baseline, "imported": imported,
-                              "peak": harness.peak_rss_bytes()}}))
+                              "peak": harness.peak_rss_split()}}))
 """
 
 
 def peak_memory(name, size, lib_path):
-    """Peak resident bytes, split into what the import cost and what the fit did.
+    """Peak resident bytes, split two ways: import against fit, parent against child.
 
-    The split is the whole point. The README's claim is about the *fit* --
-    reverse-mode autodiff retains a tape and a closed-form gradient does not --
-    so a baseline taken before the import measures something else entirely, and
-    would have this project losing on a number it is not making a claim about.
-    Reported separately rather than combined, because a library that is
-    expensive to merely import is still expensive to deploy.
+    **The import/fit split is what the README claims about.** Reverse-mode
+    autodiff retains a tape and a closed-form gradient does not -- that is a
+    statement about the fit, so a baseline taken before the import measures
+    something else entirely and would have this project losing on a number it
+    is not making a claim about. Reported separately rather than combined,
+    because a library that is expensive to merely import is still expensive to
+    deploy.
+
+    **The parent/child split is what lets the claim be checked.** Prophet's
+    optimizer -- and therefore its tape, if that is what the gap is -- runs in
+    the cmdstan child, while the parent side is cmdstanpy marshalling a data
+    file out and draws back in. Recording one number for the two would make it
+    impossible to say which of them grows (#125). Ours spawns nothing once the
+    extension is built, so its child side is zero by construction.
 
     A fresh process per measurement, because peak RSS is a high-water mark: run
     two fits in one process and the second one's delta is whatever the first
-    left behind. `peak_rss_bytes` sums RUSAGE_SELF with RUSAGE_CHILDREN, which
-    is what catches cmdstan.
+    left behind. The same property is why the child side needs the fresh process
+    more than the parent does -- `RUSAGE_CHILDREN` is a maximum over every child
+    ever waited on, so one compiler invocation would set a floor for the rest of
+    the run.
     """
     script = MEMORY_PROBE.format(paths=[str(harness.REPO), str(harness.EVALUATION),
                                         str(harness.REPO / "benchmark")],
@@ -123,11 +136,54 @@ def peak_memory(name, size, lib_path):
     for line in completed.stdout.splitlines():
         if line.startswith("RESULT"):
             payload = json.loads(line[len("RESULT"):])
+            baseline, imported, peak = (payload["baseline"], payload["imported"],
+                                        payload["peak"])
             return {
-                "import_rss": payload["imported"] - payload["baseline"],
-                "fit_peak_rss_added": payload["peak"] - payload["imported"],
-                "peak_rss": payload["peak"],
+                "fit_peak_rss_added": sum(peak) - sum(imported),
+                "fit_peak_rss_added_self": peak[0] - imported[0],
+                "fit_peak_rss_added_children": peak[1] - imported[1],
+                "peak_rss": sum(peak),
             }
+    return None
+
+
+IMPORT_PROBE = """
+import json, resource, sys, warnings
+warnings.filterwarnings("ignore")
+scale = 1 if sys.platform == "darwin" else 1024
+rss = lambda: scale * resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+sys.path[:0] = {paths!r}
+import numpy, pandas
+baseline = rss()
+import {module}
+print("RESULT" + json.dumps({{"baseline": baseline, "imported": rss()}}))
+"""
+
+
+def import_cost(module):
+    """Peak resident bytes that importing `module` adds to a bare interpreter.
+
+    **Measured in its own process, and that is the fix rather than a detail.**
+    This used to be read off the memory probe, as the step between its baseline
+    and its first fit. That stopped measuring anything the day `_common.py`
+    grew a module-level `from analytic_prophet.build import ToolchainMissing`:
+    the probe imports `harness` before it takes a baseline, `harness` reaches
+    through to `_common`, and so our package and scipy were already resident.
+    The step then read exactly zero while the report went on claiming 57.9 MiB,
+    which is the stale number a regenerated tier finally contradicted (#125).
+
+    numpy and pandas are imported *before* the baseline because both libraries
+    require them, so what is left is what each one adds on top. Does not depend
+    on T, and is no longer recorded once per series length as though it did.
+    """
+    completed = subprocess.run(
+        [sys.executable, "-c", IMPORT_PROBE.format(
+            module=module, paths=[str(harness.REPO)])],
+        capture_output=True, text=True, timeout=900)
+    for line in completed.stdout.splitlines():
+        if line.startswith("RESULT"):
+            payload = json.loads(line[len("RESULT"):])
+            return payload["imported"] - payload["baseline"]
     return None
 
 
@@ -212,6 +268,14 @@ def collect(sizes=SIZES, repeats=REPEATS, lib_path=None, with_memory=True):
                     for metric, value in usage.items():
                         row(series, "default", name, metric, value, "bytes")
         print(f"    T={size} done")
+
+    # Import cost, once rather than per length: it does not depend on T.
+    if with_memory:
+        for name, module in (("prophet", "prophet"),
+                             ("analytic_prophet", "analytic_prophet")):
+            cost = import_cost(module)
+            if cost is not None:
+                row("imports", "default", name, "import_rss", cost, "bytes")
 
     # --- cost against the width of the design matrix --------------------
     df = corpora.peyton_manning(WIDTH_SIZE)

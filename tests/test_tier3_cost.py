@@ -67,31 +67,93 @@ def test_timed_reports_the_best_of_several_runs():
 
 # -- the import/fit split -------------------------------------------------
 
-def test_memory_separates_what_the_import_cost_from_what_the_fit_did(
+def test_memory_separates_what_the_fit_did_and_which_side_of_the_fork(
         compiled_optimizer_module):
     usage = tier3.peak_memory("compiled", 300, compiled_optimizer_module)
 
-    assert set(usage) == {"import_rss", "fit_peak_rss_added", "peak_rss"}
-    # `>= 0` rather than `> 0`, which is not pedantry. The probe's baseline is
-    # taken *after* numpy and pandas are in, and peak RSS is a high-water mark:
-    # importing a few small pure-Python modules on top need not raise it above
-    # what pandas' own import transiently reached. It does on macOS/arm64 and
-    # reads exactly 0 in every CI job on Linux (#103). The separation this test
-    # is named for is the key set and the ordering below, both still asserted.
-    assert usage["import_rss"] >= 0
+    assert set(usage) == {"fit_peak_rss_added", "fit_peak_rss_added_self",
+                          "fit_peak_rss_added_children", "peak_rss"}
+    # `>= 0` rather than `> 0`, which is not pedantry. Peak RSS is a high-water
+    # mark, so a fit on 300 points need not raise it above what pandas' own
+    # import transiently reached. It does on macOS/arm64 and reads exactly 0 in
+    # some CI jobs on Linux (#103).
     assert usage["fit_peak_rss_added"] >= 0
-    assert usage["peak_rss"] >= usage["import_rss"]
+    assert usage["peak_rss"] >= usage["fit_peak_rss_added"]
+    # The whole point of the split (#125): the two sides add up to the total.
+    assert (usage["fit_peak_rss_added_self"]
+            + usage["fit_peak_rss_added_children"]) == usage["fit_peak_rss_added"]
+
+
+def test_our_fit_forks_nothing_so_the_two_conventions_agree_for_us(
+        compiled_optimizer_module):
+    """Why the max-against-sum choice is not what decides the result (#125).
+
+    With the extension already built our fit spawns no child at all, so our
+    number is identical under either convention and the choice can only move
+    Prophet's -- upward, since a child it ignores is a child uncounted.
+    """
+    usage = tier3.peak_memory("compiled", 300, compiled_optimizer_module)
+
+    assert usage["fit_peak_rss_added_children"] == 0
+
+
+# -- import cost, which is not a property of the fit ----------------------
+
+def test_import_cost_is_measured_on_an_interpreter_that_has_not_loaded_it():
+    """The bug this function exists to fix, asserted directly (#125).
+
+    Import cost used to be read off the memory probe as the step between its
+    baseline and its first fit. That silently stopped measuring anything once
+    `_common.py` grew a module-level `analytic_prophet.build` import: the probe
+    imports `harness` before taking a baseline, `harness` reaches through to
+    `_common`, so our package was already resident and the step read exactly
+    zero while the report went on quoting 57.9 MiB.
+
+    This process is in that state right now -- `harness` is imported above, so
+    our package is loaded here -- which is what makes it the right place to
+    assert that the measurement is unaffected by it.
+    """
+    import sys
+
+    assert "analytic_prophet" in sys.modules, \
+        "this test is only meaningful if the package is already loaded here"
+
+    cost = tier3.import_cost("analytic_prophet")
+
+    assert cost is not None, "the import probe failed to report"
+    assert cost > 1_000_000, (
+        f"importing analytic_prophet reportedly cost {cost} bytes; the probe is "
+        "measuring a process that had already loaded it")
+
+
+def test_import_cost_is_recorded_once_rather_than_per_series_length(
+        compiled_optimizer_module, prophet_comparison):
+    """It does not depend on T, and recording it per length invited the reader
+    to read five near-identical numbers as a trend."""
+    rows = tier3.collect(sizes=(300,), repeats=1,
+                         lib_path=compiled_optimizer_module, with_memory=True)
+
+    imports = [m for m in rows if m.metric == "import_rss"]
+
+    assert {m.series for m in imports} == {"imports"}
+    assert {m.implementation for m in imports} == {"prophet", "analytic_prophet"}
 
 
 def test_each_measurement_gets_a_process_that_has_done_nothing_else(
         compiled_optimizer_module):
     """Peak RSS is a high-water mark: two fits in one process and the second's
     delta is whatever the first left behind. Two calls must therefore agree
-    rather than the second reading zero."""
+    rather than the second reading zero.
+
+    Asserted on the fit itself since #125 moved import cost to its own probe,
+    which makes this a stricter version of the same test: the fit is the
+    measurement the high-water mark would actually have swallowed.
+    """
     first = tier3.peak_memory("compiled", 300, compiled_optimizer_module)
     second = tier3.peak_memory("compiled", 300, compiled_optimizer_module)
 
-    assert second["import_rss"] == pytest.approx(first["import_rss"], rel=0.25)
+    assert second["fit_peak_rss_added"] == pytest.approx(
+        first["fit_peak_rss_added"], rel=0.25)
 
 
 # -- the scaling summary --------------------------------------------------

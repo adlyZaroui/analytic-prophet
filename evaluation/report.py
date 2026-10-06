@@ -62,6 +62,27 @@ def _size_of(series):
     return int(series.split("[:")[1].rstrip("]"))
 
 
+def _linear_in_t(points):
+    """`(fixed, slope per 1000 observations, R²)` for `memory = fixed + slope·T`.
+
+    [#125] The README attributes the memory gap to a retained autodiff tape, and
+    a single peak-RSS number cannot support that: a constant difference in
+    interpreter or library overhead would look identical. Splitting the measured
+    cost into the part that does not depend on the series and the part that
+    scales with it is what distinguishes the two, since a tape is O(T) in the
+    operations it records and so has to live entirely in the second.
+    """
+    import numpy as np
+
+    sizes = np.array([t for t, _ in points], dtype=float)
+    values = np.array([v for _, v in points], dtype=float)
+    design = np.column_stack([np.ones_like(sizes), sizes / 1000.0])
+    fixed, slope = np.linalg.lstsq(design, values, rcond=None)[0]
+    spread = float(((values - values.mean()) ** 2).sum())
+    residual = float(((values - design @ [fixed, slope]) ** 2).sum())
+    return float(fixed), float(slope), (1.0 - residual / spread if spread else float("nan"))
+
+
 # -- sections -------------------------------------------------------------
 
 def tier0_section(rows, figures):
@@ -582,23 +603,39 @@ def tier3_section(rows, figures):
 
     memory = [k for k in sizes if ("prophet", "fit_peak_rss_added") in table[k]]
     if memory:
-        lines += ["", "Peak resident memory, **split into what the import cost and "
-                  "what the fit did**. The README's claim is about the fit — "
-                  "autodiff retains a tape and a closed-form gradient does not — "
-                  "so a baseline taken before the import measures something else.",
-                  "", "| T | Prophet fit | ours fit | Prophet import | ours import |",
-                  "|---|---|---|---|---|"]
+        mib = lambda v: v / 1048576
+        lines += ["", "Peak resident memory **attributable to the fit**, over and "
+                  "above what was already resident. The README's claim is about "
+                  "the fit — autodiff retains a tape and a closed-form gradient "
+                  "does not — so a baseline taken before the import would measure "
+                  "something else.",
+                  "", "| T | Prophet fit | ours fit |", "|---|---|---|"]
         for key in memory:
             cell = table[key]
-            mib = lambda v: v / 1048576
             lines.append(
                 f"| {_size_of(key[0])} | {mib(cell[('prophet','fit_peak_rss_added')]):.1f} MiB "
-                f"| **{mib(cell[('compiled','fit_peak_rss_added')]):.1f} MiB** "
-                f"| **{mib(cell[('prophet','import_rss')]):.1f} MiB** "
-                f"| {mib(cell[('compiled','import_rss')]):.1f} MiB |")
-        lines += ["", "We win the fit and lose the import — the latter almost "
-                  "entirely scipy, which Prophet does not pull. A library that is "
-                  "expensive to merely import is still expensive to deploy.", ""]
+                f"| **{mib(cell[('compiled','fit_peak_rss_added')]):.1f} MiB** |")
+        lines += [""]
+
+        imports = table.get(("imports", "default"), {})
+        if imports:
+            lines += ["And what each library costs to merely import, which is a "
+                      "separate measurement in a separate process: numpy and pandas "
+                      "are resident before the baseline, since both libraries need "
+                      "them, so this is what each adds on top.",
+                      "", "| library | peak RSS added by the import |", "|---|---|"]
+            for name in ("prophet", "analytic_prophet"):
+                if (name, "import_rss") in imports:
+                    lines.append(f"| `{name}` | {mib(imports[(name, 'import_rss')]):.1f} MiB |")
+            lines += ["", "**We win the fit and lose the import** — the latter "
+                      "almost entirely scipy, which Prophet does not pull. A "
+                      "library that is expensive to merely import is still "
+                      "expensive to deploy. Recorded once rather than at every "
+                      "series length, because it does not depend on T; reading it "
+                      "off the fit probe instead is what let a stale 57.9 MiB "
+                      "stand in the report after the number had silently become "
+                      "unmeasurable ([#125]).", ""]
+        lines += _memory_attribution(table, memory)
 
     predict = [k for k in sizes if ("prophet", "predict_wall") in table[k]]
     if predict:
@@ -649,11 +686,92 @@ which is Prophet's own algorithm rule ([#25]) and is what the kink at *T* = 50 i
 **Middle:** peak resident memory attributable to the fit, *over and above what importing
 the library cost* — that separation is the measurement, since the claim is about the
 autodiff tape and not about import weight. Measured in a fresh subprocess per point,
-summing `RUSAGE_SELF` and `RUSAGE_CHILDREN` so that Prophet's cmdstan child process is
-counted.
+**summing** `RUSAGE_SELF` and `RUSAGE_CHILDREN` so that Prophet's cmdstan child is
+counted; the sum is an upper bound on simultaneous residency, since the two
+high-water marks need not coincide, and taking the maximum instead would be a lower
+bound that here counts the child not at all. Neither convention changes the ordering
+([#125]).
 **Right:** inference, all four paths. Prophet's default is an approximation and so is
 ours since [#94]; solid lines are the two approximate samplers and dashed the two exact
 ones, so the honest comparisons are **down** each style rather than across.""")
+    return lines
+
+
+def _memory_attribution(table, memory):
+    """[#125] The memory gap, decomposed -- and what the decomposition can show.
+
+    The README used to read the ~3x memory ratio as evidence of a retained
+    autodiff tape. Peak RSS cannot establish that on its own, so this reports
+    the two things it *can* show: that the gap is in the part which scales with
+    the series rather than in fixed overhead, and that the part which scales
+    sits on the side of the fork where Stan's autodiff actually runs.
+    """
+    mib = lambda v: v / 1048576
+    fits = {}
+    for name in ("prophet", "compiled", "python"):
+        points = [(_size_of(k[0]), mib(table[k][(name, "fit_peak_rss_added")]))
+                  for k in memory if (name, "fit_peak_rss_added") in table[k]]
+        if len(points) >= 3:
+            fits[name] = _linear_in_t(points)
+    if "prophet" not in fits or "compiled" not in fits:
+        return []
+
+    lines = ["### Where the memory gap is",
+             "",
+             "A ratio of two peaks is compatible with a constant difference in "
+             "overhead, which is not what the README claims. Fitting "
+             "`memory = fixed + slope·T` over the five lengths separates the two:",
+             "", "| implementation | fixed | per 1000 obs | R² |", "|---|---|---|---|"]
+    for name, (fixed, slope, r2) in fits.items():
+        lines.append(f"| {name} | {fixed:.2f} MiB | {slope:.3f} MiB | {r2:.4f} |")
+
+    fixed_gap = abs(fits["prophet"][0] - fits["compiled"][0])
+    slope_ratio = fits["prophet"][1] / fits["compiled"][1]
+    lines += ["",
+              f"**The fixed costs are within {fixed_gap:.2f} MiB of each other "
+              f"while the per-observation costs differ {slope_ratio:.1f}×.** "
+              "The gap is almost "
+              "entirely in the term that scales with the series, which is the "
+              "shape a retained tape predicts — a tape is O(T) in the operations "
+              "recorded, so it must cost nothing at T = 0 and grow from there. "
+              "It is equally the shape predicted by *any* other allocation in "
+              "Prophet's optimizer that scales with T, and peak RSS cannot tell "
+              "those apart. So this rules out the explanation that the gap is "
+              "fixed overhead; it does not isolate the tape, and the README no "
+              "longer says it does.", "",
+              "**The fixed-cost comparison is the stable half of this.** Our "
+              "slope is close to zero, so the ratio of the two slopes moves by "
+              "about a fifth between reruns of this tier and should be read as "
+              "an order of magnitude rather than to three figures. The README "
+              "quotes it that loosely for the same reason.", ""]
+
+    split = [k for k in memory
+             if ("prophet", "fit_peak_rss_added_children") in table[k]]
+    if split:
+        lines += ["Which side of the fork the growth is on, which is the closest "
+                  "this measurement gets to the mechanism — Prophet's optimizer "
+                  "and therefore its tape run in the cmdstan child, while the "
+                  "parent is cmdstanpy writing a data file and reading draws back:",
+                  "", "| T | Prophet parent | Prophet child | ours parent | ours child |",
+                  "|---|---|---|---|---|"]
+        for key in split:
+            cell = table[key]
+            get = lambda name, side: cell.get((name, f"fit_peak_rss_added_{side}"))
+            cells = [get("prophet", "self"), get("prophet", "children"),
+                     get("compiled", "self"), get("compiled", "children")]
+            lines.append(f"| {_size_of(key[0])} | " + " | ".join(
+                ("—" if v is None else f"{mib(v):.1f} MiB") for v in cells) + " |")
+        lines += ["",
+                  "**The child column is left-censored at zero and cannot be "
+                  "regressed.** `RUSAGE_CHILDREN` is a maximum over every child "
+                  "waited on, and importing Prophet spawns one before the fit "
+                  "does, so the fit's child is invisible until it exceeds that "
+                  "floor — which is why the short series read 0.0 rather than a "
+                  "small number. Read the column as a lower bound that becomes "
+                  "informative at the top. Ours is zero throughout for a "
+                  "different reason: with the extension already built it forks "
+                  "nothing, so for us the sum and the maximum are the same number.",
+                  ""]
     return lines
 
 
