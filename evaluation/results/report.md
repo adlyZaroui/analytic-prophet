@@ -43,25 +43,33 @@ The trend's sparsity is reported as Σ|δ| and as the count of **exact** zeros r
 
 The question the README explicitly refuses to answer. Rolling-origin evaluation on cutoffs from `prophet.diagnostics.generate_cutoffs`, scored by `prophet.diagnostics.performance_metrics` — both sides get the same splits and the same scorer.
 
-| metric | median difference | lower on | p |
-|---|---|---|---|
-| mae | -1.9142 | 26/36 | 0.0063 |
-| rmse | -2.9667 | 25/36 | 0.0183 |
-| mape | -0.0007 | 26/36 | 0.0013 |
-| smape | -0.0004 | 24/36 | 0.0139 |
-| coverage | +0.0026 | — | 0.0025 |
-| interval_width | +1.3501 | — | 0.4697 |
-| sum_abs_delta | +0.5516 | — | 0.0000 |
-| exact_zeros | +14.0000 | — | 0.0000 |
-| l1_penalty | +11.0316 | — | 0.0000 |
+Differences are paired per series and tested with the **Wilcoxon signed-rank test** (`scipy.stats.wilcoxon`), which is why the summary is a median rather than a mean: forecast errors across series are heavy-tailed, and one series here differs by about 35% while most differ by under 2%.
+
+| metric | median difference | lower on | p | Holm p |
+|---|---|---|---|---|
+| mae ⁑ | -1.9142 | 26/36 | 0.0063 | 0.0253 |
+| rmse ⁑ | -2.9667 | 25/36 | 0.0183 | 0.0418 |
+| mape | -0.0007 | 26/36 | 0.0013 | 0.0077 |
+| smape | -0.0004 | 24/36 | 0.0139 | 0.0418 |
+| coverage | +0.0026 | — | 0.0025 | 0.0127 |
+| interval_width ⁑ | +1.3501 | — | 0.4697 | 0.4697 |
+| sum_abs_delta ⁑ | +0.5516 | — | 0.0000 | — |
+| exact_zeros | +14.0000 | — | 0.0000 | — |
+| l1_penalty ⁑ | +11.0316 | — | 0.0000 | — |
 
 Negative means we are lower. That is better for the four error rows, worse for coverage — which should be near the nominal 0.8 — and neither for the sparsity rows, which are reported because they describe the fits rather than rank them. The count column is left blank where a win is not defined.
+
+**⁑ These rows are in the series' own units**, and the 36 M4 series differ in level by orders of magnitude. The median of a raw difference across them ranks direction and is *not* a pooled effect size — a unit of MAE means something different on every series. Read magnitude from the scale-free rows: `mape`, `smape` and `coverage`. (MASE, the M4 standard, would be the better answer and needs the tier re-run with a new metric; it is not here.)
+
+**On testing nine things at once.** The comparisons are the six rows above the sparsity readouts, and the `Holm p` column adjusts across them. Holm rather than Bonferroni because these metrics are computed on the same forecasts and are far from independent: Bonferroni is valid but needlessly blunt, and Holm is valid under arbitrary dependence and uniformly more powerful. **5 of the 5 comparative metrics survive adjustment** — `mae`, `rmse`, `mape`, `smape`, `coverage` — and `interval_width` does not, which claims nothing it was not already declining to claim at p = 0.47. Plain Bonferroni would reject `rmse` and `smape`; including the three sparsity rows in the family changes none of it.
 
 **The better MAP point does forecast better** on this corpus.
 
 ### The finding that is not about us
 
 **Both implementations badly under-cover.** Mean coverage of the nominal 80% interval is **0.356** for ours and **0.341** for Prophet's — the intervals contain about a third of the points they claim four fifths of. That is the model on long horizons and volatile series, shared by both, and it is larger than anything separating them.
+
+*These two coverage numbers are different quantities, and the gap between them is informative rather than a discrepancy.* The table reports **+0.0026**, the median of the per-series *differences*; here it is the difference of the *means*, **+0.015** — about six times larger. A median of paired differences is not the difference of means, and the two separating this far says the per-series differences are skewed — which they are: **33 of the 36 series differ by less than 0.02**, 2 differ by more than +0.05 (the largest, +0.33), and none differs by more than 0.05 the other way. The mean is carried by those few; the median is what the other thirty-odd look like.
 
 ![coverage](figures/tier2_coverage.png)
 
@@ -125,8 +133,8 @@ Read these with the figure rather than on their own. Every implementation is *sl
 
 ## How this was measured
 
-- seed `20260925`, commit `e15bb450a1ba`
+- seed `20260925`, commit `0235fba1437b`
 - python 3.14.7 on macOS-26.5.2-arm64-arm-64bit-Mach-O
-- cmdstanpy 1.3.0, numpy 2.5.3, pandas 3.0.5, prophet 1.4.0, scipy 1.18.1
+- analytic-prophet 0.1.0, cmdstanpy 1.3.0, numpy 2.5.3, pandas 3.0.5, prophet 1.4.0, scipy 1.18.1
 
 Each tier writes `results/<tier>.csv` sorted, so rerunning an unchanged tier produces an unchanged file and a rerun is a reviewable diff rather than a number to be trusted.
