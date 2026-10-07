@@ -13,6 +13,8 @@ Prophet's optimizer ever does reach exact zeros, or the L1 comparison ever does
 reverse, these fail and the prose has to be rewritten rather than quietly
 becoming wrong again.
 """
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -93,3 +95,61 @@ def test_we_also_fit_the_training_data_better(prophet_comparison,
     theirs.fit(df)
 
     assert sse(ours, ours.predict(df.copy())) < sse(theirs, theirs.predict(df.copy()))
+
+
+# -- the upstream citations (#138) -----------------------------------------
+#
+# Two Prophet issues are cited in docs/non-smooth-objective.md: #1422 for the
+# threshold convention this file's reporting decision replaces, and #1280 for a
+# maintainer's suggestion that the default optimizer can struggle at some
+# changepoint_prior_scale. Neither mentions non-differentiability, and the risk
+# a citation carries is that a later edit promotes "a user was confused" or "a
+# maintainer offered a possibility" into "upstream reported the kink". These
+# pin the hedges, because the hedge is the part that is easy to lose.
+
+DOC = Path(__file__).parent.parent / "docs" / "non-smooth-objective.md"
+
+
+@pytest.fixture(scope="module")
+def document():
+    return " ".join(DOC.read_text().split())
+
+
+def test_both_upstream_issues_are_cited(document):
+    for number in (1422, 1280):
+        assert f"facebook/prophet/issues/{number}" in document, (
+            f"prophet#{number} is no longer cited")
+
+
+def test_the_threshold_citation_says_what_prophet_actually_does(document):
+    """#1422's author believed the 0.01 cutoff selects the trend's breakpoints.
+    It does not -- it occurs only in `prophet/plot.py`. Describing it as model
+    selection would make this file wrong in the same way the thread was."""
+    assert "only for visualization" in document
+    assert "prophet/plot.py" in document
+    assert "says nothing about non-differentiability" in document
+
+
+def test_the_sensitivity_citation_keeps_its_hedges(document):
+    """prophet#1280's headline 2% did not reproduce, and the optimizer
+    explanation is a maintainer's "one possibility" rather than a diagnosis.
+    Both have to survive, or the citation claims more than the thread does."""
+    assert "not been able to reproduce" in document
+    assert "One possibility" in document
+    assert "hypothesis offered in a support thread, not a finding" in document
+    assert "inline with expectation" in document
+
+
+def test_the_cited_threshold_is_the_one_prophet_ships():
+    """The claim that `0.01` lives only in the plotting module, checked against
+    the installed package rather than taken from the thread."""
+    prophet = pytest.importorskip("prophet")
+    import os
+
+    root = Path(os.path.dirname(prophet.__file__))
+    modules = [p for p in root.glob("*.py")]
+    carrying = sorted(p.name for p in modules if "threshold" in p.read_text())
+
+    assert carrying == ["plot.py"], (
+        f"the changepoint threshold now appears in {carrying}; "
+        "docs/non-smooth-objective.md says it is only in plot.py")

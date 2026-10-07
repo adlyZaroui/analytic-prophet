@@ -170,6 +170,26 @@ Ours is flat across five orders of magnitude because the zeros are exact. Prophe
 because they are not. A count like that measures where the line was drawn, so Σ|δ| and the
 number of exact zeros are reported instead.
 
+**The threshold is a plotting convention, and it gets read as model selection.**
+[prophet#1422](https://github.com/facebook/prophet/issues/1422) is a user describing
+Prophet as selecting "only the changepoints having a delta > 0.01 (**threshold**)" and
+using those "as its breakpoints" for the piecewise linear trend. A contributor corrects
+it twice: the cutoff is "an absolute threshold applied only for visualization and doesn't
+affect the model or its predictions", and "the model never kicks out any estimated
+deltas/estimated slope changes". That is right — `0.01` occurs nowhere but
+`prophet/plot.py`, as `|mean(delta)| >= threshold`, deciding which vertical lines to
+draw.
+
+Cited for the confusion rather than for a defect: upstream answered it correctly, and
+twice. What the thread shows is that a cutoff has to exist at all before anyone can say
+which changepoints matter, and that once it exists it gets mistaken for part of the
+model. It has to exist because Prophet's rates never arrive at zero. Where they do, the
+question answers itself and no number has to be picked — which is the whole of why
+Σ|δ| and a count of exact zeros replaced the `|δ| > 1e-6` summary here.
+
+*The thread says nothing about non-differentiability, and is not evidence for it.* It is
+evidence about a reporting convention.
+
 Two things keep that from being the last word. The corpus is M4, whose series are
 anonymised and therefore barely exercise holidays or day-of-week effects — the features
 Prophet is built for. And **both** implementations badly under-cover: the nominal 80%
@@ -285,6 +305,43 @@ to ~1e-7 and `m` to 1e-5. This is the strongest evidence the project has that th
 under linear growth is optimizer behaviour on a flat objective, not a difference in what
 is being fitted. Take the flat directions away and both implementations land on the same
 point.
+
+### The closest thing to upstream corroboration, and its limits
+
+[prophet#1280](https://github.com/facebook/prophet/issues/1280) reports that moving
+`changepoint_prior_scale` from `0.01` to `0.009999999776482582` changed forecast accuracy
+by about 2%. That second value is exactly `numpy.float32(0.01)`, so the "rounding error"
+the reporter describes is a float32 round-trip — a difference of 2.2e-10 in the parameter
+that sets the L1 strength.
+
+The thread establishes less than its title and more than nothing:
+
+- **The headline number did not reproduce.** The reporter says so: "I have not been able
+  to reproduce the 2% case." A simplified case gave 0.8%, and the two forecast plots are
+  "virtually identical".
+- **A maintainer's hypothesis points at the optimizer.** "One possibility is that in the
+  earlier dataset the optimizer was running into issues with one of the changepoint prior
+  scales; you might try the Newton optimizer which I have found to be a bit more robust
+  than the default."
+- **The verdict is that it is normal.** "There can certainly be some variation ...
+  otherwise this seems inline with expectation to me."
+
+The middle point is the same shape as the `tau` sweep above, reached independently and
+from the other side. Here, iterations-before-death under liblbfgs tracked the L1 strength
+exactly. There, the parameter said to give the default optimizer trouble is the one that
+sets that strength, and the suggested remedy is to stop using L-BFGS — which is also what
+Prophet's own algorithm rule does below 100 observations
+([#25](https://github.com/adlyZaroui/analytic-prophet/issues/25)).
+
+**That is a hypothesis offered in a support thread, not a finding, and this file does not
+upgrade it into one.** Nobody there says "non-differentiable"; the residual variation is
+treated as expected; and the measurement that would decide it was never made. Read it as
+the nearest independent observation that the default optimizer can struggle on this
+parameter, and nothing further.
+
+What would settle it is reproducing the sensitivity and attributing it, and the
+instruments are here: two backends, Stan's own `log_prob` to score both, and a smooth
+reformulation to compare against a natural one. It has not been done and is not claimed.
 
 ### One claim that was withdrawn
 
