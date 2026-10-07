@@ -78,11 +78,16 @@ the minimum is the least contaminated by scheduling noise.
 RSS is a high-water mark that never falls within a process, so several fits in
 one process would each inherit the largest previous peak. And Prophet does the
 real work in a cmdstan subprocess, so a measurement that ignored children would
-attribute almost none of its memory to it — the child sums `RUSAGE_SELF` with
-`RUSAGE_CHILDREN`. Each implementation is measured twice, once with the fit
-skipped, so the reported "fit added" column is the cost of fitting rather than
-of importing pandas. `ru_maxrss` is bytes on macOS and kilobytes on Linux;
-`peak_rss_bytes()` normalizes that.
+attribute almost none of its memory to it — `peak_rss_bytes()` **sums**
+`RUSAGE_SELF` with `RUSAGE_CHILDREN`. It took the maximum until #125, which is
+not the same thing and here was not even close: the parent is 75–120 MiB of
+interpreter, pandas and prophet against a cmdstan child peaking at 4–10 MiB, so
+the maximum returned the parent every time and never counted the child at all.
+The sum is an upper bound on simultaneous residency, since the two high-water
+marks need not coincide, and the maximum a lower one. Each implementation is
+measured twice, once with the fit skipped, so the reported "fit added" column is
+the cost of fitting rather than of importing pandas. `ru_maxrss` is bytes on
+macOS and kilobytes on Linux; `peak_rss_bytes()` normalizes that.
 
 ## Agreement benchmark
 

@@ -132,9 +132,15 @@ small and entirely explicit, so the gradient can be written down instead. Both
 consequences are measured rather than assumed — fitting is **1.4–10× faster** than
 Prophet, and which end you get depends on the series: **10× at T = 50, falling to 1.4×
 by T = 1000**, because Prophet pays a fixed cmdstan subprocess cost that matters most
-when there is least to do. The fit's peak memory is **about a third** of Prophet's at
-T = 2905, with the gap widening as the series grows, which is what a retained tape
-predicts. Predicting is
+when there is least to do. The fit's peak memory is **about a quarter** of Prophet's at
+T = 2905, and the decomposition says where that gap is: fitting `memory = fixed + slope·T`
+leaves the two fixed costs within 0.2 MiB of each other while the per-observation costs
+differ by **more than tenfold** — stated that loosely on purpose, since our slope is near
+zero and the ratio moves by a fifth between runs. That is the shape a retained tape
+predicts, a tape being O(T) in the
+operations it records — but peak RSS cannot tell a tape from any other allocation that
+grows with T, so the decomposition rules out fixed overhead rather than proving the
+mechanism ([#125](https://github.com/adlyZaroui/analytic-prophet/issues/125)). Predicting is
 faster on both of the paths described below — **1.8×** on the approximate one and **2.6×**
 on the exact one.
 → [cost](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md#tier-3--what-it-costs)
