@@ -105,22 +105,35 @@ def test_the_data_says_where_it_came_from():
     assert "M4" in text, "the fetched corpus has no terms recorded"
 
 
-def test_the_quickstart_carries_the_install_caveat():
+def test_the_install_caveat_sits_beside_the_command():
     """The warning that `pip install -e .` succeeds and then does not import
-    on macOS was two hundred lines below the command it is about.
+    on macOS was once two hundred lines below the command it is about.
 
-    The phrase this looks for changed in #136. The README used to carry the
-    warning twice -- a short form beside a `git clone` block near the top and
-    the full one under "Building and testing" -- and this asserted on the
-    short one. Reordering the file removed the duplicate, since everything in
-    it but `git clone` was already said below. The assertion is unchanged in
-    substance: the surviving warning has to sit beside the surviving command.
+    The file this reads has moved twice and the assertion has not. #136 removed
+    a duplicated short form near the top of the README, leaving one copy under
+    "Building and testing". #134 then moved the whole contributor section into
+    CONTRIBUTING.md, because the README is also the PyPI description and a
+    reader there has nothing to clone. The command and the warning travelled
+    together, which is the only property this ever checked.
     """
-    readme = (REPO / "README.md").read_text()
-    install = readme.index("pip install -e")
-    caveat = readme.index("can install successfully and still not")
+    guide = (REPO / "CONTRIBUTING.md").read_text()
+    install = guide.index("pip install -e")
+    caveat = guide.index("can install successfully and still not")
     assert 0 < caveat - install < 500, (
         "the caveat is no longer beside the command it is about")
+
+
+def test_the_readme_does_not_tell_a_pypi_reader_to_clone():
+    """[#134] The PyPI landing page is the README verbatim, and it used to open
+    a `git clone` and a `pip install -e` at someone whose install is one
+    command and who has no checkout to install editable."""
+    readme = (REPO / "README.md").read_text()
+
+    for command in ("git clone", "pip install -e", "brew install"):
+        assert command not in readme, (
+            f"{command!r} is back in the README, which is the PyPI description; "
+            "contributor setup belongs in CONTRIBUTING.md")
+    assert "CONTRIBUTING.md" in readme, "the README no longer points anywhere for it"
 
 
 # -- no code that does nothing --------------------------------------------

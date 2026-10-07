@@ -289,6 +289,7 @@ results and a generated report. One command regenerates everything.
 | [Benchmarks](https://github.com/adlyZaroui/analytic-prophet/tree/main/benchmark/) | the fast micro-benchmarks, for running against a change |
 | [Evaluation suite](https://github.com/adlyZaroui/analytic-prophet/tree/main/evaluation/) | the claim-level study and its methodology |
 | [Changelog](https://github.com/adlyZaroui/analytic-prophet/blob/main/CHANGELOG.md) | what was wrong, and how it was found |
+| [Contributing](https://github.com/adlyZaroui/analytic-prophet/blob/main/CONTRIBUTING.md) | how this project works: building from source, the loop, and what a change carries |
 
 ---
 
@@ -334,69 +335,15 @@ up, not where it is defined.** `analytic_prophet/__init__.py` says why.
 
 ---
 
-## Building and testing
+## Building from source
 
-Requires a C++17 compiler and two header-only libraries:
+The wheels cover Linux and macOS on Python 3.9–3.14, so most people need none of this, and
+`fit(df, backend="python")` needs no compiler anywhere. Working on the project, or
+building the core yourself, needs a C++17 compiler and two header-only libraries.
 
-```bash
-git clone https://github.com/adlyZaroui/analytic-prophet
-cd analytic-prophet
-brew install eigen lbfgspp          # or equivalent; header-only, nothing is linked
-pip install -e '.[dev]'
-pytest                              # the whole suite, about three minutes
-```
-
-> **`pip install -e .` on macOS with Python 3.13+ can install successfully and still not
-> import.** setuptools writes the editable `.pth` with macOS's `UF_HIDDEN` flag set, and
-> Python 3.13 hardened `site.addpackage` to **skip hidden `.pth` files**. The install
-> reports success, `pip show` is happy, the metadata resolves — and `import
-> analytic_prophet` raises `ModuleNotFoundError` from any directory but the repo root.
-> `chflags nohidden .venv/lib/python3.*/site-packages/__editable__*` clears it, though
-> something re-applies the flag here, so the fix does not stick.
-> `tests/test_packaging.py::test_an_editable_install_actually_imports` is what catches
-> this: it skips when the package is not installed and fails with the diagnosis when it
-> is installed and broken.
-
-`.[test]` is the same without `prophet`, which only the comparisons need. The count is
-deliberately not written down here: CI reports it, and a number in prose goes stale
-between the commit that adds tests and the one that remembers to update it.
-
-`pytest` alone is enough — `pyproject.toml` puts the repo root and `benchmark/` on
-`pythonpath` along with `evaluation/`, so a fresh clone runs the suite with **no install and no `PYTHONPATH`**.
-`pip install -e .` is for importing the package from elsewhere; nothing in the repo
-depends on it.
-
-
-Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
-compiles `analytic_prophet/optimize.cpp` into a temporary directory on the fly, which is
-why no binary is checked in. Tests that need the toolchain **skip** rather than fail when
-it is absent.
-
-`prophet` itself is deliberately not a dependency — every comparison against the original
-needs it, and it pulls `cmdstanpy` plus a compiled Stan model. The agreement tests skip
-without it and the benchmarks print an install hint, so `pip install prophet` is only
-needed to run those. `holidays` is required for `add_country_holidays` and imported
-lazily, so nothing else needs it.
-
-### Continuous integration
-
-Two workflows, under [`.github/workflows/`](https://github.com/adlyZaroui/analytic-prophet/blob/main/.github/workflows):
-
-- **`tests.yml`**, on every push and pull request: the suite across Python 3.9–3.14,
-  which is what gives `requires-python = ">=3.9"` any basis — before it, the suite had
-  only ever run on one version. One further job installs `prophet` and runs the
-  comparisons against the original; it is the only one that pays for cmdstan.
-- **`evaluation.yml`**, manual or monthly: `evaluation/run.py` and a regenerated report,
-  uploaded as an artifact rather than committed. Tier 0 is a gate and fails the job.
-  These tiers are deliberately not per-push — Tier 2 alone is about eleven minutes and
-  needs the network.
-
-A skip is the right answer on a laptop without a compiler and the wrong one on a runner
-that installed Eigen on purpose, where it would mean CI reported **green for a run that
-never built the C++ core**. So the strictness is the caller's: `pytest --require-cpp` and
-`--require-prophet` turn those skips into failures, and every CI job passes them. Every
-run also prints what it skipped, grouped by reason, into the job summary — "green" has to
-be readable.
+→ [CONTRIBUTING.md](https://github.com/adlyZaroui/analytic-prophet/blob/main/CONTRIBUTING.md)
+has the toolchain, the editable-install caveat on macOS that reports success and then does
+not import, how to run the suite and the benchmarks, and what CI makes strict.
 
 ---
 
