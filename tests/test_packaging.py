@@ -21,6 +21,7 @@ versions `requires-python` claims. Found by building the matrix (#103), which
 is exactly what a matrix is for.
 """
 import os
+import re
 import subprocess
 import sys
 from importlib.metadata import (PackageNotFoundError, distributions,
@@ -55,6 +56,38 @@ def test_the_package_version_is_the_one_pyproject_publishes(pyproject):
     except PackageNotFoundError:
         pytest.skip("not installed -- run `pip install -e .` to check this")
     assert installed == analytic_prophet.__version__
+
+
+def test_the_citation_file_is_valid_and_cites_this_version():
+    """[#137] `CITATION.cff` is the one place that carries a *literal* version.
+
+    `pyproject.toml` declares `version` dynamic and reads the attribute, so
+    until this file there was exactly one copy of the string in the repository
+    and nothing to keep in sync. A citation without a version is less use to
+    whoever is citing, so the literal is allowed and this is the assertion that
+    pays for it.
+
+    The required keys are the four the Citation File Format 1.2.0 schema marks
+    required; `date-released` is a string there rather than a YAML date, which
+    is why it is quoted in the file.
+    """
+    import yaml
+
+    text = (REPO / "CITATION.cff").read_text()
+    citation = yaml.safe_load(text)
+
+    for key in ("cff-version", "message", "title", "authors"):
+        assert key in citation, f"CITATION.cff is missing the required {key!r}"
+    assert citation["cff-version"] == "1.2.0"
+    assert citation["authors"], "a citation with no authors cites nobody"
+
+    assert citation["version"] == analytic_prophet.__version__, (
+        "CITATION.cff cites a version this package is not; it is the one "
+        "literal copy of the string and has to be updated with a release")
+    assert isinstance(citation["date-released"], str), (
+        "date-released must be quoted: the format schema types it as a string, "
+        "and an unquoted value parses as a YAML date object")
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", citation["date-released"])
 
 
 def test_the_cpp_core_ships_with_the_package(pyproject):

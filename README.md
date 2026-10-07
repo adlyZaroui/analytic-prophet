@@ -215,7 +215,7 @@ match — `changepoint_prior_scale`, `changepoints_t`, `params`, `make_all_seaso
 What is *not* implemented is **rejected rather than silently ignored**, so a ported script
 fails where it is actually wrong instead of at the first `AttributeError`.
 
-**Save and load**, `[fc]` Prophet's own API:
+**Save and load**, following Prophet's own API:
 
 ```python
 from analytic_prophet.serialize import model_to_json, model_from_json
@@ -301,12 +301,12 @@ analytic_prophet/
     constants.py      the numbers the model is defined by
     layout.py         where each parameter sits in the flat vector
     seasonality.py    Fourier basis, registry, selection rule
-    make_holidays.py  [fc] prophet/make_holidays.py, plus the design columns
+    make_holidays.py  Prophet's make_holidays.py, plus the design columns
     trend.py          the three growth modes and their derivatives
     optimizer.py      projected Newton, and the stopping tolerances
-    models.py         [fc] prophet/models.py — the compiled backend's loader
+    models.py         Prophet's models.py — the compiled backend's loader
     build.py          compiling optimize.cpp on demand, and caching it
-    serialize.py      [fc] prophet/serialize.py — save and load
+    serialize.py      Prophet's serialize.py — save and load
     optimize.cpp      that backend
 .github/workflows/    CI: the suite on every push, the tiers on request
 docs/                 the model, the argument, the deviations
