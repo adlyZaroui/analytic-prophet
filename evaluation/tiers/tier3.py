@@ -92,6 +92,14 @@ if {name!r} == "prophet":
     Prophet(**harness.PROPHET_KWARGS).fit(df)
 else:
     from analytic_prophet import AnalyticProphet
+    if {name!r} == "python":
+        # scipy is an import cost of this backend, not a cost of its fit, and
+        # since #130 it is imported when the backend runs. Binding it before
+        # the mark keeps this row's "fit added" comparable with the others --
+        # left to fall where it lands, it charged scipy's 36 MiB to the fit and
+        # gave this row a 34 MiB fixed cost in the decomposition.
+        from analytic_prophet import forecaster
+        forecaster._ensure_scipy()
     imported = harness.peak_rss_split()
     model = AnalyticProphet(**harness.PROPHET_KWARGS)
     if {name!r} == "compiled":

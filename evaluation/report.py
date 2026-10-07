@@ -634,10 +634,27 @@ def tier3_section(rows, figures):
                         else f"+{mib(levels[name] - reference):.1f} MiB")
                 label = name if name in ("bare", "numpy+pandas") else f"`{name}`"
                 lines.append(f"| {label} | {mib(levels[name]):.1f} MiB | {over} |")
-            lines += ["", "**We win the fit and lose the import** — the latter "
-                      "almost entirely scipy, which Prophet does not pull. A "
-                      "library that is expensive to merely import is still "
-                      "expensive to deploy.", "",
+            ours = levels.get("analytic_prophet")
+            theirs = levels.get("prophet")
+            if ours is not None and theirs is not None and reference is not None:
+                verdict = (
+                    f"**We win the import as well as the fit**, by "
+                    f"{mib(theirs - ours):.1f} MiB. Until [#130] we lost it, and "
+                    "by about as much in the other direction: scipy was imported "
+                    "whatever backend you asked for, and it was 57 of the 59 MiB "
+                    "this package added. It serves one thing — `_fit_python`, the "
+                    "reference backend kept for reading against the C++ core — so "
+                    "it is now imported when that runs and not before. Prophet "
+                    "does not pull scipy at all, which is why this was the one "
+                    "cost comparison here that it won."
+                    if ours < theirs else
+                    f"**We win the fit and lose the import** by "
+                    f"{mib(ours - theirs):.1f} MiB — a library that is expensive "
+                    "to merely import is still expensive to deploy.")
+            else:
+                verdict = ("Measured against a numpy+pandas interpreter, since "
+                           "both libraries require both.")
+            lines += ["", verdict, "",
                       "**Levels rather than a before-and-after, and `VmHWM` "
                       "rather than `ru_maxrss`.** Measuring this as two marks "
                       "inside one interpreter reported 58 MiB on macOS/arm64 and "
@@ -761,11 +778,25 @@ def _memory_attribution(table, memory):
               "those apart. So this rules out the explanation that the gap is "
               "fixed overhead; it does not isolate the tape, and the README no "
               "longer says it does.", "",
-              "**The fixed-cost comparison is the stable half of this.** Our "
-              "slope is close to zero, so the ratio of the two slopes moves by "
-              "about a fifth between reruns of this tier and should be read as "
-              "an order of magnitude rather than to three figures. The README "
-              "quotes it that loosely for the same reason.", ""]
+              "**Both of these numbers moved when [#130] landed, and upward "
+              "for us.** Deferring scipy dropped what is resident before the "
+              "fit from 130 MiB to 73, and peak RSS is a high-water mark: "
+              "growth that fitted under the import's own transient peak used "
+              "to be invisible and now is not. Our measured fit cost roughly "
+              "doubled as a result — the measurement got more sensitive, the "
+              "fit did not get worse — and the slope ratio fell from about "
+              "twelvefold to the figure above. The earlier number was the "
+              "flattering one and it was flattering by accident.", "",
+              "**The two sides are unevenly masked, and the asymmetry now runs "
+              "against us.** Prophet still imports 40 MiB where we import 1.6, "
+              "so more of its fit growth can hide under its own import "
+              "transient than ours can. A subtraction of two high-water marks "
+              "cannot see growth smaller than that headroom, and the headroom "
+              "is not equal, so read the gap as a conservative one rather than "
+              "as exact. It is also why the ratio is better conditioned than it "
+              "was: our slope is no longer near zero, and two reruns of this "
+              "tier now agree on it to a few percent where they used to "
+              "disagree by a fifth.", ""]
 
     split = [k for k in memory
              if ("prophet", "fit_peak_rss_added_children") in table[k]]

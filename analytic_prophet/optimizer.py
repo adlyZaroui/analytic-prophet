@@ -5,7 +5,6 @@ Newton branch of Prophet's algorithm rule (#25), and the C++ core's twin
 lives in optimize.cpp.
 """
 import numpy as np
-from scipy.optimize import OptimizeResult
 
 
 # Stan's L-BFGS convergence criteria, with the CmdStan defaults Prophet runs
@@ -188,6 +187,13 @@ def projected_newton(objective, gradient_fn, z0, lower, upper):
     else:
         status = -2
         message = "reached the iteration cap without converging"
+
+    # Imported here rather than at module scope so that importing this package
+    # does not import scipy (#130). `projected_newton` is only reached from
+    # `_fit_python`, so nothing on the compiled path pays for it. The return
+    # type stays `OptimizeResult` because callers read `.x`, `.fun` and
+    # `.loss_trace` off it, and a local stand-in would be a new contract.
+    from scipy.optimize import OptimizeResult
 
     return OptimizeResult(x=z, fun=value, jac=gradient, nit=iteration,
                           status=status, success=status == 0, message=message,

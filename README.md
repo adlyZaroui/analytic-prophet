@@ -132,15 +132,24 @@ small and entirely explicit, so the gradient can be written down instead. Both
 consequences are measured rather than assumed — fitting is **1.4–10× faster** than
 Prophet, and which end you get depends on the series: **10× at T = 50, falling to 1.4×
 by T = 1000**, because Prophet pays a fixed cmdstan subprocess cost that matters most
-when there is least to do. The fit's peak memory is **about a quarter** of Prophet's at
+when there is least to do. The fit's peak memory is **about two fifths** of Prophet's at
 T = 2905, and the decomposition says where that gap is: fitting `memory = fixed + slope·T`
-leaves the two fixed costs within 0.2 MiB of each other while the per-observation costs
-differ by **more than tenfold** — stated that loosely on purpose, since our slope is near
-zero and the ratio moves by a fifth between runs. That is the shape a retained tape
+leaves the two fixed costs within 0.3 MiB of each other while the per-observation costs
+differ **about 3.6×**. Both numbers are weaker than this README claimed before
+[#130](https://github.com/adlyZaroui/analytic-prophet/issues/130), and for a reason worth
+knowing: deferring scipy dropped what is resident before the fit from 130 MiB to 73, and
+peak RSS is a high-water mark, so fit growth that used to hide under the import's own
+transient peak is now visible. The earlier, larger ratio was flattering by accident.
+That is the shape a retained tape
 predicts, a tape being O(T) in the
 operations it records — but peak RSS cannot tell a tape from any other allocation that
 grows with T, so the decomposition rules out fixed overhead rather than proving the
-mechanism ([#125](https://github.com/adlyZaroui/analytic-prophet/issues/125)). Predicting is
+mechanism ([#125](https://github.com/adlyZaroui/analytic-prophet/issues/125)). Importing
+the library costs **+1.6 MiB** over a numpy+pandas interpreter against Prophet's **+40.2**;
+until [#130](https://github.com/adlyZaroui/analytic-prophet/issues/130) that comparison ran
+the other way, because scipy was imported whatever backend you asked for and is 57 of the
+59 MiB it used to add. It serves only the Python reference backend, so it is now imported
+when that runs and not before. Predicting is
 faster on both of the paths described below — **1.8×** on the approximate one and **2.6×**
 on the exact one.
 → [cost](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md#tier-3--what-it-costs)
