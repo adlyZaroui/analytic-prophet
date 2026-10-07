@@ -20,6 +20,8 @@ that, the next person to notice one has no way to tell a decision from an
 oversight, and "fixing" it is a plausible mistake.
 """
 import inspect
+import re
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -163,3 +165,68 @@ def test_the_signature_of_each_shared_callable_is_compatible(prophet_class):
         ours = set(inspect.signature(getattr(AnalyticProphet, name)).parameters) - {"self"}
         theirs = set(inspect.signature(getattr(prophet_class, name)).parameters) - {"self"}
         assert ours <= theirs, f"{name} takes {sorted(ours - theirs)}, which Prophet does not"
+
+
+# -- the names of the files themselves (#142) ------------------------------
+#
+# The same idea one level up. The README's Layout block claims which of this
+# package's modules carry Prophet's own filenames, in two places -- as labels
+# in the tree and as a sentence under it -- and both had drifted from the
+# package and from each other: the sentence named three where there are four,
+# dropping `serialize.py`, which the tree two lines above labelled as Prophet's.
+# It also said "the other four have no Prophet counterpart" where there are six.
+# Three copies of one fact, so the test is that they agree.
+
+LAYOUT_PACKAGE = Path(__file__).parent.parent / "analytic_prophet"
+LAYOUT_README = Path(__file__).parent.parent / "README.md"
+
+
+def _tree_labelled():
+    """Modules the README's file tree labels as carrying a Prophet name."""
+    return {match.group(1) for match in re.finditer(
+        r"^\s{4}(\S+\.py)\s+Prophet's ", LAYOUT_README.read_text(), re.MULTILINE)}
+
+
+def _prose_named():
+    """Modules the sentence under the tree names as taking Prophet's names."""
+    text = " ".join(LAYOUT_README.read_text().split())
+    sentence = re.search(r"((?:`[a-z_]+\.py`(?:, | and )?)+) take Prophet's own\s*names",
+                         text)
+    assert sentence, "the Layout sentence has moved; this test needs updating"
+    return set(re.findall(r"`([a-z_]+\.py)`", sentence.group(1)))
+
+
+def test_the_tree_and_the_sentence_name_the_same_files():
+    """They are two copies of one fact and disagreed for however long."""
+    assert _tree_labelled() == _prose_named(), (
+        f"tree labels {sorted(_tree_labelled())}, sentence names "
+        f"{sorted(_prose_named())}")
+
+
+def test_the_readme_names_exactly_the_modules_that_share_a_name(prophet_class):
+    """The claim, against the installed package rather than against memory.
+
+    `__init__.py` is excluded: every package has one, and nobody means to
+    count it among the files named after Prophet's.
+    """
+    import os
+
+    upstream = {f for f in os.listdir(os.path.dirname(inspect.getfile(prophet_class)))
+                if f.endswith(".py")} - {"__init__.py"}
+    ours = {p.name for p in LAYOUT_PACKAGE.glob("*.py")} - {"__init__.py"}
+
+    assert _prose_named() == ours & upstream, (
+        f"the README names {sorted(_prose_named())}; the modules that actually "
+        f"share a name with Prophet's are {sorted(ours & upstream)}")
+
+
+def test_the_readme_does_not_count_the_files_it_does_not_name():
+    """[#142] The sentence used to end "the other four have no Prophet
+    counterpart" where there are six, and the clause after it named three of
+    them. A bare count of the complement goes stale whenever a module is added,
+    which is twice now, so there is no longer a number there to go stale."""
+    text = " ".join(LAYOUT_README.read_text().split())
+
+    assert not re.search(r"[Tt]he other (one|two|three|four|five|six|seven|\d+)", text), (
+        "the Layout paragraph counts the modules it does not name again; that "
+        "count has been wrong twice")
