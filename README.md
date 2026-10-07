@@ -297,7 +297,7 @@ results and a generated report. One command regenerates everything.
 ```
 analytic_prophet/
     __init__.py       re-exports the package's surface
-    forecaster.py     the model
+    forecaster.py     Prophet's forecaster.py — the model
     constants.py      the numbers the model is defined by
     layout.py         where each parameter sits in the flat vector
     seasonality.py    Fourier basis, registry, selection rule
@@ -315,10 +315,15 @@ benchmark/            fast micro-benchmarks, for running against a change
 evaluation/           the claim-level study, and its generated report
 ```
 
-`forecaster.py`, `models.py` and `make_holidays.py` take Prophet's own names.
-**The other four have no Prophet counterpart, which is the point:** Stan supplies the
-parameter layout, the derivatives and the optimizer there. Writing them down is what this
-project is, so they get files you can open.
+`forecaster.py`, `make_holidays.py`, `models.py` and `serialize.py` take Prophet's own
+names. **The rest have no Prophet file to correspond to, which is the point:** `layout.py`,
+`optimizer.py` and the derivatives in `trend.py` are what Stan supplies there, and
+`constants.py` holds numbers that live in `prophet.stan` rather than in any Python file.
+Writing them down is what this project is, so they get files you can open.
+
+Two of the rest are not that, and saying so costs nothing: `seasonality.py` is code
+Prophet has as well, inside its own `forecaster.py`, and `build.py` has no counterpart
+because Prophet ships its Stan model already compiled.
 
 The C++ source sits *inside* the package rather than beside it because it is the
 implementation, not a build input to it — where Prophet hands the problem to Stan, this
