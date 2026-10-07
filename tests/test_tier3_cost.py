@@ -99,8 +99,8 @@ def test_our_fit_forks_nothing_so_the_two_conventions_agree_for_us(
 
 # -- import cost, which is not a property of the fit ----------------------
 
-def test_import_cost_is_measured_on_an_interpreter_that_has_not_loaded_it():
-    """The bug this function exists to fix, asserted directly (#125).
+def test_import_levels_come_from_processes_that_have_loaded_nothing_else():
+    """The bug this measurement exists to avoid, asserted directly (#125).
 
     Import cost used to be read off the memory probe as the step between its
     baseline and its first fit. That silently stopped measuring anything once
@@ -110,50 +110,66 @@ def test_import_cost_is_measured_on_an_interpreter_that_has_not_loaded_it():
     zero while the report went on quoting 57.9 MiB.
 
     This process is in that state right now -- `harness` is imported above, so
-    our package is loaded here -- which is what makes it the right place to
-    assert that the measurement is unaffected by it.
+    our package and scipy are loaded here, and pytest has brought this
+    interpreter well past 300 MiB. A bare-interpreter level measured from here
+    that comes back near 15 MiB can only have come from somewhere else, which
+    is the isolation the measurement depends on.
     """
+    import resource
     import sys
 
     assert "analytic_prophet" in sys.modules, \
         "this test is only meaningful if the package is already loaded here"
 
-    cost = tier3.import_cost("analytic_prophet")
+    levels = tier3.import_levels()
 
-    assert cost is not None, "the import probe failed to report"
-    assert cost > 1_000_000, (
-        f"importing analytic_prophet reportedly cost {cost} bytes; the probe is "
-        "measuring a process that had already loaded it")
+    # `prophet` is absent from this set wherever Prophet is not installed,
+    # which is every CI job and this project's whole skip story. The rows that
+    # need no third-party install are the ones asserted.
+    assert set(levels) <= set(tier3.IMPORT_LEVELS)
+    assert {"bare", "numpy+pandas", "analytic_prophet"} <= set(levels)
+    for label, peak in levels.items():
+        assert peak > 0, label
+    own = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    own *= 1 if sys.platform == "darwin" else 1024
+    assert levels["bare"] < own / 2, (
+        "the bare-interpreter level is close to this process's own peak, so the "
+        "probe is measuring the caller rather than a fresh interpreter")
 
 
-def test_import_cost_is_recorded_once_rather_than_per_series_length(
+def test_import_levels_are_ordered_by_how_much_each_process_did():
+    """Only the orderings that hold on every platform.
+
+    Deliberately *not* asserting that our package outweighs Prophet's. That is
+    true on macOS/arm64; the delta form of this measurement read exactly zero
+    in all seven Linux CI jobs for reasons still unexplained; and #130 proposes
+    to make it false on purpose by deferring scipy. None of those are reasons
+    for this test to fail, which is why it asserts only what more work in a
+    process must mean for its peak.
+    """
+    levels = tier3.import_levels()
+
+    assert levels["numpy+pandas"] > levels["bare"]
+    assert levels["analytic_prophet"] > levels["bare"]
+    if "prophet" in levels:
+        assert levels["prophet"] > levels["bare"]
+    # A superset of the numpy+pandas process's work, so not materially below it.
+    assert levels["analytic_prophet"] >= levels["numpy+pandas"] * 0.9
+
+
+def test_import_levels_are_recorded_once_rather_than_per_series_length(
         compiled_optimizer_module, prophet_comparison):
-    """It does not depend on T, and recording it per length invited the reader
-    to read five near-identical numbers as a trend."""
+    """They do not depend on T, and recording them per length invited the
+    reader to read five near-identical numbers as a trend."""
     rows = tier3.collect(sizes=(300,), repeats=1,
                          lib_path=compiled_optimizer_module, with_memory=True)
 
-    imports = [m for m in rows if m.metric == "import_rss"]
+    imports = [m for m in rows if m.metric == "import_peak_rss"]
 
     assert {m.series for m in imports} == {"imports"}
-    assert {m.implementation for m in imports} == {"prophet", "analytic_prophet"}
-
-
-def test_each_measurement_gets_a_process_that_has_done_nothing_else(
-        compiled_optimizer_module):
-    """Peak RSS is a high-water mark: two fits in one process and the second's
-    delta is whatever the first left behind. Two calls must therefore agree
-    rather than the second reading zero.
-
-    Asserted on the fit itself since #125 moved import cost to its own probe,
-    which makes this a stricter version of the same test: the fit is the
-    measurement the high-water mark would actually have swallowed.
-    """
-    first = tier3.peak_memory("compiled", 300, compiled_optimizer_module)
-    second = tier3.peak_memory("compiled", 300, compiled_optimizer_module)
-
-    assert second["fit_peak_rss_added"] == pytest.approx(
-        first["fit_peak_rss_added"], rel=0.25)
+    assert {m.implementation for m in imports} <= set(tier3.IMPORT_LEVELS)
+    assert {"bare", "numpy+pandas", "analytic_prophet"} <= {
+        m.implementation for m in imports}
 
 
 # -- the scaling summary --------------------------------------------------

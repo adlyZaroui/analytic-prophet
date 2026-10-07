@@ -158,6 +158,65 @@ def test_the_report_states_which_direction_the_convention_biases(report):
     assert "lower" in report and "maximum" in report
 
 
+def test_the_parent_side_does_not_inherit_its_peak_from_this_process():
+    """The bug behind the CI failure on PR #129, and behind #103's unexplained
+    zeros, asserted where it can be seen.
+
+    `ru_maxrss` is inherited across `fork` and `exec` does not reset it, so on
+    Linux a subprocess launched from a large parent reports the parent's peak
+    as its own. Every memory measurement in this project runs in a subprocess,
+    so that silently turned every delta into zero. This test is run from a
+    pytest process holding numpy, pandas, scipy and prophet; a bare child that
+    reports a small number can only be reporting itself.
+    """
+    import subprocess
+    import sys
+
+    import _common
+
+    # The read is inlined rather than imported: importing `_common` to ask
+    # would pull numpy, pandas and scipy into the child, which then weighs
+    # 130 MiB honestly and tells us nothing about inheritance.
+    probe = """
+import resource, sys
+peak = 0
+try:
+    for line in open("/proc/self/status"):
+        if line.startswith("VmHWM:"):
+            peak = int(line.split()[1]) * 1024
+except OSError:
+    pass
+if not peak:
+    peak = (1 if sys.platform == "darwin" else 1024) * \
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+print(peak)
+"""
+    reported = int(subprocess.run([sys.executable, "-c", probe],
+                                  capture_output=True, text=True,
+                                  check=True).stdout.strip())
+
+    assert reported > 0
+    assert reported < _common._own_peak_bytes() / 2, (
+        f"a bare child reports {reported} bytes against this process's "
+        f"{_common._own_peak_bytes()}; the peak is being inherited, not measured")
+
+
+def test_the_suite_measures_whether_the_child_side_can_be_trusted():
+    """Rather than assuming it per platform. There is no `/proc` repair for the
+    child half, so the honest move is to detect and report."""
+    import _common
+
+    assert isinstance(_common.child_peak_rss_is_reliable(), bool)
+
+
+def test_the_committed_results_record_whether_the_child_side_held(tier3_rows):
+    flags = [row for row in tier3_rows
+             if row["metric"] == "child_peak_rss_reliable"]
+
+    assert len(flags) == 1, "the environment flag is not recorded exactly once"
+    assert float(flags[0]["value"]) in (0.0, 1.0)
+
+
 # -- the attribution, and what it can support -----------------------------
 
 def test_the_two_sides_of_the_fork_are_recorded_separately(tier3_rows):

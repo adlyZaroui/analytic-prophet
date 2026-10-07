@@ -138,14 +138,74 @@ def run_one(name, df, lib_path=None):
     raise ValueError(f"unknown implementation {name!r}")
 
 
+def _own_peak_bytes():
+    """This process's own peak resident bytes.
+
+    **`VmHWM` on Linux rather than `ru_maxrss`, and the difference decides
+    whether the number means anything.** `ru_maxrss` lives in the signal
+    struct: it is inherited across `fork` and `exec` does *not* reset it, so a
+    subprocess launched from a large parent reports the *parent's* peak as its
+    own. A bare `python -c` child of a 413 MiB parent reports 413 MiB. Every
+    memory measurement in this project runs in a subprocess, and the tier
+    runner's parent holds numpy, pandas, scipy and this package, so on Linux
+    `ru_maxrss` reported a constant and every delta computed from it came out
+    exactly zero -- which is the "reads exactly 0 in every CI job on Linux"
+    quirk #103 recorded without a cause.
+
+    `VmHWM` comes from the mm, which `exec` replaces, and reads 7 MiB for the
+    same child. macOS has no `/proc`, and does reset at exec, so it keeps
+    `ru_maxrss` -- which is bytes there and kilobytes on Linux.
+    """
+    try:
+        with open("/proc/self/status") as status:
+            for line in status:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    import resource
+    scale = 1 if sys.platform == "darwin" else 1024
+    return scale * resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
+
+def child_peak_rss_is_reliable():
+    """Whether a waited-on child's `ru_maxrss` describes the child.
+
+    Measured rather than assumed per platform: a bare interpreter is spawned
+    and asked what it thinks its own peak was. If it comes back at or above
+    this process's peak, `ru_maxrss` is being inherited rather than reported,
+    and the children half of `peak_rss_split` is describing us, not them.
+
+    There is no `/proc` fix available for the child side -- a dead child has no
+    `/proc` entry to read `VmHWM` from, and cmdstan is not ours to instrument
+    -- so this reports the limitation instead of papering over it.
+    """
+    import subprocess
+
+    probe = ("import resource;"
+             "print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)")
+    try:
+        completed = subprocess.run([sys.executable, "-c", probe],
+                                   capture_output=True, text=True, timeout=120)
+        reported = int(completed.stdout.strip())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+    scale = 1 if sys.platform == "darwin" else 1024
+    return scale * reported < _own_peak_bytes()
+
+
 def peak_rss_split():
     """`(this process, its children)` peak resident bytes, as a pair.
 
     Reported separately because the two answer different questions. Prophet
     fits in a cmdstan child, so the child side is where its optimizer lives;
     the parent side is cmdstanpy writing a data file and reading draws back.
-    `ru_maxrss` is bytes on macOS and kilobytes on Linux, which is the only
-    thing this normalizes.
+
+    The parent side comes from `_own_peak_bytes`, which is `VmHWM` on Linux for
+    the reason given there. The child side has to be `RUSAGE_CHILDREN` because
+    a reaped child has no `/proc` entry left, so it inherits that call's flaw:
+    where `child_peak_rss_is_reliable()` is false the second element describes
+    this process rather than its children.
 
     Both numbers are high-water marks that never fall, and the children's one
     is a maximum over *every* child waited on so far -- so a compiler spawned
@@ -155,8 +215,8 @@ def peak_rss_split():
     """
     import resource
     scale = 1 if sys.platform == "darwin" else 1024
-    return tuple(scale * resource.getrusage(who).ru_maxrss
-                 for who in (resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN))
+    return (_own_peak_bytes(),
+            scale * resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
 
 
 def peak_rss_bytes():

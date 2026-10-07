@@ -147,44 +147,91 @@ def peak_memory(name, size, lib_path):
     return None
 
 
+# `VmHWM` is read inline rather than through `harness.peak_rss_split`: this
+# probe measures what one import costs, and importing the harness to ask would
+# pull numpy, pandas, scipy and this package in before the question is put.
 IMPORT_PROBE = """
 import json, resource, sys, warnings
 warnings.filterwarnings("ignore")
-scale = 1 if sys.platform == "darwin" else 1024
-rss = lambda: scale * resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 sys.path[:0] = {paths!r}
-import numpy, pandas
-baseline = rss()
-import {module}
-print("RESULT" + json.dumps({{"baseline": baseline, "imported": rss()}}))
+{imports}
+peak = 0
+try:
+    for line in open("/proc/self/status"):
+        if line.startswith("VmHWM:"):
+            peak = int(line.split()[1]) * 1024
+except OSError:
+    pass
+if not peak:
+    scale = 1 if sys.platform == "darwin" else 1024
+    peak = scale * resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+print("RESULT" + json.dumps(peak))
 """
+IMPORT_REPEATS = 3
+
+# label -> what a fresh interpreter imports, and nothing else. The two
+# reference levels are measured rather than assumed so that the comparison
+# between the libraries can be read against them.
+IMPORT_LEVELS = {
+    "bare": "",
+    "numpy+pandas": "import numpy, pandas",
+    "prophet": "import prophet",
+    "analytic_prophet": "import analytic_prophet",
+}
 
 
-def import_cost(module):
-    """Peak resident bytes that importing `module` adds to a bare interpreter.
+def _import_peak(imports):
+    """Median peak RSS of a fresh interpreter that imported exactly `imports`.
 
-    **Measured in its own process, and that is the fix rather than a detail.**
-    This used to be read off the memory probe, as the step between its baseline
-    and its first fit. That stopped measuring anything the day `_common.py`
-    grew a module-level `from analytic_prophet.build import ToolchainMissing`:
-    the probe imports `harness` before it takes a baseline, `harness` reaches
-    through to `_common`, and so our package and scipy were already resident.
-    The step then read exactly zero while the report went on claiming 57.9 MiB,
-    which is the stale number a regenerated tier finally contradicted (#125).
-
-    numpy and pandas are imported *before* the baseline because both libraries
-    require them, so what is left is what each one adds on top. Does not depend
-    on T, and is no longer recorded once per series length as though it did.
+    The median of a few runs rather than one, since the levels are compared
+    with each other and noise in any of them is not divided away.
     """
-    completed = subprocess.run(
-        [sys.executable, "-c", IMPORT_PROBE.format(
-            module=module, paths=[str(harness.REPO)])],
-        capture_output=True, text=True, timeout=900)
-    for line in completed.stdout.splitlines():
-        if line.startswith("RESULT"):
-            payload = json.loads(line[len("RESULT"):])
-            return payload["imported"] - payload["baseline"]
-    return None
+    peaks = []
+    for _ in range(IMPORT_REPEATS):
+        completed = subprocess.run(
+            [sys.executable, "-c", IMPORT_PROBE.format(
+                paths=[str(harness.REPO)], imports=imports)],
+            capture_output=True, text=True, timeout=900)
+        for line in completed.stdout.splitlines():
+            if line.startswith("RESULT"):
+                peaks.append(json.loads(line[len("RESULT"):]))
+    return float(np.median(peaks)) if peaks else None
+
+
+def import_levels():
+    """Peak RSS of one fresh interpreter per library, as levels, not deltas.
+
+    **Reported as a level rather than a delta, because a level is a quantity
+    and the delta was an artefact.** Measured as two marks inside one
+    interpreter -- import numpy and pandas, read the peak, import the library,
+    read it again -- it gave 58 MiB on macOS/arm64 and exactly zero in all
+    seven Linux CI jobs. The cause is `ru_maxrss`, and it is spelled out in
+    `_common._own_peak_bytes`: the value is inherited across `fork` and `exec`
+    does not reset it, so a child launched from a large parent reports the
+    parent's peak, both marks inside it read that same inherited constant, and
+    the difference is zero. Reading `VmHWM` fixes the measurement; reporting a
+    level rather than a difference means a reader can see what is being
+    compared with what, which is worth keeping independently of the bug.
+
+    What survives is the level itself. Each process imports one thing and
+    nothing else, so its peak is a quantity with a meaning, and the four of
+    them are directly comparable: a bare interpreter and a numpy+pandas one
+    are measured alongside the two libraries so a reader can see what the
+    comparison is against instead of taking a subtraction on trust.
+
+    Before #125 this was read off the memory probe as the step between its
+    baseline and its first fit. That stopped measuring anything the day
+    `_common.py` grew a module-level `from analytic_prophet.build import
+    ToolchainMissing`: the probe imports `harness`, `harness` reaches through
+    to `_common`, so our package and scipy were already resident and the step
+    read zero while the report went on quoting 57.9 MiB.
+    """
+    levels = {}
+    for label, imports in IMPORT_LEVELS.items():
+        peak = _import_peak(imports)
+        if peak is not None:
+            levels[label] = peak
+    return levels
 
 
 def _fitters(df, lib_path, **kwargs):
@@ -271,11 +318,13 @@ def collect(sizes=SIZES, repeats=REPEATS, lib_path=None, with_memory=True):
 
     # Import cost, once rather than per length: it does not depend on T.
     if with_memory:
-        for name, module in (("prophet", "prophet"),
-                             ("analytic_prophet", "analytic_prophet")):
-            cost = import_cost(module)
-            if cost is not None:
-                row("imports", "default", name, "import_rss", cost, "bytes")
+        for label, peak in import_levels().items():
+            row("imports", "default", label, "import_peak_rss", peak, "bytes")
+        # Recorded so a reader of the committed CSV can tell whether the
+        # parent/child split in it means anything, rather than having to know
+        # which platform produced it.
+        row("environment", "default", "both", "child_peak_rss_reliable",
+            float(harness.child_peak_rss_is_reliable()), "")
 
     # --- cost against the width of the design matrix --------------------
     df = corpora.peyton_manning(WIDTH_SIZE)

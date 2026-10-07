@@ -619,22 +619,44 @@ def tier3_section(rows, figures):
 
         imports = table.get(("imports", "default"), {})
         if imports:
-            lines += ["And what each library costs to merely import, which is a "
-                      "separate measurement in a separate process: numpy and pandas "
-                      "are resident before the baseline, since both libraries need "
-                      "them, so this is what each adds on top.",
-                      "", "| library | peak RSS added by the import |", "|---|---|"]
-            for name in ("prophet", "analytic_prophet"):
-                if (name, "import_rss") in imports:
-                    lines.append(f"| `{name}` | {mib(imports[(name, 'import_rss')]):.1f} MiB |")
+            levels = {name: value for (name, metric), value in imports.items()
+                      if metric == "import_peak_rss"}
+            reference = levels.get("numpy+pandas")
+            lines += ["And what each library costs to merely import — one fresh "
+                      "interpreter per row, importing that and nothing else, so "
+                      "each number is a level rather than a difference:",
+                      "", "| a fresh interpreter importing | peak RSS | over numpy+pandas |",
+                      "|---|---|---|"]
+            for name in ("bare", "numpy+pandas", "prophet", "analytic_prophet"):
+                if name not in levels:
+                    continue
+                over = ("—" if reference is None or name in ("bare", "numpy+pandas")
+                        else f"+{mib(levels[name] - reference):.1f} MiB")
+                label = name if name in ("bare", "numpy+pandas") else f"`{name}`"
+                lines.append(f"| {label} | {mib(levels[name]):.1f} MiB | {over} |")
             lines += ["", "**We win the fit and lose the import** — the latter "
                       "almost entirely scipy, which Prophet does not pull. A "
                       "library that is expensive to merely import is still "
-                      "expensive to deploy. Recorded once rather than at every "
-                      "series length, because it does not depend on T; reading it "
-                      "off the fit probe instead is what let a stale 57.9 MiB "
-                      "stand in the report after the number had silently become "
-                      "unmeasurable ([#125]).", ""]
+                      "expensive to deploy.", "",
+                      "**Levels rather than a before-and-after, and `VmHWM` "
+                      "rather than `ru_maxrss`.** Measuring this as two marks "
+                      "inside one interpreter reported 58 MiB on macOS/arm64 and "
+                      "**exactly zero** in all seven Linux CI jobs. `ru_maxrss` "
+                      "is inherited across `fork` and `exec` does not reset it, "
+                      "so a subprocess launched from a large parent reports the "
+                      "*parent's* peak as its own — a bare `python -c` child of a "
+                      "413 MiB parent reports 413 MiB. Every measurement in this "
+                      "tier runs in a subprocess and the runner holds numpy, "
+                      "pandas, scipy and this package, so on Linux the call "
+                      "returned a constant, both marks read it, and every delta "
+                      "came out zero. That is the \"reads exactly 0 in every CI "
+                      "job on Linux\" quirk [#103] recorded without a cause. The "
+                      "parent side now reads `VmHWM` from `/proc/self/status`, "
+                      "which lives in the mm that `exec` replaces and reports "
+                      "7 MiB for that same child; a Linux container now "
+                      "reproduces these levels to within a megabyte. Recorded "
+                      "once rather than per series length, because it does not "
+                      "depend on T ([#125]).", ""]
         lines += _memory_attribution(table, memory)
 
     predict = [k for k in sizes if ("prophet", "predict_wall") in table[k]]
@@ -772,6 +794,25 @@ def _memory_attribution(table, memory):
                   "different reason: with the extension already built it forks "
                   "nothing, so for us the sum and the maximum are the same number.",
                   ""]
+        reliable = table.get(("environment", "default"), {}).get(
+            ("both", "child_peak_rss_reliable"))
+        if reliable is not None:
+            lines += [
+                ("**The child column is only meaningful on a platform where a "
+                 "child's `ru_maxrss` describes the child, and these numbers were "
+                 "produced on one.** There is no `/proc` repair available for this "
+                 "half — a reaped child has no entry left to read and cmdstan is "
+                 "not ours to instrument — so the suite measures the property "
+                 "instead of assuming it, and records the answer beside the "
+                 "numbers it governs. Here it held."
+                 if reliable else
+                 "**These numbers were produced where a child's `ru_maxrss` is "
+                 "inherited from this process rather than describing the child, "
+                 "so the child column above is not trustworthy and the parent "
+                 "column is the one to read.** `VmHWM` repairs the parent side "
+                 "only; a reaped child has no `/proc` entry left and cmdstan is "
+                 "not ours to instrument. Re-run the tier where "
+                 "`child_peak_rss_is_reliable()` holds to get the split."), ""]
     return lines
 
 
