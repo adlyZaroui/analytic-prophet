@@ -107,10 +107,18 @@ def test_the_data_says_where_it_came_from():
 
 def test_the_quickstart_carries_the_install_caveat():
     """The warning that `pip install -e .` succeeds and then does not import
-    on macOS was two hundred lines below the command it is about."""
+    on macOS was two hundred lines below the command it is about.
+
+    The phrase this looks for changed in #136. The README used to carry the
+    warning twice -- a short form beside a `git clone` block near the top and
+    the full one under "Building and testing" -- and this asserted on the
+    short one. Reordering the file removed the duplicate, since everything in
+    it but `git clone` was already said below. The assertion is unchanged in
+    substance: the surviving warning has to sit beside the surviving command.
+    """
     readme = (REPO / "README.md").read_text()
     install = readme.index("pip install -e")
-    caveat = readme.index("can succeed without working")
+    caveat = readme.index("can install successfully and still not")
     assert 0 < caveat - install < 500, (
         "the caveat is no longer beside the command it is about")
 
