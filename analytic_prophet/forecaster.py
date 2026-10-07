@@ -7,8 +7,6 @@ import logging
 import os
 import numpy as np
 import pandas as pd
-from scipy.optimize import OptimizeResult, approx_fprime, minimize
-from scipy.stats import halfcauchy
 from typing import Tuple
 
 from .constants import (  # noqa: F401 -- re-exported, and the
@@ -32,6 +30,52 @@ from .optimizer import (  # noqa: F401 -- re-exported, and the
 from .models import (  # noqa: F401 -- re-exported, and the
     # names tests monkeypatch must stay bound in this module
     load_cpp_module, canonical_to_cpp, cpp_to_canonical, CPP_MODULE_NAME, BUILD_HINT, _cpp_module_cache)
+
+# scipy is imported on first use rather than when this module is (#130). It is
+# 57 MiB of the 59 MiB that importing this package added on top of numpy and
+# pandas, and the only thing that wants it is `_fit_python` -- the reference
+# backend, which exists to be read and checked against the C++ core rather
+# than to be fast. `from scipy.stats import halfcauchy` sat here too, unused by
+# anything, and that line alone was pulling in all of scipy.stats.
+#
+# Two mechanisms, because two kinds of access have to keep working:
+#
+#   * `__getattr__` serves reads from outside the module, which is how the
+#     tests reach `forecaster.minimize` to record and patch it. PEP 562 only
+#     fires for names *absent* from the module dict, so once a test assigns
+#     one, the assignment shadows this and is what callers get -- which is the
+#     behaviour those tests depend on.
+#   * `_ensure_scipy` serves the bare `minimize(...)` and `approx_fprime(...)`
+#     inside this module's own functions. `LOAD_GLOBAL` resolves those against
+#     the module dict and never consults `__getattr__`, so they need the names
+#     actually bound before use.
+#
+# Neither name is given a module-level placeholder on purpose: binding them to
+# `None` would satisfy `LOAD_GLOBAL` but stop `__getattr__` firing, and
+# `real_minimize = forecaster.minimize` would hand a test `None`.
+LAZY_SCIPY_NAMES = ("minimize", "approx_fprime")
+
+
+def _ensure_scipy():
+    """Bind scipy's optimizer names in this module, for the names still absent.
+
+    Per name rather than all-or-nothing: a test that patches one and leaves the
+    other unbound would otherwise get a `NameError` from the one it did not
+    touch.
+    """
+    missing = [name for name in LAZY_SCIPY_NAMES if name not in globals()]
+    if not missing:
+        return
+    import scipy.optimize
+    for name in missing:
+        globals()[name] = getattr(scipy.optimize, name)
+
+
+def __getattr__(name):
+    if name in LAZY_SCIPY_NAMES:
+        _ensure_scipy()
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 logger = logging.getLogger("analytic_prophet")
 
@@ -1482,6 +1526,7 @@ class AnalyticProphet:
         page of Python and checked against it (to 1.5e-8, in
         tests/test_backend_parity.py).
         """
+        _ensure_scipy()           # the one path that needs scipy (#130)
         if analytic and use_combined:
             raise ValueError("Both 'analytic' and 'use_combined' cannot be True at the same time.")
 

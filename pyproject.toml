@@ -42,6 +42,14 @@ requires-python = ">=3.9"
 #            in 1.9.0 -- its own docstring carries the `versionchanged` -- and
 #            the numeric-gradient control calls it that way.
 #
+# scipy stays a required dependency although only `fit(backend="python")` uses
+# it, so that backend works on a default install rather than behind an extra.
+# It is *imported* lazily since #130 -- it was 57 of the 59 MiB this package
+# added to an interpreter, which is a cost every user paid for a backend kept
+# for reading against the C++ core. Moving it to an optional extra would cut
+# the install too, and is a separate decision about whether the reference
+# backend is part of the product.
+#
 # These are reasoned from the APIs, not tested below what CI resolves: pip
 # gives each Python version the newest compatible release, which on 3.9 is far
 # above every floor here. A floor that is wrong would therefore not fail the

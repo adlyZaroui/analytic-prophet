@@ -83,32 +83,32 @@ Negative means we are lower. That is better for the four error rows, worse for c
 
 | T | Prophet | `compiled` | `python` |
 |---|---|---|---|
-| 50 | 0.184 s | **0.023 s** | 0.269 s |
-| 100 | 0.029 s | **0.010 s** | 0.033 s |
-| 300 | 0.046 s | **0.023 s** | 0.122 s |
-| 1000 | 0.164 s | **0.115 s** | 0.599 s |
-| 2905 | 0.627 s | **0.409 s** | 3.263 s |
+| 50 | 0.170 s | **0.021 s** | 0.254 s |
+| 100 | 0.027 s | **0.009 s** | 0.030 s |
+| 300 | 0.044 s | **0.022 s** | 0.115 s |
+| 1000 | 0.157 s | **0.113 s** | 0.556 s |
+| 2905 | 0.583 s | **0.394 s** | 3.180 s |
 
 Peak resident memory **attributable to the fit**, over and above what was already resident. The README's claim is about the fit — autodiff retains a tape and a closed-form gradient does not — so a baseline taken before the import would measure something else.
 
 | T | Prophet fit | ours fit |
 |---|---|---|
-| 50 | 2.9 MiB | **2.6 MiB** |
-| 100 | 3.0 MiB | **3.5 MiB** |
-| 300 | 3.1 MiB | **2.7 MiB** |
-| 1000 | 6.0 MiB | **2.8 MiB** |
-| 2905 | 13.0 MiB | **4.7 MiB** |
+| 50 | 3.1 MiB | **2.5 MiB** |
+| 100 | 3.1 MiB | **2.5 MiB** |
+| 300 | 3.3 MiB | **2.5 MiB** |
+| 1000 | 6.3 MiB | **2.9 MiB** |
+| 2905 | 13.8 MiB | **5.5 MiB** |
 
 And what each library costs to merely import — one fresh interpreter per row, importing that and nothing else, so each number is a level rather than a difference:
 
 | a fresh interpreter importing | peak RSS | over numpy+pandas |
 |---|---|---|
 | bare | 14.9 MiB | — |
-| numpy+pandas | 72.0 MiB | — |
-| `prophet` | 112.3 MiB | +40.3 MiB |
-| `analytic_prophet` | 130.6 MiB | +58.6 MiB |
+| numpy+pandas | 71.9 MiB | — |
+| `prophet` | 112.1 MiB | +40.2 MiB |
+| `analytic_prophet` | 73.5 MiB | +1.6 MiB |
 
-**We win the fit and lose the import** — the latter almost entirely scipy, which Prophet does not pull. A library that is expensive to merely import is still expensive to deploy.
+**We win the import as well as the fit**, by 38.6 MiB. Until [#130] we lost it, and by about as much in the other direction: scipy was imported whatever backend you asked for, and it was 57 of the 59 MiB this package added. It serves one thing — `_fit_python`, the reference backend kept for reading against the C++ core — so it is now imported when that runs and not before. Prophet does not pull scipy at all, which is why this was the one cost comparison here that it won.
 
 **Levels rather than a before-and-after, and `VmHWM` rather than `ru_maxrss`.** Measuring this as two marks inside one interpreter reported 58 MiB on macOS/arm64 and **exactly zero** in all seven Linux CI jobs. `ru_maxrss` is inherited across `fork` and `exec` does not reset it, so a subprocess launched from a large parent reports the *parent's* peak as its own — a bare `python -c` child of a 413 MiB parent reports 413 MiB. Every measurement in this tier runs in a subprocess and the runner holds numpy, pandas, scipy and this package, so on Linux the call returned a constant, both marks read it, and every delta came out zero. That is the "reads exactly 0 in every CI job on Linux" quirk [#103] recorded without a cause. The parent side now reads `VmHWM` from `/proc/self/status`, which lives in the mm that `exec` replaces and reports 7 MiB for that same child; a Linux container now reproduces these levels to within a megabyte. Recorded once rather than per series length, because it does not depend on T ([#125]).
 
@@ -118,23 +118,25 @@ A ratio of two peaks is compatible with a constant difference in overhead, which
 
 | implementation | fixed | per 1000 obs | R² |
 |---|---|---|---|
-| prophet | 2.44 MiB | 3.629 MiB | 0.9964 |
-| compiled | 2.74 MiB | 0.618 MiB | 0.6837 |
-| python | 0.45 MiB | 0.674 MiB | 0.9956 |
+| prophet | 2.58 MiB | 3.852 MiB | 0.9966 |
+| compiled | 2.27 MiB | 1.058 MiB | 0.9634 |
+| python | -0.05 MiB | 0.653 MiB | 0.9777 |
 
-**The fixed costs are within 0.29 MiB of each other while the per-observation costs differ 5.9×.** The gap is almost entirely in the term that scales with the series, which is the shape a retained tape predicts — a tape is O(T) in the operations recorded, so it must cost nothing at T = 0 and grow from there. It is equally the shape predicted by *any* other allocation in Prophet's optimizer that scales with T, and peak RSS cannot tell those apart. So this rules out the explanation that the gap is fixed overhead; it does not isolate the tape, and the README no longer says it does.
+**The fixed costs are within 0.30 MiB of each other while the per-observation costs differ 3.6×.** The gap is almost entirely in the term that scales with the series, which is the shape a retained tape predicts — a tape is O(T) in the operations recorded, so it must cost nothing at T = 0 and grow from there. It is equally the shape predicted by *any* other allocation in Prophet's optimizer that scales with T, and peak RSS cannot tell those apart. So this rules out the explanation that the gap is fixed overhead; it does not isolate the tape, and the README no longer says it does.
 
-**The fixed-cost comparison is the stable half of this.** Our slope is close to zero, so the ratio of the two slopes moves by about a fifth between reruns of this tier and should be read as an order of magnitude rather than to three figures. The README quotes it that loosely for the same reason.
+**Both of these numbers moved when [#130] landed, and upward for us.** Deferring scipy dropped what is resident before the fit from 130 MiB to 73, and peak RSS is a high-water mark: growth that fitted under the import's own transient peak used to be invisible and now is not. Our measured fit cost roughly doubled as a result — the measurement got more sensitive, the fit did not get worse — and the slope ratio fell from about twelvefold to the figure above. The earlier number was the flattering one and it was flattering by accident.
+
+**The two sides are unevenly masked, and the asymmetry now runs against us.** Prophet still imports 40 MiB where we import 1.6, so more of its fit growth can hide under its own import transient than ours can. A subtraction of two high-water marks cannot see growth smaller than that headroom, and the headroom is not equal, so read the gap as a conservative one rather than as exact. It is also why the ratio is better conditioned than it was: our slope is no longer near zero, and two reruns of this tier now agree on it to a few percent where they used to disagree by a fifth.
 
 Which side of the fork the growth is on, which is the closest this measurement gets to the mechanism — Prophet's optimizer and therefore its tape run in the cmdstan child, while the parent is cmdstanpy writing a data file and reading draws back:
 
 | T | Prophet parent | Prophet child | ours parent | ours child |
 |---|---|---|---|---|
-| 50 | 2.9 MiB | 0.0 MiB | 2.6 MiB | 0.0 MiB |
-| 100 | 3.0 MiB | 0.0 MiB | 3.5 MiB | 0.0 MiB |
-| 300 | 3.1 MiB | 0.0 MiB | 2.7 MiB | 0.0 MiB |
-| 1000 | 4.5 MiB | 1.5 MiB | 2.8 MiB | 0.0 MiB |
-| 2905 | 7.6 MiB | 5.4 MiB | 4.7 MiB | 0.0 MiB |
+| 50 | 3.1 MiB | 0.0 MiB | 2.5 MiB | 0.0 MiB |
+| 100 | 3.1 MiB | 0.0 MiB | 2.5 MiB | 0.0 MiB |
+| 300 | 3.3 MiB | 0.0 MiB | 2.5 MiB | 0.0 MiB |
+| 1000 | 4.8 MiB | 1.5 MiB | 2.9 MiB | 0.0 MiB |
+| 2905 | 8.4 MiB | 5.4 MiB | 5.5 MiB | 0.0 MiB |
 
 **The child column is left-censored at zero and cannot be regressed.** `RUSAGE_CHILDREN` is a maximum over every child waited on, and importing Prophet spawns one before the fit does, so the fit's child is invisible until it exceeds that floor — which is why the short series read 0.0 rather than a small number. Read the column as a lower bound that becomes informative at the top. Ours is zero throughout for a different reason: with the extension already built it forks nothing, so for us the sum and the maximum are the same number.
 
@@ -146,11 +148,11 @@ Which side of the fork the growth is on, which is the closest this measurement g
 
 | T | Prophet approx | **ours approx** | Prophet exact | **ours exact** |
 |---|---|---|---|---|
-| 50 | 0.031 s | 0.016 s | 0.286 s | 0.064 s |
-| 100 | 0.034 s | 0.018 s | 0.291 s | 0.061 s |
-| 300 | 0.048 s | 0.027 s | 0.325 s | 0.091 s |
-| 1000 | 0.101 s | 0.056 s | 0.531 s | 0.178 s |
-| 2905 | 0.230 s | 0.136 s | 0.801 s | 0.324 s |
+| 50 | 0.029 s | 0.016 s | 0.274 s | 0.061 s |
+| 100 | 0.032 s | 0.017 s | 0.279 s | 0.061 s |
+| 300 | 0.046 s | 0.025 s | 0.308 s | 0.082 s |
+| 1000 | 0.096 s | 0.053 s | 0.467 s | 0.169 s |
+| 2905 | 0.223 s | 0.129 s | 0.802 s | 0.311 s |
 
 Read down the diagonals, not across: approximate against approximate and exact against exact. Comparing our exact sampler with Prophet's approximate one is what produced the "2.4× slower" claim this tier reported before #93.
 
@@ -159,8 +161,8 @@ Read down the diagonals, not across: approximate against approximate and exact a
 | implementation | d log wall / d log T |
 |---|---|
 | prophet | 0.45 |
-| compiled | 0.82 |
-| python | 0.81 |
+| compiled | 0.84 |
+| python | 0.82 |
 
 Read these with the figure rather than on their own. Every implementation is *slower* at T=50 than at T=100, which is not noise and not subprocess overhead: below 100 observations Prophet's rule selects **Newton** (#25), and both sides follow it. Newton pays `2n` gradient evaluations an iteration for its Hessian. The exponents are fitted through that kink, so they understate the asymptotic slope — Prophet's 0.46 in particular is mostly the kink plus a fixed subprocess spawn, not a claim that its fit is sub-linear.
 
@@ -172,7 +174,7 @@ Read these with the figure rather than on their own. Every implementation is *sl
 
 ## How this was measured
 
-- seed `20260925`, commit `897b2fcabec2`
+- seed `20260925`, commit `369bf0c64e90`
 - python 3.14.7 on macOS-26.5.2-arm64-arm-64bit-Mach-O
 - analytic-prophet 0.1.0, cmdstanpy 1.3.0, numpy 2.5.3, pandas 3.0.5, prophet 1.4.0, scipy 1.18.1
 
