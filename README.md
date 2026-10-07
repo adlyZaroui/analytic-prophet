@@ -14,6 +14,49 @@ for.
 is no MCMC and no plotting, so this is not yet a drop-in replacement. See
 [what this is not](#what-this-is-not).
 
+## Install
+
+```bash
+pip install analytic-prophet
+```
+
+**On Linux and macOS, Python 3.9–3.14, that is the whole of it.** The wheels carry the
+compiled core, so nothing is built at install time and nothing is built at your first
+`fit` either: no compiler, no Eigen, no LBFGSpp. Those are the platforms and versions CI
+runs the suite on.
+
+**Anywhere else — Windows, or any `pip install` that falls back to the source
+distribution — there is no wheel**, and the C++ core is compiled on demand instead: the
+first `fit(df)` takes about ten seconds, says so while it does it, and caches the result
+for every later run. That path needs a C++17 compiler and the two header-only libraries.
+`fit(df, backend="python")` needs neither and works everywhere.
+
+Windows has no wheel because nothing here has ever been tested there, and shipping a
+binary for an untested platform is a claim with nothing behind it.
+
+## Quickstart
+
+```python
+import pandas as pd
+from analytic_prophet import AnalyticProphet
+
+df = pd.read_csv(                                      # columns: ds, y
+    "https://raw.githubusercontent.com/adlyZaroui/analytic-prophet"
+    "/main/tests/data/peyton_manning.csv")
+
+model = AnalyticProphet(seasonality_mode="multiplicative")
+model.fit(df)                                          # the compiled core, built on first use
+# model.fit(df, backend="python")                      # the readable reference path, no compiler
+
+future = model.make_future_dataframe(periods=90)
+forecast = model.predict(future)
+forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].tail()
+```
+
+---
+
+## Three series, held out
+
 ![three held-out forecasts: the largest advantage, the median, and one Prophet wins](https://raw.githubusercontent.com/adlyZaroui/analytic-prophet/main/evaluation/results/figures/showcase.png)
 
 **What this shows, and what it does not.** Three M4 series, forecast past a cutoff
@@ -44,57 +87,6 @@ is shared, and it is larger than anything separating the two.
 
 Regenerate it with `python evaluation/showcase.py`; the output is byte-identical because
 both sides are seeded.
-
-```bash
-pip install analytic-prophet
-```
-
-**On Linux and macOS, Python 3.9–3.14, that is the whole of it.** The wheels carry the
-compiled core, so nothing is built at install time and nothing is built at your first
-`fit` either: no compiler, no Eigen, no LBFGSpp. Those are the platforms and versions CI
-runs the suite on.
-
-**Anywhere else — Windows, or any `pip install` that falls back to the source
-distribution — there is no wheel**, and the C++ core is compiled on demand instead: the
-first `fit(df)` takes about ten seconds, says so while it does it, and caches the result
-for every later run. That path needs a C++17 compiler and the two header-only libraries.
-`fit(df, backend="python")` needs neither and works everywhere.
-
-Windows has no wheel because nothing here has ever been tested there, and shipping a
-binary for an untested platform is a claim with nothing behind it.
-
-### From a clone, to work on it
-
-```bash
-git clone https://github.com/adlyZaroui/analytic-prophet
-cd analytic-prophet
-brew install eigen lbfgspp          # or equivalent; header-only, nothing is linked
-pip install -e '.[dev]'             # see the caveat below if you are on macOS
-```
-
-> **The install is optional, and on macOS it can succeed without working.** `pytest` and
-> everything in this repository run from a fresh clone with no install at all, because
-> `pyproject.toml` puts the right directories on `pythonpath`. The editable install is
-> only for importing `analytic_prophet` from somewhere else — and on macOS with Python
-> 3.13+ it reports success and then does not import, because setuptools writes the
-> editable `.pth` with `UF_HIDDEN` and 3.13 hardened `site` to skip hidden `.pth` files.
-> `tests/test_packaging.py::test_an_editable_install_actually_imports` is what catches it.
-> [More on it below](#building-and-testing).
-
-```python
-import pandas as pd
-from analytic_prophet import AnalyticProphet
-
-df = pd.read_csv("tests/data/peyton_manning.csv")     # columns: ds, y
-
-model = AnalyticProphet(seasonality_mode="multiplicative")
-model.fit(df)                                          # the compiled core, built on first use
-# model.fit(df, backend="python")                      # the readable reference path, no compiler
-
-future = model.make_future_dataframe(periods=90)
-forecast = model.predict(future)
-forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].tail()
-```
 
 ---
 
@@ -342,19 +334,12 @@ up, not where it is defined.** `analytic_prophet/__init__.py` says why.
 Requires a C++17 compiler and two header-only libraries:
 
 ```bash
-brew install eigen lbfgspp          # or equivalent
+git clone https://github.com/adlyZaroui/analytic-prophet
+cd analytic-prophet
+brew install eigen lbfgspp          # or equivalent; header-only, nothing is linked
 pip install -e '.[dev]'
 pytest                              # the whole suite, about three minutes
 ```
-
-`.[test]` is the same without `prophet`, which only the comparisons need. The count is
-deliberately not written down here: CI reports it, and a number in prose goes stale
-between the commit that adds tests and the one that remembers to update it.
-
-`pytest` alone is enough — `pyproject.toml` puts the repo root and `benchmark/` on
-`pythonpath` along with `evaluation/`, so a fresh clone runs the suite with **no install and no `PYTHONPATH`**.
-`pip install -e .` is for importing the package from elsewhere; nothing in the repo
-depends on it.
 
 > **`pip install -e .` on macOS with Python 3.13+ can install successfully and still not
 > import.** setuptools writes the editable `.pth` with macOS's `UF_HIDDEN` flag set, and
@@ -366,6 +351,16 @@ depends on it.
 > `tests/test_packaging.py::test_an_editable_install_actually_imports` is what catches
 > this: it skips when the package is not installed and fails with the diagnosis when it
 > is installed and broken.
+
+`.[test]` is the same without `prophet`, which only the comparisons need. The count is
+deliberately not written down here: CI reports it, and a number in prose goes stale
+between the commit that adds tests and the one that remembers to update it.
+
+`pytest` alone is enough — `pyproject.toml` puts the repo root and `benchmark/` on
+`pythonpath` along with `evaluation/`, so a fresh clone runs the suite with **no install and no `PYTHONPATH`**.
+`pip install -e .` is for importing the package from elsewhere; nothing in the repo
+depends on it.
+
 
 Nothing is linked: the extension needs Eigen and LBFGSpp headers only. The test suite
 compiles `analytic_prophet/optimize.cpp` into a temporary directory on the fly, which is
