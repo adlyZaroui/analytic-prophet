@@ -209,6 +209,37 @@ def test_the_wheel_and_the_on_demand_build_use_the_same_flags():
     assert "COMPILE_FLAGS" in setup, "setup.py has its own copy of the flags"
 
 
+def test_debug_info_is_not_emitted_into_the_wheel():
+    """[#135] The 0.1.0 Linux wheels were 7.4 MB against macOS's 0.32 MB, and
+    the shared object inside them 34.8 MB against 0.6 MB -- eight DWARF
+    sections, because setuptools *prepends* the interpreter's own `OPT` (on a
+    manylinux image `-DNDEBUG -g -fwrapv -O3 -Wall`) and `extra_compile_args`
+    are appended, so nothing cancelled the `-g`. macOS was unaffected only
+    because its linker leaves DWARF in a separate `.dSYM`.
+
+    Asserted on the flag rather than on a built artefact: the fixture-built
+    extension comes from `build.py`'s direct compiler invocation, which never
+    requested debug info and so would pass this whatever the wheels did.
+    """
+    from analytic_prophet import build
+
+    assert "-g0" in build.COMPILE_FLAGS, (
+        "nothing cancels the -g that setuptools inherits from the interpreter")
+
+
+def test_the_flag_filter_cannot_drop_the_debug_setting():
+    """`setup.py` strips the flags that are setuptools' own to add. Adding
+    `-g0` to that list would undo #135 silently, since the on-demand path --
+    which has no `-g` to cancel -- would go on building small objects either
+    way and no test of a local build could see it."""
+    setup = (REPO / "setup.py").read_text()
+
+    filtered = re.search(r'flag not in \(([^)]*)\)', setup)
+    assert filtered, "the flag filter in setup.py has moved"
+    assert "-g0" not in filtered.group(1), (
+        "setup.py drops -g0 before handing the flags to setuptools")
+
+
 # -- publishing ------------------------------------------------------------
 
 def test_the_release_builds_from_a_tag(release):

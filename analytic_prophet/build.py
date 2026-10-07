@@ -44,7 +44,17 @@ CPP_SOURCE = PACKAGE_DIR / "optimize.cpp"
 # with. Neither enables -ffast-math, so the arithmetic is unchanged: -O3 buys
 # inlining and vectorisation that are not allowed to reassociate floating
 # point, which is why the parity tests hold to 1.5e-8 either way.
-COMPILE_FLAGS = ("-std=c++17", "-shared", "-fPIC", "-O3")
+#
+# -g0 is for the wheels and does nothing here (#135). This path invokes the
+# compiler directly, so no debug info was ever requested; `setup.py` goes
+# through setuptools, which *prepends* the interpreter's own `OPT` -- on a
+# manylinux image `-DNDEBUG -g -fwrapv -O3 -Wall` -- and `extra_compile_args`
+# are appended, so nothing cancelled the `-g`. The published 0.1.0 Linux
+# wheels carry 8 DWARF sections and a 34.8 MB shared object against macOS's
+# 0.6 MB, because macOS leaves DWARF in a separate `.dSYM` rather than in the
+# binary. With -g0 the Linux object is 0.54 MB. Stripping as well reaches
+# 0.44 MB, which is not worth a post-processing step over not emitting it.
+COMPILE_FLAGS = ("-std=c++17", "-shared", "-fPIC", "-O3", "-g0")
 
 BUILD_TIMEOUT_SECONDS = 300
 
