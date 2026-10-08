@@ -121,10 +121,11 @@ Without a compiler the build raises, naming the one thing that is missing — an
 **An analytic gradient instead of automatic differentiation.** This is the point of the
 project. Reverse-mode autodiff tapes a forward pass and reverses over it; the model is
 small and entirely explicit, so the gradient can be written down instead. Both
-consequences are measured rather than assumed — fitting is **1.4–10× faster** than
-Prophet, and which end you get depends on the series: **10× at T = 50, falling to 1.4×
-by T = 1000**, because Prophet pays a fixed cmdstan subprocess cost that matters most
-when there is least to do. The fit's peak memory is **about two fifths** of Prophet's at
+consequences are measured rather than assumed — fitting is **1.4–8.2× faster** than
+Prophet, and which end you get depends on the series: **8.2× at T = 50, falling to 1.4×
+by T = 1000 and 1.5× at T = 2905**, because Prophet pays a fixed cmdstan subprocess cost
+that matters most when there is least to do. The advantage is a trough rather than a
+decline — `T = 1000` is the narrowest point measured, not the longest series. The fit's peak memory is **about two fifths** of Prophet's at
 T = 2905, and the decomposition says where that gap is: fitting `memory = fixed + slope·T`
 leaves the two fixed costs within 0.3 MiB of each other while the per-observation costs
 differ **about 3.6×**. Both numbers are weaker than this README claimed before
