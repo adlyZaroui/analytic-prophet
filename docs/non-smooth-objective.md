@@ -205,7 +205,7 @@ than anything separating them.
 
 ### Prophet's rule for short series, and what it costs
 
-Prophet does not always run L-BFGS. [fc] `CmdStanPyBackend.fit`: `'Newton' if T < 100
+Prophet does not always run L-BFGS. Prophet's `models.py`, `CmdStanPyBackend.fit`: `'Newton' if T < 100
 else 'LBFGS'`, one retry with Newton when the first attempt raises — at any length,
 controlled by `newton_fallback` — and an explicit `algorithm=` overriding the choice.
 Both fit paths here follow that rule, including the override
