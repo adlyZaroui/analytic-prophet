@@ -153,3 +153,48 @@ def test_the_cited_threshold_is_the_one_prophet_ships():
     assert carrying == ["plot.py"], (
         f"the changepoint threshold now appears in {carrying}; "
         "docs/non-smooth-objective.md says it is only in plot.py")
+
+
+# -- what the flat-growth tie does and does not show (#149) ----------------
+
+def test_flat_growth_drives_both_sides_to_exact_zeros(prophet_comparison,
+                                                      compiled_optimizer_module):
+    """The fact the narrowed claim rests on (#149).
+
+    With `growth="flat"` the likelihood never sees `delta`, so the objective in
+    it is `Σ|δ|/τ` alone -- a plain V with its vertex at zero. Both
+    implementations land on that vertex exactly, Prophet included, which is why
+    the tie cannot be read as evidence about the kink: the kink is still there
+    and has become trivial to find.
+
+    It is also why "both are pinned at zero" here does not contradict
+    "Prophet's rates never arrive at zero" under linear growth, where the
+    likelihood pulls against the prior.
+    """
+    Prophet, common, _bridge = prophet_comparison
+    df = common.load_data(300)
+    settings = dict(common.PROPHET_KWARGS, growth="flat")
+
+    theirs = Prophet(**settings)
+    theirs.fit(df)
+    ours = AnalyticProphet(**settings)
+    ours.fit(df, lib_path=compiled_optimizer_module)
+
+    their_rates = np.abs(np.ravel(theirs.params["delta"]))
+    our_rates = np.abs(np.ravel(ours.params["delta"]))
+
+    assert np.all(their_rates == 0.0), (
+        f"Prophet's flat-growth rates are no longer all exactly zero "
+        f"(max {their_rates.max():.3e}); the flat-growth section says they are")
+    assert np.all(our_rates == 0.0), f"ours are not (max {our_rates.max():.3e})"
+
+
+def test_the_flat_growth_claim_is_narrowed_to_what_it_shows(document):
+    """It used to read as confirmation of the kink mechanism, which the
+    experiment cannot give: removing the flat directions removes the kink's
+    bite at the same time."""
+    assert "What that establishes is that the same model is being fitted" in document
+    assert "does not establish which mechanism costs Prophet the margin" in document
+    assert "cannot separate them" in document
+    assert "strongest evidence the project has that the margin" not in document, (
+        "the un-narrowed claim is back")

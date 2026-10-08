@@ -83,9 +83,10 @@ prior's non-differentiability predicts.
 
 The third piece is [flat growth](#flat-growth-is-an-exact-tie-and-that-is-the-point),
 where the trend's flat directions are removed and the disagreement vanishes entirely —
-identical `lp__` to Stan's printed precision. Taken together: two of Prophet's
-algorithms stop short where the objective has a kink, and neither does when the kink
-stops mattering.
+identical `lp__` to Stan's printed precision. Taken together: two of Prophet's algorithms
+stop short on this objective, and both land exactly where we do once the trend is taken
+out of it. The third piece is evidence that one model is being fitted rather than two; it
+is *not* evidence about the kink specifically, for the reason given in that section.
 
 **Using `lp__` as the yardstick is what made this legible.** Parameters cannot be
 compared directly across the two implementations (rotated Fourier basis, different
@@ -284,13 +285,18 @@ two paths sharing a `status != 0` test.
 
 ### Flat growth is an exact tie, and that is the point
 
-Every comparison above ends with our posterior a few nats ahead, attributed throughout
-to Prophet stopping short on the trend's flat directions — `k` against `delta`, which
-trade off almost freely.
+Every comparison above ends with our posterior a few nats ahead. Under linear growth two
+things are true of that trend at once: the objective has the Laplace prior's kink at
+`δ = 0`, and `k` trades off against `delta` almost freely, so the surface is flat in
+directions the data does not identify. The margin has been attributed to both.
 
-Flat growth removes those directions. `k` and `delta` remain parameters and keep their
+Flat growth removes the flat directions. `k` and `delta` remain parameters and keep their
 priors, but the likelihood never sees them, so nothing pulls against the shrinkage and
-both are pinned at zero. What is left is well conditioned.
+both go to zero — **exactly** zero, 25 of 25 changepoint rates, for Prophet as much as
+for us. (That is not in tension with Prophet's rates never reaching zero under linear
+growth, [above](#the-difference-that-is-real-and-needs-no-threshold): there the
+likelihood pulls against the prior, and here there is nothing to pull.) What is left is
+well conditioned.
 
 The result is an **exact tie**, at every size measured:
 
@@ -301,10 +307,21 @@ The result is an **exact tie**, at every size measured:
 | 2905 | 7494.870800 | 7494.870800 | 0 |
 
 Not "ours is no worse" — identical to Stan's full printed precision, with `beta` agreeing
-to ~1e-7 and `m` to 1e-5. This is the strongest evidence the project has that the margin
-under linear growth is optimizer behaviour on a flat objective, not a difference in what
-is being fitted. Take the flat directions away and both implementations land on the same
-point.
+to ~1e-7 and `m` to 1e-5.
+
+**What that establishes is that the same model is being fitted.** Two implementations
+landing on one point to Stan's printed precision cannot be optimizing different
+objectives, so the margin under linear growth is optimizer behaviour and not a
+specification difference. That is the strongest evidence the project has for *that*, and
+it is the claim worth making.
+
+**It does not establish which mechanism costs Prophet the margin,** and the section used
+to read as though it did. Flat growth removes the ill-conditioned `k`/`delta` directions
+and, at the same time, removes any pull against the kink: with the likelihood blind to
+`delta`, the objective in `delta` is `Σ|δ|/τ` alone, a plain V whose vertex is at zero, so
+every method lands on it — which is exactly what the 25 exact zeros on both sides show.
+The kink is still there and has become trivial to find. So the tie is consistent with the
+kink mechanism and equally consistent with ill-conditioning, and cannot separate them.
 
 ### The closest thing to upstream corroboration, and its limits
 
