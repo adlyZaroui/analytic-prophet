@@ -242,3 +242,30 @@ def test_both_fit_paths_record_a_monotone_decreasing_trajectory(small_df, compil
         trajectory = np.asarray(trajectory)
         assert len(trajectory) > 1, f"{name} recorded no trajectory"
         assert np.all(np.diff(trajectory) <= 1e-9), f"{name} loss increased between iterations"
+
+
+# -- the figure this module owns, as the documents quote it (#147) ----------
+
+def test_the_stall_figure_names_its_quantity_wherever_it_is_quoted():
+    """[#147] "17.8% above the optimum" appeared in the README and in
+    docs/non-smooth-objective.md with no unit.
+
+    It cannot be `lp__`: the posterior margins quoted on those same pages run
+    from 0.0045% to 0.2442%, so a reader who assumes one scale is out by three
+    orders of magnitude, in the direction that makes the surrounding claims
+    look inconsistent. The quantity is the objective -- the negative log
+    posterior of `y / max|y|`, which is what this module measures.
+    """
+    from pathlib import Path
+
+    repo = Path(__file__).parent.parent
+    for name in ("README.md", "docs/non-smooth-objective.md"):
+        text = " ".join((repo / name).read_text().split())
+        if "17.8%" not in text:
+            continue
+        around = text[max(0, text.index("17.8%") - 160):text.index("17.8%") + 400]
+        assert "objective" in around or "loss" in around, (
+            f"{name} states 17.8% without naming the quantity")
+        assert "lp__" in around, (
+            f"{name} does not say that 17.8% is not a percentage of lp__, which "
+            "is the comparison the figure invites")

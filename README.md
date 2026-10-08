@@ -153,7 +153,9 @@ where the optimum sits, because that prior is what drives most rates to zero. Pr
 own optimizer stops short there, and so did three others before the objective was
 reformulated: **liblbfgs**, which died after two iterations with
 `LBFGSERR_ROUNDING_ERROR`; **scipy's L-BFGS-B** on the natural parameterization, which
-stalled 17.8% above the optimum while reporting success; and **Stan's own Newton**, which
+stalled with its objective **17.8% above the minimum** while reporting success — that is
+the loss being minimized, not `lp__`, and the two do not compare; and **Stan's own
+Newton**, which
 Prophet uses below 100 observations and which lands short at every size measured. That
 last one is the informative one — a second-order method defeated in the same place is
 not a statement about L-BFGS, because curvature is exactly what a kink does not have. Splitting `δ` into non-negative parts makes the problem smooth with simple
