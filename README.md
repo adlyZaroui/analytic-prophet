@@ -165,11 +165,17 @@ bounds, and the same solution.
 **A better optimum, by Prophet's own objective.** Scored under Stan's `log_prob` on
 identical changepoints, so only the optimizer differs:
 
-| T | Prophet `lp__` | this implementation |
-|---|---|---|
-| 300 | 813.351 | **815.337** |
-| 1000 | 2852.768 | **2855.528** |
-| 2905 | 8004.798 | **8005.159** |
+| T | Prophet `lp__` | this implementation | margin | as % of `lp__` |
+|---|---|---|---|---|
+| 300 | 813.351 | **815.337** | +1.986 | 0.244% |
+| 1000 | 2852.768 | **2855.528** | +2.760 | 0.0967% |
+| 2905 | 8004.798 | **8005.159** | +0.361 | **0.0045%** |
+
+**The margin shrinks as a share of the posterior** — by a factor of 54 across this range —
+and the absolute figure is not even monotone, rising before it falls. It also turns on how
+wide the model is, not only how long the series: at T = 2905 with yearly seasonality alone
+the margin is **+2.34** rather than +0.36. No mechanism for the size is claimed. What holds
+in every configuration measured is the direction.
 
 → [the correctness gate](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md#tier-0--are-the-two-fitting-the-same-model)
 
