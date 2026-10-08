@@ -280,7 +280,10 @@ def test_the_readme_no_longer_reads_the_ratio_as_proof_of_the_mechanism():
     readme = " ".join((REPO / "README.md").read_text().split())
 
     assert "rather than proving the mechanism" in readme
-    assert "peak RSS cannot tell a tape from any other allocation" in readme
+    # Case-insensitive since #152: splitting the paragraph made this sentence
+    # start one, which capitalised it. The caveat is what matters, not where it
+    # happens to fall in a sentence.
+    assert "peak rss cannot tell a tape from any other allocation" in readme.lower()
     # The old sentence, which asserted the mechanism from a ratio alone.
     assert "which is what a retained tape predicts. Predicting" not in readme
 
@@ -299,3 +302,49 @@ def test_the_linear_fit_recovers_a_known_fixed_cost_and_slope():
     assert fixed == pytest.approx(4.0)
     assert slope == pytest.approx(0.5)
     assert r_squared == pytest.approx(1.0)
+
+
+# -- the paragraph that carried nine claims (#152) -------------------------
+
+def _readme_paragraphs():
+    from pathlib import Path
+    text = (Path(REPO) / "README.md").read_text()
+    return [" ".join(block.split()) for block in text.split("\n\n")]
+
+
+def test_the_tape_referent_sits_next_to_what_it_refers_to():
+    """[#152] "That is the shape a retained tape predicts" refers to the
+    decomposition -- equal fixed costs, slopes an order of magnitude apart.
+
+    #130 inserted the revision history between them, so its nearest antecedent
+    became "the earlier, larger ratio was flattering by accident", and the
+    sentence read as saying the accident is what a tape predicts. Successive
+    edits are how that happened and will happen again, so the two are now
+    pinned adjacent rather than merely both present.
+    """
+    paragraph = next((p for p in _readme_paragraphs()
+                      if "shape a retained tape predicts" in p), None)
+    assert paragraph, "the tape sentence is no longer in the README"
+
+    decomposition = paragraph.find("3.6×")
+    referent = paragraph.find("That is the shape a retained tape predicts")
+    assert decomposition != -1, (
+        "the decomposition figure is no longer in the same paragraph as the "
+        "sentence that refers to it")
+    assert 0 < referent - decomposition < 30, (
+        f"{referent - decomposition} characters now sit between the "
+        "decomposition and the sentence referring to it; that gap is where the "
+        "#130 revision history went last time")
+
+
+def test_no_readme_paragraph_carries_the_whole_cost_argument():
+    """The shape of the fix. One block held the thesis, the speed range, the
+    memory ratio, the decomposition, the #130 history, the tape caveat, the
+    import comparison, the scipy story and prediction speed -- nine claims, 26
+    lines. A reader bounced off it."""
+    offenders = [p for p in _readme_paragraphs()
+                 if "retained tape" in p and "Predicting is faster" in p]
+
+    assert not offenders, (
+        "the decomposition and prediction speed are back in one paragraph, "
+        "which is how the nine-claim block formed")

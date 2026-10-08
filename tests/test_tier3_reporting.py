@@ -49,7 +49,7 @@ def speedups():
 
 
 def test_the_range_endpoints_are_the_measured_ones(readme, speedups):
-    quoted = re.search(r"fitting is \*\*([\d.]+)–([\d.]+)× faster\*\*", readme)
+    quoted = re.search(r"[Ff]itting is \*\*([\d.]+)–([\d.]+)× faster\*\*", readme)
     assert quoted, "the README no longer states the speed range in the form checked here"
 
     low, high = float(quoted.group(1)), float(quoted.group(2))
@@ -83,10 +83,16 @@ def _speed_claim(readme):
     the first version of this did, and a 600-character window did not fix it
     either, because the memory claim is inside 600 characters. The speed claim
     is everything before the memory claim, so that is what this returns.
+
+    The anchor is case-insensitive because #152 made this sentence start a
+    paragraph, which capitalised it. A case-sensitive anchor turned that
+    restructure into three test failures that said nothing about the prose
+    being wrong.
     """
-    start = readme.index("fitting is **")
-    end = readme.find("peak memory", start)
-    return readme[start:end if end != -1 else start + 400]
+    anchor = re.search(r"[Ff]itting is \*\*", readme)
+    assert anchor, "the speed claim has moved; this test needs updating"
+    end = readme.find("peak memory", anchor.start())
+    return readme[anchor.start():end if end != -1 else anchor.start() + 400]
 
 
 def test_the_claim_reaches_the_longest_series_memory_is_reported_at(readme, speedups):
