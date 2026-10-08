@@ -107,17 +107,21 @@ def _frequency_of(series):
 
 
 def _load(series):
-    """The frame for one named series, from the same sample Tier 2 drew.
+    """The frame for one named series, out of the corpus Tier 2 measured.
 
-    Same frequency, same count, same seed -- so the names line up with the
-    committed results rather than coming from a different draw.
+    Read from the frozen manifest, which is what Tier 2 iterates since #164.
+    It used to redraw the old seeded sample of 20 per frequency and search
+    that -- correct while the tier drew the same sample, and silently wrong
+    afterwards: the series this plots are chosen by ranking Tier 2's results,
+    and a census of 3008 will rank series that no 20-series draw contains.
     """
     frequency = _frequency_of(series)
-    for name, frame in corpora.m4(frequency, n_series=tier2.N_SERIES,
-                                  seed=harness.SEED, download=False):
+    for name, frame in corpora.m4_census(frequency, download=False):
         if name == series:
             return tier2._dated(frame)
-    raise SystemExit(f"{series} is not in the M4 sample; is the corpus cached?")
+    raise SystemExit(
+        f"{series} is not in the frozen corpus; is the M4 cache present, and "
+        "is evaluation/corpus/m4_census_v1.json the manifest Tier 2 ran under?")
 
 
 def _one_window(frame, cutoff, horizon, lib_path, tail):

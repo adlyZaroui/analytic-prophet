@@ -133,3 +133,127 @@ def m4(frequency="Weekly", n_series=20, seed=0, min_length=120, download=True):
         dates = pd.date_range(start=start, periods=len(values), freq=offset)
         yield f"m4_{frequency.lower()}_{identifier}", pd.DataFrame(
             {"ds": dates, "y": values})
+
+
+# -- the frozen corpus (#164) ----------------------------------------------
+
+CORPUS_DIR = Path(__file__).resolve().parent / "corpus"
+MANIFEST = CORPUS_DIR / "m4_census_v1.json"
+
+# The protocol the manifest was frozen against. Changing any of these changes
+# which series qualify, so a manifest built under different values is a
+# different corpus and the digest will say so.
+CENSUS_MIN_LENGTH = 120
+CENSUS_HORIZONS = {
+    "Weekly": ("52 W", "104 W", "52 W"),
+    "Daily": ("90 D", "730 D", "180 D"),
+}
+
+
+def _m4_rows(frequency):
+    """`(identifier, dates, values)` for every row of one M4 frequency file.
+
+    The two filters the loader has always applied are here rather than at the
+    call site, because the manifest has to list series that actually load:
+    a length floor, and a `StartingDate` pandas can parse.
+    """
+    stem, offset, _ = M4_FREQUENCIES[frequency]
+    info = pd.read_csv(m4_cache() / "M4-info.csv").set_index("M4id")
+    frame = pd.read_csv(m4_cache() / f"{stem}-train.csv")
+    lengths = frame.iloc[:, 1:].notna().sum(axis=1).to_numpy()
+
+    for position in range(len(frame)):
+        if lengths[position] < CENSUS_MIN_LENGTH:
+            continue
+        identifier = frame.iloc[position, 0]
+        if identifier not in info.index:
+            continue
+        start = pd.to_datetime(info.loc[identifier, "StartingDate"],
+                               dayfirst=True, errors="coerce")
+        if pd.isna(start):
+            continue
+        values = pd.to_numeric(frame.iloc[position, 1:],
+                               errors="coerce").dropna().to_numpy(dtype=float)
+        yield identifier, pd.date_range(start=start, periods=len(values),
+                                        freq=offset), values
+
+
+def census_eligible(frequency):
+    """Every identifier of one frequency that the protocol can measure, sorted.
+
+    **The eligibility test is the protocol itself**, not a proxy for it: a
+    series qualifies when `prophet.diagnostics.generate_cutoffs` yields at
+    least one rolling-origin split for it. A length floor is not the same
+    question and gets it badly wrong -- 4137 Daily series clear 120
+    observations and only 2714 of those produce a cutoff, because the floor
+    counts points where the protocol needs calendar span.
+
+    Deciding it here rather than at run time is what lets the corpus be a
+    census: the manifest can list exactly the series that will return results,
+    so "3008 series" is the number measured rather than the number attempted.
+    """
+    from prophet.diagnostics import generate_cutoffs
+
+    horizon, initial, period = (pd.Timedelta(text)
+                                for text in CENSUS_HORIZONS[frequency])
+    eligible = []
+    for identifier, dates, values in _m4_rows(frequency):
+        frame = pd.DataFrame({"ds": dates, "y": values})
+        try:
+            cutoffs = generate_cutoffs(frame, horizon, initial, period)
+        except ValueError:
+            continue                      # less span than the horizon needs
+        if cutoffs:
+            eligible.append(identifier)
+    return sorted(eligible)
+
+
+def manifest_digest(series_by_frequency):
+    """A SHA-256 over the selected identifiers, as the manifest's fingerprint.
+
+    So that an edited list is detectable rather than merely discouraged. The
+    input is canonicalised -- frequencies sorted, identifiers sorted within
+    each -- so the digest depends on the membership and not on the order a
+    particular run happened to produce.
+    """
+    import hashlib
+
+    canonical = "\n".join(
+        f"{frequency}:{identifier}"
+        for frequency in sorted(series_by_frequency)
+        for identifier in sorted(series_by_frequency[frequency]))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def load_manifest(path=None):
+    """The frozen corpus, as a dict. Raises if it has been edited."""
+    import json
+
+    manifest = json.loads(Path(path or MANIFEST).read_text())
+    recomputed = manifest_digest(manifest["series"])
+    if recomputed != manifest["digest"]:
+        raise ValueError(
+            f"{Path(path or MANIFEST).name} has been edited since it was frozen: "
+            f"its digest says {manifest['digest'][:12]}, its contents hash to "
+            f"{recomputed[:12]}. The corpus is pre-registered; regenerate it "
+            "with `python evaluation/freeze_corpus.py` and say in the commit "
+            "why the membership changed.")
+    return manifest
+
+
+def m4_census(frequency, manifest=None, download=True):
+    """The manifest's series for one frequency, as `(name, frame)` pairs.
+
+    Yields in the manifest's order, which is sorted, so a run is reproducible
+    and a parallel run can be reassembled into the same file.
+    """
+    if not m4_available(frequency, download=download):
+        return
+    manifest = manifest or load_manifest()
+    wanted = set(manifest["series"].get(frequency, ()))
+    if not wanted:
+        return
+    for identifier, dates, values in _m4_rows(frequency):
+        if identifier in wanted:
+            yield (f"m4_{frequency.lower()}_{identifier}",
+                   pd.DataFrame({"ds": dates, "y": values}))

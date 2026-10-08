@@ -62,6 +62,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e '.[dev]'
 
+      # Before the tiers, not after: the corpus is pre-registered, so a run
+      # against a manifest that no longer matches its own rule is a run whose
+      # numbers describe an unknown set of series (#164). Three minutes here
+      # is cheaper than discovering it from the results.
+      - name: Verify the frozen corpus still reproduces
+        run: python evaluation/freeze_corpus.py
+
       - name: Run the tiers
         env:
           LBFGSPP_INCLUDE_DIR: ${{ runner.temp }}/LBFGSpp/include

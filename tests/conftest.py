@@ -55,6 +55,14 @@ def pytest_addoption(parser):
     for option, what in sorted(REQUIREMENTS.values()):
         group.addoption(option, action="store_true", default=False,
                         help=f"fail rather than skip when {what} is missing")
+    # Not an environment gap like the two above, which is why it is separate:
+    # re-deriving the frozen corpus runs `generate_cutoffs` over every M4 row
+    # and takes about three minutes (#164). That is a freeze-time question, not
+    # a per-push one, so the evaluation workflow passes this and tests.yml does
+    # not. `python evaluation/freeze_corpus.py` is the same check by hand.
+    group.addoption("--verify-corpus", action="store_true", default=False,
+                    help="re-derive the frozen evaluation corpus and compare "
+                         "it with the committed manifest (~3 minutes)")
 
 
 def environment_gap(config, requirement, reason):
