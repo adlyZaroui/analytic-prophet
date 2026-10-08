@@ -21,9 +21,15 @@ This caused three separate, independently-discovered failures here:
    `tau` made the mechanism unambiguous — iterations-before-death tracked the L1
    strength exactly: `1/tau = 20` died at 2 iterations, `1/tau = 1e-6` (an effectively
    smooth objective) ran 3528.
-2. **scipy's L-BFGS-B** on the natural parameterization stalled 17.8% above the optimum
-   while reporting `success=True`. Not a tolerance problem: with `ftol=0, gtol=0` it
-   still stopped at the same point.
+2. **scipy's L-BFGS-B** on the natural parameterization stalled with its **objective
+   17.8% above the minimum** while reporting `success=True`. Not a tolerance problem:
+   with `ftol=0, gtol=0` it still stopped at the same point.
+
+   *That 17.8% is of the objective being minimized* — the negative log posterior of the
+   normalized series, `y / max|y|`, which is what both backends here optimize. It is
+   **not** a percentage of Stan's `lp__`, where every margin in this file is a fraction
+   of a percent. The two are different quantities on different scales and the
+   percentages do not compare.
 3. **Stan itself**, as shipped in Prophet, stops short too — see below.
 
 ### The fix: a smooth reformulation
