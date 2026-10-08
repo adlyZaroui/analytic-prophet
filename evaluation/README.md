@@ -9,7 +9,50 @@ expected to take minutes to hours.
 python evaluation/run.py            # every registered tier
 python evaluation/run.py --tiers 0 3
 python evaluation/run.py --list
+python evaluation/run.py --tiers 2 --workers 10     # the census, in parallel
 ```
+
+## The corpus is pre-registered
+
+Tier 2 measures a **census**, not a sample: every M4 Weekly and Daily series the
+protocol can measure, 3008 of them, listed in
+[`corpus/m4_census_v1.json`](corpus/m4_census_v1.json) with a digest of its own
+membership. There is no `n_series` and no sampling seed, because there is
+nothing to sample — which is the point. A seeded sample of 36 invited one
+question, what else was tried, and the only answer that does not rest on trust
+is a membership fixed before the results exist
+([#164](https://github.com/adlyZaroui/analytic-prophet/issues/164)).
+
+A series qualifies when `prophet.diagnostics.generate_cutoffs` yields at least
+one rolling-origin split under the frozen horizons. That is the protocol itself
+rather than a proxy for it, and the difference is not small: 4137 Daily series
+clear the 120-observation floor and only **2714** of those produce a cutoff,
+because a floor counts points where the protocol needs calendar span. Deciding
+it at freeze time is what makes the listed count the measured count.
+
+```bash
+python evaluation/freeze_corpus.py            # verify; exit 1 if it drifted
+python evaluation/freeze_corpus.py --write    # re-freeze, as a reviewable diff
+pytest tests/test_corpus_census.py --verify-corpus
+```
+
+Verifying re-derives the membership from the M4 files and compares it with what
+is committed, so the rule and its output cannot drift apart silently. It takes
+about three minutes, so `tests.yml` does not run it and `evaluation.yml` does —
+before the tiers rather than after, since a run against a manifest that no
+longer matches its own rule produces numbers about an unknown set of series.
+
+**Running it.** The work is one series per worker and the series do not
+interact, so it parallelises almost linearly: measured at **1.5 s per weekly
+series and 0.8 s per daily one on ten cores**, the full census projects to
+roughly **45 minutes**. Results are checkpointed per series under the cache,
+keyed by commit, so an interrupted run resumes and editing the code starts a
+fresh one by itself. `--no-resume` ignores them.
+
+**On the way to M4 entire.** The same machinery reaches 100,000 series at about
+42 hours on ten cores; what it needs is the other four frequencies added to
+`CENSUS_HORIZONS` with their own protocols, after which the manifest is
+re-frozen and the count grows. Nothing here assumes two frequencies.
 
 ## Why it exists
 

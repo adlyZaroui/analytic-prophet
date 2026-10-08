@@ -19,6 +19,7 @@ import sys
 import time
 
 import harness
+from analytic_prophet.build import cache_root
 
 # A tier's callable takes no arguments and returns an iterable of
 # harness.Measurement. The registry itself lives in harness -- see the note
@@ -41,6 +42,33 @@ def _load_tiers():
         importlib.import_module(name)
 
 
+def _options(run, args, number):
+    """The arguments this tier accepts, out of the ones the caller gave.
+
+    Tiers are registered as plain callables with whatever signature suits them
+    -- Tier 2 takes workers and a checkpoint directory since #164, the others
+    take neither -- so the runner offers rather than imposes.
+
+    **Checkpoints are keyed by commit**, which is the part that matters. A
+    census of 3008 series is hours of fitting and M4 entire is days, so
+    resuming has to be the default or an interrupted run is a wasted one. But
+    a checkpoint directory shared across commits would quietly serve results
+    fitted by code that has since changed, which is worse than losing them.
+    Keying on the commit means editing anything starts a fresh run by itself.
+    """
+    import inspect
+
+    accepted = inspect.signature(run).parameters
+    options = {}
+    if "workers" in accepted and args.workers:
+        options["workers"] = args.workers
+    if "checkpoint" in accepted and not args.no_resume:
+        commit = (harness.run_metadata().get("commit") or "uncommitted")[:12]
+        options["checkpoint"] = (cache_root() / "checkpoints"
+                                 / f"tier{number}" / commit)
+    return options
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -49,6 +77,11 @@ def main(argv=None):
     parser.add_argument("--list", action="store_true", help="list registered tiers")
     parser.add_argument("--results", default=str(harness.RESULTS),
                         help="where to write results")
+    parser.add_argument("--workers", type=int, default=None,
+                        help="parallel workers for tiers that support it "
+                             "(default: one per core, less one)")
+    parser.add_argument("--no-resume", action="store_true",
+                        help="ignore checkpoints and refit every series")
     args = parser.parse_args(argv)
 
     _load_tiers()
@@ -72,7 +105,7 @@ def main(argv=None):
         name, run, gate = TIERS[number]
         print(f"tier {number}: {name}")
         started = time.perf_counter()
-        measurements = list(run())
+        measurements = list(run(**_options(run, args, number)))
         elapsed = time.perf_counter() - started
         csv_path, _ = harness.write(f"tier{number}_{name}", measurements,
                                     {"tier": number, "seconds": round(elapsed, 3)},

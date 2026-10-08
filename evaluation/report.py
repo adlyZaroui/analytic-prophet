@@ -326,8 +326,104 @@ def holm(p_values):
     return adjusted
 
 
+def _paired_rows(rows, stratum="all"):
+    """The paired summary for one stratum.
+
+    **Filtering on `configuration` is load-bearing.** This read every row whose
+    series was `paired` and keyed only on the metric, which was correct while
+    the tier produced one summary. #164 added a per-stratum summary under the
+    same series name, and without this filter the two sets collide in the dict
+    comprehension -- whichever the CSV happened to sort last would silently
+    become the pooled table.
+    """
+    return {r["metric"]: r["value"] for r in rows
+            if r["series"] == "paired" and r["configuration"] == stratum}
+
+
+def _corpus(rows):
+    """`{(configuration, metric): value}` for the corpus rows, empty if absent.
+
+    Absent in results produced before #164, which still have to render.
+    """
+    return {(r["configuration"], r["metric"]): r["value"]
+            for r in rows if r["series"] == "corpus"}
+
+
+def _corpus_note(rows):
+    """Where the corpus came from, and that it was fixed before these numbers.
+
+    [#164] A seeded sample of 36 invites one question -- what else was tried --
+    and the only answer that does not rest on trust is a membership written
+    down beforehand. Read straight from the manifest rather than through
+    `corpora`, so the report stays free of the package's imports.
+    """
+    import json
+
+    corpus = _corpus(rows)
+    manifest_path = (harness.EVALUATION / "corpus" / "m4_census_v1.json")
+    if not corpus or not manifest_path.exists():
+        return []
+    manifest = json.loads(manifest_path.read_text())
+
+    measured = corpus.get(("all", "series_measured"))
+    frozen = manifest["total"]
+    strata = ", ".join(
+        f"{frequency} {int(corpus[(frequency, 'series_measured')])}"
+        f"/{int(corpus[(frequency, 'series_frozen')])}"
+        for frequency in sorted(manifest["series"])
+        if (frequency, "series_measured") in corpus)
+
+    lines = [
+        f"**The corpus is a census, and it was frozen before any of this was run.**"
+        f" `evaluation/corpus/{manifest_path.name}` lists every series measured —"
+        f" {frozen} of them, {strata} — chosen by a rule with no sampling step:"
+        f" every M4 series of these frequencies with at least"
+        f" {manifest['min_length']} observations, a parseable start date, and at"
+        f" least one rolling-origin cutoff under the horizons below. There is"
+        f" nothing to have selected. The file carries a digest of its own"
+        f" membership (`{manifest['digest'][:12]}`), the generator re-derives it"
+        f" from the M4 files on demand, and a test fails if the measured series"
+        f" are not exactly the frozen ones ([#164]).", ""]
+    if measured is not None and measured < frozen:
+        lines[0:1] = [lines[0] + f" **This run measured {int(measured)} of the"
+                      f" {frozen}**, so it is a partial pass over the frozen"
+                      " corpus rather than the whole of it."]
+    return lines
+
+
+def _stratum_table(rows, manifest_strata):
+    """Per-stratum effect sizes, which is what a census is for.
+
+    **At three thousand series the pooled p-value stops being the finding.**
+    Any consistent difference clears every threshold at that n, so a bigger
+    corpus that still leads with significance has learned nothing from being
+    bigger. What it buys is the right to ask *where* the difference holds.
+    """
+    strata = [s for s in manifest_strata if _paired_rows(rows, s)]
+    if not strata:
+        return []
+
+    lines = ["### Where it holds, by stratum", "",
+             "The pooled row is the first; the rest are the frozen corpus's own"
+             " strata. Read the medians and the counts rather than the p-values:"
+             " at this n a p-value distinguishes nothing, which is the point of"
+             " reporting the breakdown instead.", "",
+             "| stratum | metric | median difference | lower on | n |",
+             "|---|---|---|---|---|"]
+    for stratum in ["all"] + list(strata):
+        summary = _paired_rows(rows, stratum)
+        for metric in ("mae", "rmse", "mape", "smape"):
+            if f"{metric}_n" not in summary:
+                continue
+            lines.append(
+                f"| {stratum} | {metric} | {summary[f'{metric}_median']:+.4f} |"
+                f" {summary[f'{metric}_wins']:.0f}/{summary[f'{metric}_n']:.0f} |"
+                f" {summary[f'{metric}_n']:.0f} |")
+    return lines + [""]
+
+
 def tier2_section(rows, figures):
-    paired = {r["metric"]: r["value"] for r in rows if r["series"] == "paired"}
+    paired = _paired_rows(rows)
     lines = ["## Tier 2 — does the better MAP point forecast better?", "",
              "The question the README explicitly refuses to answer. Rolling-origin "
              "evaluation on cutoffs from `prophet.diagnostics.generate_cutoffs`, "
@@ -393,6 +489,13 @@ def tier2_section(rows, figures):
               " `rmse` and `smape`; including the three sparsity rows in the family"
               " changes none of it.", "",
               "**The better MAP point does forecast better** on this corpus.", ""]
+
+    lines += _corpus_note(rows)
+    import json as _json
+    _manifest = harness.EVALUATION / "corpus" / "m4_census_v1.json"
+    _strata = (sorted(_json.loads(_manifest.read_text())["series"])
+               if _manifest.exists() else [])
+    lines += _stratum_table(rows, _strata)
 
     coverage = collections.defaultdict(list)
     for row in rows:

@@ -26,8 +26,14 @@ Reported as **paired per-series differences**, because forecast errors are
 heavy-tailed across series and a mean over them measures the worst series rather
 than the method.
 """
+import itertools
+import json
+import os
 import tempfile
 import warnings
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, as_completed, wait
+from dataclasses import asdict
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -39,7 +45,6 @@ from harness import Measurement
 
 # Sized so the tier runs in minutes rather than hours: a rolling origin over a
 # handful of cutoffs, on a sample of each frequency.
-N_SERIES = 20
 HORIZONS = {"Weekly": ("52 W", "104 W", "52 W"), "Daily": ("90 D", "730 D", "180 D")}
 FREQUENCIES = ("Weekly", "Daily")
 
@@ -167,22 +172,172 @@ def _one_series(name, df, frequency, lib_path):
     return rows
 
 
-def collect(frequencies=FREQUENCIES, n_series=N_SERIES, lib_path=None, download=True):
-    lib_path = lib_path or harness.build_extension(tempfile.mkdtemp())
-    measurements = []
+def _measure(job):
+    """One series, in whatever process the pool put it in.
+
+    Top level and taking a single tuple because that is what a process pool can
+    pickle. Returns the series name alongside its rows so the caller can
+    checkpoint by name without trusting completion order.
+    """
+    name, frame, frequency, lib_path = job
+    return name, _one_series(name, frame, frequency, lib_path)
+
+
+def _checkpoint_path(directory, name):
+    return Path(directory) / f"{name}.json"
+
+
+def _save_checkpoint(directory, name, measurements):
+    """One series' rows, written as soon as they exist.
+
+    A census of 3008 series is roughly fifteen hours of fitting serially, and
+    the eventual target is M4 entire. A run that loses everything to one
+    failure at hour fourteen is not a run anybody repeats, so each series is
+    durable the moment it finishes and a restart picks up the rest (#164).
+    """
+    path = _checkpoint_path(directory, name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = [asdict(m) for m in measurements]
+    path.write_text(json.dumps(payload))
+
+
+def _load_checkpoint(directory, name):
+    rows = json.loads(_checkpoint_path(directory, name).read_text())
+    return [Measurement(**row) for row in rows]
+
+
+def _jobs(frequencies, manifest, lib_path, download):
     for frequency in frequencies:
-        series = list(corpora.m4(frequency, n_series=n_series,
-                                 seed=harness.SEED, download=download))
-        if not series:
-            print(f"  {frequency}: no corpus available, skipped")
-            continue
-        print(f"  {frequency}: {len(series)} series")
-        for index, (name, df) in enumerate(series, 1):
-            measurements += _one_series(name, df, frequency, lib_path)
-            if index % 5 == 0:
-                print(f"    {index}/{len(series)}")
+        for name, frame in corpora.m4_census(frequency, manifest,
+                                             download=download):
+            yield name, frame, frequency, lib_path
+
+
+def collect(frequencies=FREQUENCIES, lib_path=None, download=True,
+            workers=None, checkpoint=None, limit=None, manifest=None):
+    """The tier, over the frozen corpus, in parallel and resumably.
+
+    **The corpus is a census and it is pre-registered** (#164). Which series
+    are measured is decided by `evaluation/corpus/m4_census_v1.json`, written
+    before any of these results existed and carrying a digest of its own
+    membership. There is no `n_series` and no sampling seed any more, because
+    there is nothing to sample: every M4 Weekly and Daily series the protocol
+    can measure is in, all 3008.
+
+    **Parallel, because the unit of work is a whole series and they do not
+    interact.** Each worker fits both implementations over one series'
+    rolling-origin cutoffs. Submission is bounded rather than eager so the
+    parent holds a few frames rather than three thousand, which is what lets
+    the same code reach M4 entire.
+
+    **Deterministic regardless of worker count.** Every series is seeded from
+    `harness.SEED` inside `_one_series`, completion order is discarded by
+    sorting on the way out, and the paired summaries sort their differences by
+    series name before computing -- a median does not care, but a file that
+    differs between runs would, and this suite promises it does not.
+    """
+    lib_path = lib_path or harness.build_extension(tempfile.mkdtemp())
+    manifest = manifest or corpora.load_manifest()
+    workers = workers or max(1, (os.cpu_count() or 2) - 1)
+
+    jobs = _jobs(frequencies, manifest, lib_path, download)
+    if limit:
+        jobs = itertools.islice(jobs, limit)
+
+    done, measurements = {}, []
+    if checkpoint:
+        Path(checkpoint).mkdir(parents=True, exist_ok=True)
+
+    def record(name, rows):
+        done[name] = rows
+        if checkpoint:
+            _save_checkpoint(checkpoint, name, rows)
+
+    pending, submitted, finished = set(), 0, 0
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        for job in jobs:
+            name = job[0]
+            if checkpoint and _checkpoint_path(checkpoint, name).exists():
+                done[name] = _load_checkpoint(checkpoint, name)
+                finished += 1
+                continue
+            while len(pending) >= workers * 2:
+                completed, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in completed:
+                    record(*future.result())
+                    finished += 1
+                    if finished % 50 == 0:
+                        print(f"    {finished} series done")
+            pending.add(pool.submit(_measure, job))
+            submitted += 1
+        for future in as_completed(pending):
+            record(*future.result())
+            finished += 1
+
+    for name in sorted(done):
+        measurements += done[name]
+    print(f"  {finished} series measured "
+          f"({submitted} fitted, {finished - submitted} from checkpoints)")
+
+    measurements += _corpus_rows(manifest, done)
     measurements += _paired(measurements)
+    measurements += _paired_by_frequency(measurements, manifest)
     return measurements
+
+
+def _corpus_rows(manifest, done):
+    """What was actually measured, so the results can be tied to the manifest.
+
+    The digest lives in the manifest rather than here -- a `Measurement` holds
+    a float -- but the counts belong with the numbers they describe, and
+    `tests/test_corpus_census.py` checks that the set of series in the results
+    is exactly the set the manifest froze.
+    """
+    rows = [Measurement(2, "corpus", "all", "both", "series_measured",
+                        float(len(done)))]
+    for frequency, identifiers in sorted(manifest["series"].items()):
+        prefix = f"m4_{frequency.lower()}_"
+        rows.append(Measurement(2, "corpus", frequency, "both", "series_frozen",
+                                float(len(identifiers))))
+        rows.append(Measurement(2, "corpus", frequency, "both", "series_measured",
+                                float(sum(1 for name in done
+                                          if name.startswith(prefix)))))
+    return rows
+
+
+METRICS = ("mae", "rmse", "mape", "smape", "coverage", "interval_width",
+           "sum_abs_delta", "exact_zeros", "l1_penalty")
+
+
+def _differences(measurements, metric, keep=None):
+    """Per-series `ours - theirs` for one metric, in series order.
+
+    **Sorted by series name, which is not cosmetic.** Under a process pool the
+    completion order is whatever the scheduler did, and an unsorted list would
+    make this file differ between runs of the same corpus. A median does not
+    care; the promise that an unchanged rerun produces an unchanged diff does.
+    """
+    by_series = {}
+    for m in measurements:
+        if m.metric == metric and m.series not in ("paired", "corpus"):
+            if keep is None or keep(m.series):
+                by_series.setdefault(m.series, {})[m.implementation] = m.value
+    return [by_series[name]["analytic_prophet"] - by_series[name]["prophet"]
+            for name in sorted(by_series)
+            if len(by_series[name]) == 2]
+
+
+def _summarise(measurements, label, keep=None):
+    summaries = []
+    for metric in METRICS:
+        differences = _differences(measurements, metric, keep)
+        if len(differences) < 2:
+            continue
+        summary = metrics.paired_summary(differences)
+        for field in ("n", "median", "iqr_low", "iqr_high", "wins", "losses", "p_value"):
+            summaries.append(Measurement(2, "paired", label, "difference",
+                                         f"{metric}_{field}", summary[field]))
+    return summaries
 
 
 def _paired(measurements):
@@ -190,23 +345,24 @@ def _paired(measurements):
 
     Negative means we win, since every metric here is an error except coverage.
     """
-    by_series = {}
-    for m in measurements:
-        by_series.setdefault((m.series, m.metric), {})[m.implementation] = m.value
+    return _summarise(measurements, "all")
 
-    summaries = []
-    for metric in ("mae", "rmse", "mape", "smape", "coverage", "interval_width",
-                   "sum_abs_delta", "exact_zeros", "l1_penalty"):
-        differences = [v["analytic_prophet"] - v["prophet"]
-                       for (_, name), v in by_series.items()
-                       if name == metric and len(v) == 2]
-        if len(differences) < 2:
-            continue
-        summary = metrics.paired_summary(differences)
-        for field in ("n", "median", "iqr_low", "iqr_high", "wins", "losses", "p_value"):
-            summaries.append(Measurement(2, "paired", "all", "difference",
-                                         f"{metric}_{field}", summary[field]))
-    return summaries
+
+def _paired_by_frequency(measurements, manifest):
+    """The same summary within each stratum.
+
+    **At 3008 series the pooled p-value stops being the finding** (#164). Any
+    consistent difference clears every threshold at that n, so a reader who
+    takes significance as the headline learns nothing from the corpus getting
+    bigger. What a census buys is the right to ask where the difference holds,
+    and that is a per-stratum question.
+    """
+    rows = []
+    for frequency in sorted(manifest["series"]):
+        prefix = f"m4_{frequency.lower()}_"
+        rows += _summarise(measurements, frequency,
+                           keep=lambda name, prefix=prefix: name.startswith(prefix))
+    return rows
 
 
 harness.register(2, "accuracy", collect)
