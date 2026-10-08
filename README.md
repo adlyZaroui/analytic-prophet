@@ -6,9 +6,9 @@ A reimplementation of [Facebook Prophet](https://github.com/facebook/prophet)'s 
 engine that replaces Stan with a hand-derived, closed-form gradient and a small C++ core.
 
 It fits the same model, and it fits it better: our optimum is ahead of Prophet's by its
-own objective at every size measured, and on held-out M4 series our forecasts are more
-accurate. Fitting is faster and uses less memory, which is what the analytic gradient was
-for.
+own objective at every size measured, and on **36 held-out M4 series** our forecasts are
+more accurate — a median **0.45%** better in RMSE, lower on **25** of them. Fitting is
+faster and uses less memory, which is what the analytic gradient was for.
 
 **Status: early development.** The model is feature-complete against Prophet's, but there
 is no MCMC and no plotting, so this is not yet a drop-in replacement. See
