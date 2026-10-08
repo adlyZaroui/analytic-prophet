@@ -1,7 +1,9 @@
 # Deviations from Prophet
 
 Where this implementation differs from the original, split into decisions that
-were measured and settled, and gaps that are still open.
+were measured and settled, and behavioural differences that are still open. No *method*
+is missing on purpose and unaccounted for — [how far from a drop-in](#how-far-from-a-drop-in-enumerated)
+enumerates the surface, and #114 closed the last of those.
 
 Decisions taken from Prophet are marked `[fc]` for `python/prophet/forecaster.py` in
 facebook/prophet, as in [the model](model.md).

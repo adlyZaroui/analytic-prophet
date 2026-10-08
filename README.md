@@ -295,8 +295,9 @@ results and a generated report. One command regenerates everything.
 - **No plotting.** No `plot` or `plot_components`.
 - **Not a drop-in, and here is how far off.** Of Prophet's 40 public methods, 17 are the
   same, 8 are module-level functions here rather than methods, 15 are absent on purpose
-  and **none is a gap** — [#114](https://github.com/adlyZaroui/analytic-prophet/issues/114)
-  closed the last four. Enumerated member by member, with the attributes a fit sets, in
+  and **none is a missing method** — [#114](https://github.com/adlyZaroui/analytic-prophet/issues/114)
+  closed the last four. That is the *surface*; two behavioural differences are still open
+  and tracked, under [known differences](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/deviations.md#known-differences-from-prophet). Enumerated member by member, with the attributes a fit sets, in
   [how far from a drop-in](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/deviations.md#how-far-from-a-drop-in-enumerated).
 - **The held-out evidence is 36 series.** M4 has 100,000. Thirty-six weekly and daily
   series, rolling-origin, both sides on the same splits and the same scorer, is a
@@ -320,7 +321,7 @@ results and a generated report. One command regenerates everything.
 |---|---|
 | [The model](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/model.md) | what is fitted, term for term, and the proof that it is Stan's objective |
 | [The non-smooth objective](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/non-smooth-objective.md) | the central argument: where Prophet's optimizer stops short, and why |
-| [Deviations from Prophet](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/deviations.md) | deliberate divergences, and the gaps still open |
+| [Deviations from Prophet](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/deviations.md) | deliberate divergences, and the behavioural differences still open |
 | [Evaluation report](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md) | every measured number, generated from committed results |
 | [Benchmarks](https://github.com/adlyZaroui/analytic-prophet/tree/main/benchmark/) | the fast micro-benchmarks, for running against a change |
 | [Evaluation suite](https://github.com/adlyZaroui/analytic-prophet/tree/main/evaluation/) | the claim-level study and its methodology |

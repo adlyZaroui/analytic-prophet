@@ -13,7 +13,7 @@ The Laplace prior on `delta` puts `Σ|δⱼ|/τ` in the objective. That makes th
 the prior is what drives most changepoint rates to zero. L-BFGS assumes a smooth
 objective. This one is not.
 
-This caused three separate, independently-discovered failures here:
+This caused four separate, independently-discovered failures here:
 
 1. **liblbfgs** (the original C++ backend) terminated after ~2 iterations with
    `LBFGSERR_ROUNDING_ERROR`. More-Thuente narrows an interval of uncertainty until the
@@ -30,7 +30,15 @@ This caused three separate, independently-discovered failures here:
    **not** a percentage of Stan's `lp__`, where every margin in this file is a fraction
    of a percent. The two are different quantities on different scales and the
    percentages do not compare.
-3. **Stan itself**, as shipped in Prophet, stops short too — see below.
+3. **Stan's L-BFGS**, which is what Prophet runs by default, stops short too — and goes
+   on stopping short with its tolerances effectively removed. Developed below.
+4. **Stan's Newton**, which Prophet uses under 100 observations, also lands short, at
+   every size measured. That is the informative one: curvature is exactly what a kink
+   does not have, so a second-order method defeated in the same place says the problem
+   is not L-BFGS. Also below.
+
+The README lists the same four, splitting them as Prophet's own optimizer — item 3 — plus
+three others.
 
 ### The fix: a smooth reformulation
 

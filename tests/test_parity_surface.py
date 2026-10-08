@@ -301,8 +301,74 @@ def test_the_readme_quotes_the_register_correctly():
         f"README says {deliberate} deliberate, the register has {tally[DELIBERATE]}")
 
     # and the gap count, which is the one that went stale
+    #
+    # The phrase changed in #151. "none is a gap" collided with the
+    # Documentation blurb's "the gaps still open", which is about open
+    # *behavioural* differences and is true -- deviations.md tracks two. This
+    # claim is about the method surface, so it says "missing method" and the
+    # two no longer read as a contradiction. The assertion is unchanged: the
+    # README has to state the register's gap count, whatever it is.
     if tally[GAP] == 0:
-        assert "none is a gap" in one_line, (
+        assert "none is a missing method" in one_line, (
             "the register has no gaps left and the README does not say so")
     else:
         assert f"{tally[GAP]} are gaps" in one_line
+
+
+# -- the word "gap", and the count of failures (#151) ----------------------
+
+NON_SMOOTH = REPO / "docs" / "non-smooth-objective.md"
+DEVIATIONS = REPO / "docs" / "deviations.md"
+
+
+def test_the_readme_does_not_say_none_is_a_gap_and_gaps_are_open():
+    """[#151] It said both. The Documentation blurb called deviations.md
+    "deliberate divergences, and the gaps still open"; twenty lines earlier the
+    "what this is not" bullet said "none is a gap".
+
+    The blurb was right -- `deviations.md` has a "Known differences" section
+    headed "Tracked, deliberate, and not yet closed", with two live items. The
+    bullet was right too, about a different thing: no *method* is missing. So
+    the fix was to stop using one word for both, not to delete either claim.
+    """
+    readme = " ".join((REPO / "README.md").read_text().split())
+
+    assert "none is a missing method" in readme, (
+        "the method-surface claim no longer distinguishes itself from an open "
+        "behavioural difference")
+    assert "none is a gap" not in readme, "the ambiguous phrasing is back"
+    assert "behavioural differences still open" in readme, (
+        "the blurb no longer says what deviations.md actually tracks")
+
+
+def test_the_open_differences_the_readme_points_at_are_really_there():
+    """The blurb and the bullet both now assert that behavioural differences
+    remain open. If that section is ever emptied, they become wrong."""
+    text = DEVIATIONS.read_text()
+    start = text.index("## Known differences from Prophet")
+    section = text[start:text.index("\n## ", start + 1)]
+
+    assert "not yet closed" in section
+    items = [line for line in section.splitlines() if line.startswith("- **")]
+    assert len(items) >= 1, (
+        "no open differences are listed any more, so the README should stop "
+        f"saying there are: {section[:200]}")
+
+
+def test_both_files_count_the_same_pre_reformulation_failures():
+    """The README's third item was Stan's Newton; the doc's was "Stan itself",
+    developed below as *both* its L-BFGS and its Newton. Both were true and
+    they enumerated differently, so a reader following the link found a list
+    whose third element was a different experiment."""
+    doc = " ".join(NON_SMOOTH.read_text().split())
+    readme = " ".join((REPO / "README.md").read_text().split())
+
+    assert "four separate, independently-discovered failures" in doc
+    for optimizer in ("liblbfgs", "scipy's L-BFGS-B", "Stan's L-BFGS", "Stan's Newton"):
+        assert optimizer in doc, f"the doc's list no longer covers {optimizer}"
+
+    # The README splits the same four as "Prophet's own optimizer" plus three.
+    assert "and so did three others" in readme
+    assert "Stan's own Newton" in readme
+    assert "The README lists the same four" in doc, (
+        "the doc no longer reconciles its count with the README's")
