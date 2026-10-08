@@ -48,7 +48,8 @@ solution. Both fit paths now use this.
 ### Prophet's optimizer stops short on this objective
 
 Scoring both solutions under **Stan's own log density**, fitted on the same model
-specification (Prophet's own `t_change`, so `delta` is comparable):
+specification (Prophet's own `t_change`, so `delta` is comparable). **`T = 2905` — the
+whole Peyton Manning series — with yearly seasonality only:**
 
 | | Stan `lp__` (higher is better) |
 |---|---|
@@ -56,7 +57,31 @@ specification (Prophet's own `t_change`, so `delta` is comparable):
 | this implementation | **7797.2523** |
 | difference | **+2.34 nats** |
 
-Prophet does not reach that value even with its stopping rule effectively removed. Run
+**That is one configuration, and the margin is not the same in others.** The README quotes
+the default — yearly *and* weekly — where the same 2905 rows give **+0.36 nats**, six
+times smaller. Same series, same protocol, same scorer; only the width of the model
+differs:
+
+| T | default (yearly + weekly) | yearly only |
+|---|---|---|
+| 300 | +1.99 | — |
+| 1000 | +2.76 | +1.26 |
+| 2905 | **+0.36** | **+2.34** |
+
+Neither column is monotone in `T`, and they do not agree on the ordering: at `T = 1000`
+the wider model shows the larger margin, at `T = 2905` the narrower one does. As a
+fraction of `lp__` the default column does fall steadily — 0.244% at `T = 300`, 0.0967%
+at `T = 1000`, 0.0045% at `T = 2905`, a factor of 54 across the range — but that is one
+slice of two and the other moves the other way. **No mechanism for the *size* of the
+margin is claimed here.** What these five cells support is its *direction*, which holds in
+every one of them.
+
+The yearly-only column has no `T = 300` entry deliberately. 300 days is below Prophet's
+own 730-day threshold for yearly seasonality, so forcing it on there is the configuration
+[withdrawn at the end of this file](#one-claim-that-was-withdrawn) rather than a
+measurement of anything.
+
+Prophet does not reach our 7797.2523 even with its stopping rule effectively removed. Run
 with `tol_rel_obj=1` (one machine epsilon), `tol_obj=1e-20`, `tol_grad=1e-20`,
 `tol_param=1e-20`, it runs 1252 iterations, reaches **7796.96** — still 0.29 nats short
 — and then terminates with:
