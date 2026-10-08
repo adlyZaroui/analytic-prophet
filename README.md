@@ -174,16 +174,42 @@ identical changepoints, so only the optimizer differs:
 Prophet's own `generate_cutoffs` and scored by its own `performance_metrics`, so neither
 the splits nor the definitions are ours:
 
-| | median difference | p |
-|---|---|---|
-| MAE | −1.914 | 0.0063 |
-| RMSE | −2.967 | 0.0183 |
-| MAPE | −0.0007 | 0.0013 |
-| coverage | **+0.0026** | 0.0025 |
-| interval width | +1.350 | 0.470 |
+Differences are paired per series and tested with the **Wilcoxon signed-rank test**
+(`scipy.stats.wilcoxon`), which is why each row is a median rather than a mean: forecast
+errors across series are heavy-tailed, and one series here differs by about 35% while
+most differ by under 2%.
+
+| | median difference | lower on | p | Holm p |
+|---|---|---|---|---|
+| MAE ⁑ | −1.914 | 26/36 | 0.0063 | 0.0253 |
+| RMSE ⁑ | −2.967 | 25/36 | 0.0183 | 0.0418 |
+| MAPE | −0.0007 | 26/36 | 0.0013 | 0.0077 |
+| sMAPE | −0.0004 | 24/36 | 0.0139 | 0.0418 |
+| coverage | **+0.0026** | — | 0.0025 | 0.0127 |
+| interval width ⁑ | +1.350 | — | 0.4697 | 0.4697 |
 
 More accurate points, and **higher** coverage at statistically indistinguishable width —
-negative is better for the error rows, positive for coverage.
+negative is better for the error rows, positive for coverage, and the count column is
+blank where a win is not defined.
+
+**⁑ These rows are in the series' own units**, and the 36 M4 series differ in level by
+orders of magnitude, so their medians rank direction and are *not* pooled effect sizes —
+a unit of MAE means something different on every series. Read magnitude from the
+scale-free rows, `MAPE`, `sMAPE` and `coverage`, or from the counts. (MASE, the M4
+standard, would be the better answer and needs the tier re-run with a new metric.)
+
+**`Holm p` adjusts across all six comparisons**, Holm rather than Bonferroni because these
+metrics are computed on the same forecasts and are far from independent. **Five of the six
+survive**; interval width does not, which claims nothing it was not already declining to
+claim at a raw p of 0.47.
+
+*The coverage row and the calibration figures below are different quantities.* This table
+reports **+0.0026**, the median of the per-series *differences*; mean coverage is 0.356
+against 0.341, a difference of **+0.015**, about six times larger. A median of paired
+differences is not the difference of means, and the two separating this far says the
+per-series differences are skewed — which they are: **33 of the 36 differ by less than
+0.02**, two by more than +0.05 (the largest +0.33), and none by more than 0.05 the other
+way.
 → [forecast accuracy](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md#tier-2--does-the-better-map-point-forecast-better)
 
 **Two uncertainty samplers, and Prophet's default is the approximate one.** This is
@@ -267,9 +293,10 @@ results and a generated report. One command regenerates everything.
   series, rolling-origin, both sides on the same splits and the same scorer, is a
   defensible first pass and it is what every accuracy claim here rests on — but it is a
   small sample for a forecasting result, and the showcase figure ranks within the
-  **11** of them where a Prophet-shaped model fits at all. The direction has survived
-  multiplicity adjustment on five metrics; the magnitude should be read as "measured on
-  this corpus" rather than as a property of the method.
+  **11** of them where a Prophet-shaped model fits at all. Five of the six comparisons
+  survive Holm adjustment across the family; the magnitude should be read as "measured on
+  this corpus" rather than as a property of the method, and three of the six rows are in
+  the series' own units rather than in anything poolable.
 - **The intervals are not well calibrated — in either implementation.** On the M4 corpus
   the nominal 80% interval contains about a third of the points it claims four fifths of
   — mean coverage **0.341** for Prophet and **0.356** for this implementation. That is a property of the model on long
