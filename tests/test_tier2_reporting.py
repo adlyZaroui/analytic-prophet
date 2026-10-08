@@ -157,3 +157,111 @@ def test_the_readme_frames_the_corpus_size_as_a_limitation():
     assert "36 series" in section
     assert "100,000" in section
     assert "**11**" in section, "the showcase's effective sample is not mentioned"
+
+
+# -- the same table in the README (#148) -----------------------------------
+#
+# #124 fixed all of this in report.md and none of it reached the README, which
+# carries the same five numbers. The two pages then disagreed about how to read
+# them: the report named the test, marked the raw-unit rows, showed Holm and
+# reconciled the two coverage figures, and the README did none of it. These
+# recompute the README's table from the committed results, so it cannot drift
+# from the report again -- which it has now done twice.
+
+README = REPO / "README.md"
+
+
+@pytest.fixture(scope="module")
+def readme():
+    return " ".join(README.read_text().split())
+
+
+@pytest.fixture(scope="module")
+def readme_table():
+    """`{label: (median, p, holm)}` parsed out of the README's accuracy table."""
+    rows = {}
+    for line in README.read_text().splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) != 5 or cells[0] in ("", "---"):
+            continue
+        label = cells[0].replace("⁑", "").replace("*", "").strip()
+        try:
+            rows[label] = (float(cells[1].replace("−", "-").replace("*", "")),
+                           cells[2], float(cells[3]), float(cells[4]))
+        except ValueError:
+            continue
+    return rows
+
+
+README_TO_METRIC = {"MAE": "mae", "RMSE": "rmse", "MAPE": "mape", "sMAPE": "smape",
+                    "coverage": "coverage", "interval width": "interval_width"}
+
+
+def test_the_readme_names_the_test_and_the_adjustment(readme):
+    assert "Wilcoxon signed-rank" in readme
+    assert "scipy.stats.wilcoxon" in readme
+    assert "Holm" in readme, "the adjustment is claimed but not named"
+
+
+def test_every_number_in_the_readme_table_is_the_committed_one(readme_table, paired):
+    from report import TIER2_COMPARISONS, holm
+
+    adjusted = holm({m: paired[f"{m}_p_value"] for m in TIER2_COMPARISONS})
+    assert set(README_TO_METRIC) <= set(readme_table), (
+        f"the README table no longer has every comparison: {sorted(readme_table)}")
+
+    for label, metric in README_TO_METRIC.items():
+        median, _wins, raw, adj = readme_table[label]
+        assert median == pytest.approx(paired[f"{metric}_median"], abs=5e-4), label
+        assert raw == pytest.approx(paired[f"{metric}_p_value"], abs=5e-5), label
+        assert adj == pytest.approx(adjusted[metric], abs=5e-5), (
+            f"{label}: README says Holm {adj}, the results give {adjusted[metric]:.4f}")
+
+
+def test_the_readme_quotes_the_win_counts_it_can_check(readme_table, paired):
+    """The scale-free summary the raw medians are not.
+
+    Checked in each metric's own row, not as a substring of the file. `MAE` and
+    `MAPE` both read 26/36, so "is 26/36 somewhere in the README" passes when
+    one of them has been altered to something else -- which is what the first
+    version of this did.
+    """
+    for label, metric in (("MAE", "mae"), ("RMSE", "rmse"), ("MAPE", "mape"),
+                          ("sMAPE", "smape")):
+        wins, n = int(paired[f"{metric}_wins"]), int(paired[f"{metric}_n"])
+        assert readme_table[label][1] == f"{wins}/{n}", (
+            f"README says {label} is lower on {readme_table[label][1]}; "
+            f"the results say {wins}/{n}")
+
+
+def test_the_readme_marks_its_raw_unit_rows(readme):
+    """MAE, RMSE and interval width are in the series' own units, and the 36
+    series differ in level by orders of magnitude."""
+    assert readme.count("⁑") >= 4, "the raw-unit marker and its footnote"
+    assert "in the series' own units" in readme
+    assert "not* pooled effect sizes" in readme or "not pooled effect sizes" in readme
+
+
+def test_the_readme_reconciles_its_two_coverage_figures(readme):
+    assert "median of the per-series" in readme
+    assert "33 of the 36" in readme
+
+
+def test_the_readme_skew_claim_is_the_one_the_data_supports():
+    """Recomputed, not copied from the report -- the point of this issue is
+    that copying is how the README went stale."""
+    import statistics
+
+    by_series = {}
+    for row in csv.DictReader(open(TIER2)):
+        if row["metric"] == "coverage" and row["series"] != "paired":
+            by_series.setdefault(row["series"], {})[row["implementation"]] = float(row["value"])
+    diffs = [v["analytic_prophet"] - v["prophet"]
+             for v in by_series.values() if len(v) == 2]
+
+    readme = " ".join(README.read_text().split())
+    assert f"{sum(1 for d in diffs if abs(d) < 0.02)} of the {len(diffs)}" in readme
+    assert sum(1 for d in diffs if d > 0.05) == 2
+    assert not [d for d in diffs if d < -0.05], (
+        "a series now differs by more than 0.05 the other way; the README says none does")
+    assert statistics.median(diffs) == pytest.approx(0.0026, abs=5e-5)
