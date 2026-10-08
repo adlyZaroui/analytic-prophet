@@ -230,3 +230,84 @@ def test_the_readme_does_not_count_the_files_it_does_not_name():
     assert not re.search(r"[Tt]he other (one|two|three|four|five|six|seven|\d+)", text), (
         "the Layout paragraph counts the modules it does not name again; that "
         "count has been wrong twice")
+
+
+# -- the [fc] marker in the documentation (#150) ---------------------------
+#
+# `[fc]` marks a decision taken from Prophet's `forecaster.py`. #132 removed it
+# from the README, where it had drifted into a second meaning and in one place
+# named the wrong file. The same two faults were still in docs/: the single use
+# in non-smooth-objective.md pointed at `CmdStanPyBackend.fit`, which lives in
+# Prophet's models.py, and deviations.md used it five times without defining
+# it. The marker is only worth having if it means one thing, so these check
+# both halves -- that a file using it says what it is, and that what it points
+# at is actually there.
+
+DOCS = Path(__file__).parent.parent / "docs"
+FC_DEFINITION = "`python/prophet/forecaster.py`"
+
+
+def _fc_uses(text):
+    """`[fc]` markers paired with the first backticked symbol that follows.
+
+    The convention is "`[fc]` then the symbol", sometimes across a line break,
+    so this looks ahead a little rather than requiring them adjacent.
+
+    The occurrence inside the definition sentence is not a use and is skipped,
+    which is a distinction worth making rather than working around: a file that
+    defines the marker names a *file*, and every other occurrence names a
+    *symbol* in it.
+    """
+    found = []
+    for match in re.finditer(r"\[fc\]", text):
+        window = text[match.end():match.end() + 160]
+        if FC_DEFINITION in window[:60]:      # the definition, not a use
+            continue
+        symbol = re.search(r"`([A-Za-z_][\w.]*)`", window)
+        found.append(symbol.group(1) if symbol else None)
+    return found
+
+
+@pytest.mark.parametrize("path", sorted(DOCS.glob("*.md")), ids=lambda p: p.name)
+def test_a_doc_using_fc_says_what_it_means(path):
+    text = path.read_text()
+    if "[fc]" not in text:
+        pytest.skip("does not use the marker")
+
+    assert FC_DEFINITION in text, (
+        f"{path.name} uses `[fc]` without defining it; a reader arriving from "
+        "the README has no way to resolve it")
+
+
+@pytest.mark.parametrize("path", sorted(DOCS.glob("*.md")), ids=lambda p: p.name)
+def test_every_fc_marker_names_a_symbol(path):
+    """A marker with nothing identifiable after it cannot be checked, so the
+    convention is that one always follows."""
+    uses = _fc_uses(path.read_text())
+    if not uses:
+        pytest.skip("does not use the marker")
+
+    assert None not in uses, (
+        f"{path.name} has an `[fc]` with no backticked symbol after it")
+
+
+def test_what_fc_points_at_is_in_prophets_forecaster(prophet_class):
+    """The fault that got through twice: the marker naming the wrong file.
+
+    `[fc]` means `forecaster.py` specifically. In the README it had been used
+    for `model_to_json` (prophet/serialize.py, #132) and in
+    non-smooth-objective.md for `CmdStanPyBackend.fit` (prophet/models.py).
+    Both read as typos and were. Checked against the installed package.
+    """
+    import os
+
+    source = open(os.path.join(os.path.dirname(inspect.getfile(prophet_class)),
+                               "forecaster.py")).read()
+    wrong = []
+    for path in sorted(DOCS.glob("*.md")):
+        for symbol in _fc_uses(path.read_text()):
+            if symbol and symbol.split(".")[-1] not in source:
+                wrong.append(f"{path.name}: {symbol}")
+
+    assert wrong == [], (
+        f"marked `[fc]` but not in Prophet's forecaster.py: {wrong}")

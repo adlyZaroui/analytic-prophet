@@ -3,6 +3,9 @@
 Where this implementation differs from the original, split into decisions that
 were measured and settled, and gaps that are still open.
 
+Decisions taken from Prophet are marked `[fc]` for `python/prophet/forecaster.py` in
+facebook/prophet, as in [the model](model.md).
+
 [← back to the README](../README.md)
 
 ---
