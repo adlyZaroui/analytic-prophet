@@ -265,3 +265,51 @@ def test_the_readme_skew_claim_is_the_one_the_data_supports():
     assert not [d for d in diffs if d < -0.05], (
         "a series now differs by more than 0.05 the other way; the README says none does")
     assert statistics.median(diffs) == pytest.approx(0.0026, abs=5e-5)
+
+
+# -- the figure the lede quotes (#153) -------------------------------------
+
+def _relative_rmse_differences():
+    """Per-series `(ours - prophet) / prophet` for RMSE, from committed results.
+
+    Scale-free, which is why this is the figure the lede quotes: #148
+    established that the raw medians rank direction and are not poolable across
+    36 series differing in level by orders of magnitude.
+    """
+    by_series = {}
+    for row in csv.DictReader(open(TIER2)):
+        if row["metric"] == "rmse" and row["series"] != "paired":
+            by_series.setdefault(row["series"], {})[row["implementation"]] = float(row["value"])
+    return [(v["analytic_prophet"] - v["prophet"]) / v["prophet"]
+            for v in by_series.values() if len(v) == 2]
+
+
+def test_the_lede_carries_the_magnitude_and_the_scope(readme):
+    """[#153] "on held-out M4 series our forecasts are more accurate" stood 69
+    lines above the number that sizes it and 168 above the table. A reader who
+    stopped at the lede took away "more accurate" with no sense that it is
+    half a percent at the median."""
+    lede = readme[:readme.index("**Status: early development.**")]
+
+    assert "0.45%" in lede, "the lede no longer states the magnitude"
+    assert "36 held-out M4 series" in lede, "the lede no longer states the scope"
+    assert "25" in lede, "the lede no longer states how many series it wins on"
+
+
+def test_every_place_quoting_the_rmse_advantage_agrees_with_the_results(readme):
+    """The lede and the showcase paragraph both quote it, so both are checked
+    against the CSV rather than against each other."""
+    import statistics
+
+    relative = _relative_rmse_differences()
+    advantage = -statistics.median(relative) * 100
+    wins = sum(1 for d in relative if d < 0)
+
+    assert readme.count("0.45%") >= 2, (
+        "the RMSE advantage is quoted in fewer places than expected; if one was "
+        "removed this test should be narrowed deliberately")
+    assert advantage == pytest.approx(0.45, abs=0.005), (
+        f"the committed results give a {advantage:.4f}% advantage; the README "
+        "says 0.45% in every place it is quoted")
+    assert wins == 25, f"ours is lower on {wins} of {len(relative)}, not 25"
+    assert f"**25** of them" in readme or f"{wins} of" in readme
