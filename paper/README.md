@@ -50,9 +50,45 @@ main.tex              preamble, title, abstract
 sections/             one file per section
 references.bib        bibliography
 experiments/          the scripts behind every number and figure
+stan/                 Prophet's Stan program and the modified copies (#183)
 generated/            their output — macros and tables the .tex includes
 figures/              generated figures
 ```
+
+## Modified copies of Prophet's Stan program
+
+Three experiments change Prophet's program rather than call it: the
+smooth-surrogate control (#168) and the fixed-σ halves of the multi-start (#169)
+and the τ path (#171). Stan cannot hold a parameter fixed at run time, so each
+needs a different program. They live in `stan/`, beside Prophet's own
+`prophet.stan` copied verbatim, so that each diff is its documentation:
+
+| program | the change |
+|---|---|
+| `prophet_fixed_sigma.stan` | `sigma_obs` moved from `parameters` to `data` |
+| `prophet_smooth.stan` | `\|δ\|` replaced by `√(δ² + ε²) − ε`, with `ε` as data |
+| `prophet_fixed_sigma_smooth.stan` | both |
+
+`experiments/stan_runner.py` compiles them and fits them the way
+`CmdStanPyBackend.fit` does — the data and starting point captured from a real
+`Prophet.fit`, Newton below 100 observations and L-BFGS above, 10⁴ iterations,
+the Newton fall-back — so the program is the only thing that differs. Executables
+are cached under `~/.cache/analytic-prophet/stan/`, keyed by a hash of the
+source.
+
+They need **CmdStan 2.37.0**, the version Prophet bundles, and the runner refuses
+any other: a different version changes the math library, and then #168 no longer
+varies only the smoothness. The CmdStan inside the `prophet` wheel runs Prophet's
+model but cannot compile another, so it has to be installed:
+
+```bash
+python -c "import cmdstanpy; cmdstanpy.install_cmdstan(version='2.37.0')"
+```
+
+`tests/test_paper_stan_variants.py` checks, before any variant is trusted, that
+the unmodified program compiled here reproduces Prophet's binary — the same
+optimum, `lp__` and gradient — and that each variant changes the density by
+exactly what its diff says. Those tests skip without CmdStan.
 
 Every experiment for the paper lives under `experiments/`. The one exception is
 the evaluation corpus (#164), which also serves the general evaluation of this
