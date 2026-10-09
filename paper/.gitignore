@@ -1,0 +1,13 @@
+# LaTeX build products. The source is what is versioned and what arXiv takes;
+# the PDF is rebuilt, not committed.
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.toc
+*.synctex.gz
+main.pdf
+arxiv.tar.gz

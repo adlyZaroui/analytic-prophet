@@ -1,0 +1,58 @@
+\section{An exact reformulation}
+\label{sec:reformulation}
+
+Write each rate as the difference of two non-negative parts,
+$\delta_j = \delta_j^+ - \delta_j^-$ with $\delta_j^+, \delta_j^- \ge 0$, and
+replace $\lvert\delta_j\rvert$ in \eqref{eq:objective} by $\delta_j^+ + \delta_j^-$.
+The penalty becomes linear, so the objective is smooth, and the non-smoothness
+moves into simple bound constraints that L-BFGS-B handles natively. The
+reformulation is standard for $\ell_1$ problems; what needs stating is that it is
+exact here, and why.
+
+\begin{proposition}
+\label{prop:exact}
+Let $F(\delta)$ be any function of $\delta$ alone, and $\tau > 0$. If
+$(\delta^{+\star}, \delta^{-\star})$ minimises
+$F(\delta^+ - \delta^-) + \tau^{-1}\sum_j(\delta_j^+ + \delta_j^-)$ over
+$\delta^+, \delta^- \ge 0$, then $\delta^{+\star}_j\,\delta^{-\star}_j = 0$ for
+every $j$, and $\delta^\star = \delta^{+\star} - \delta^{-\star}$ minimises
+$F(\delta) + \tau^{-1}\lVert\delta\rVert_1$, with the same optimal value.
+\end{proposition}
+
+\begin{proof}
+Suppose $c = \min(\delta^{+\star}_j, \delta^{-\star}_j) > 0$ for some $j$.
+Subtracting $c$ from both leaves $\delta^\star_j$, and therefore $F$, unchanged
+while reducing the penalty by $2c/\tau > 0$, contradicting optimality. So every
+pair has a zero member, and then $\delta^{+\star}_j + \delta^{-\star}_j =
+\lvert\delta^\star_j\rvert$. For any feasible point,
+$\delta_j^+ + \delta_j^- \ge \lvert\delta_j^+ - \delta_j^-\rvert$, so the split
+objective is bounded below by the $\ell_1$ objective at the corresponding
+$\delta$, with equality on the complementary pairs. Every $\ell_1$ point is
+reached by such a pair, so the two problems share their optimal value and
+$\delta^\star$ attains it.
+\end{proof}
+
+The proposition makes no use of convexity and holds for any likelihood, so it
+covers Prophet's multiplicative and logistic configurations too, where several
+other arguments in this paper do not apply.
+
+\begin{remark}
+\label{rem:exponential}
+If $\delta^+_j, \delta^-_j$ are independent exponential variables with rate
+$1/\tau$, then $\delta^+_j - \delta^-_j \sim \mathrm{Laplace}(0, \tau)$, and the
+split objective is exactly the negative log of the \emph{joint} posterior over
+$(\delta^+, \delta^-)$ under those priors. The reformulation therefore has a
+probabilistic reading as well as an algebraic one: it preserves Prophet's prior
+as a marginal.
+
+That reading is reassuring, but it is \emph{not} why the MAP estimate is
+unchanged. The mode of a joint density is not in general the mode of its
+marginal, so preserving the prior as a marginal would not by itself imply that
+the two problems share a minimiser. They do here because of
+\cref{prop:exact} --- complementarity --- and not because of the distributional
+identity.
+\end{remark}
+
+\pending{\#176}{state the conditions on $F$ precisely for the full model, where
+$F$ also depends on $(k, m, \beta, \sigma)$; the argument is unchanged because
+those enter $F$ and not the penalty}

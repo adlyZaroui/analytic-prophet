@@ -1,0 +1,82 @@
+% Prophet does not solve the problem it specifies.
+% Preprint, intended for arXiv stat.CO.  Build with `make` in this directory.
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage[round,sort&compress]{natbib}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,
+            urlcolor=blue!50!black]{hyperref}
+\usepackage[capitalise,noabbrev]{cleveref}
+
+% Identifiers and paths, breakable at / _ . and - so a long name never overruns
+% the margin. hyperref loads `url`, which provides \path.
+\def\UrlBreaks{\do\/\do\_\do\.\do\-}
+\newcommand{\code}[1]{\path{#1}}
+
+% Every number the prose quotes is generated from the committed results by
+% experiments/quote_numbers.py. None is typed here by hand.
+\input{generated/numbers}
+
+% A result the paper states but has not yet measured.  It renders visibly so
+% that nothing unmeasured can reach a submitted version unnoticed; the build
+% refuses to produce a submission while any remain (see Makefile).
+\newcommand{\pending}[2]{\textcolor{red!70!black}{[\textbf{pending #1}: #2]}}
+
+\theoremstyle{plain}
+\newtheorem{proposition}{Proposition}
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+
+\newcommand{\T}{\ensuremath{T}}
+\newcommand{\lp}{\ensuremath{\mathrm{lp}}}
+
+\title{Prophet Does Not Solve the Problem It Specifies:\\
+       A Non-Differentiable Posterior, Smooth Optimizers,\\
+       and an Exact Fix}
+\author{Adly Zaroui}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Prophet is a widely deployed forecasting library that fits its model by maximum
+a~posteriori estimation. The posterior it specifies places a Laplace prior on
+the trend's changepoint rates, which makes the objective non-differentiable
+exactly where its optimum tends to lie, at rates of zero. Prophet delegates the
+optimization to Stan's L-BFGS and Newton methods, which are documented as methods
+for smooth objectives. We show that, as a consequence, Prophet does not solve the
+problem it specifies: under Prophet's own posterior density its solutions score
+below the optimum at every series length measured, and its changepoint rates
+never reach the exact zeros the optimum has.
+\pending{\#169, \#170}{the first-order optimality certificate and the multi-start
+scatter under convexity}
+The defect is diagnosable, is consistent with user reports in Prophet's issue
+tracker going back several years, and is removed by an exact reformulation that
+splits each rate into non-negative parts. On a frozen census of \CensusSeries{}
+held-out M4 series, the corrected optimum forecasts better on \RmseWinRate\% of
+them, by a median of \RmseAdvantage\% in RMSE: the optimization defect is real,
+and its cost to forecast accuracy is usually small.
+\end{abstract}
+
+\input{sections/introduction}
+\input{sections/model}
+\input{sections/smooth}
+\input{sections/evidence}
+\input{sections/reformulation}
+\input{sections/consequences}
+\input{sections/limitations}
+\input{sections/related}
+\input{sections/reproducibility}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}
