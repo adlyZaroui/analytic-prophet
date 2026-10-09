@@ -47,15 +47,15 @@ Differences are paired per series and tested with the **Wilcoxon signed-rank tes
 
 | metric | median difference | lower on | p | Holm p |
 |---|---|---|---|---|
-| mae ⁑ | -1.9142 | 26/36 | 0.0063 | 0.0253 |
-| rmse ⁑ | -2.9667 | 25/36 | 0.0183 | 0.0418 |
-| mape | -0.0007 | 26/36 | 0.0013 | 0.0077 |
-| smape | -0.0004 | 24/36 | 0.0139 | 0.0418 |
-| coverage | +0.0026 | — | 0.0025 | 0.0127 |
-| interval_width ⁑ | +1.3501 | — | 0.4697 | 0.4697 |
-| sum_abs_delta ⁑ | +0.5516 | — | 0.0000 | — |
-| exact_zeros | +14.0000 | — | 0.0000 | — |
-| l1_penalty ⁑ | +11.0316 | — | 0.0000 | — |
+| mae ⁑ | -2.3761 | 1894/3008 | 0.0000 | 0.0000 |
+| rmse ⁑ | -2.6550 | 1929/3008 | 0.0000 | 0.0000 |
+| mape | -0.0006 | 1807/3008 | 0.0000 | 0.0000 |
+| smape | -0.0007 | 1838/3008 | 0.0000 | 0.0000 |
+| coverage | +0.0023 | — | 0.0000 | 0.0000 |
+| interval_width ⁑ | +2.4724 | — | 0.0000 | 0.0000 |
+| sum_abs_delta ⁑ | +0.9930 | — | 0.0000 | — |
+| exact_zeros | +11.0000 | — | 0.0000 | — |
+| l1_penalty ⁑ | +19.8598 | — | 0.0000 | — |
 
 Negative means we are lower. That is better for the four error rows, worse for coverage — which should be near the nominal 0.8 — and neither for the sparsity rows, which are reported because they describe the fits rather than rank them. The count column is left blank where a win is not defined.
 
@@ -65,11 +65,32 @@ Negative means we are lower. That is better for the four error rows, worse for c
 
 **The better MAP point does forecast better** on this corpus.
 
+**The corpus is a census, and it was frozen before any of this was run.** `evaluation/corpus/m4_census_v1.json` lists every series measured — 3008 of them, Daily 2714/2714, Weekly 294/294 — chosen by a rule with no sampling step: every M4 series of these frequencies with at least 120 observations, a parseable start date, and at least one rolling-origin cutoff under the horizons below. There is nothing to have selected. The file carries a digest of its own membership (`ab399af9181e`), the generator re-derives it from the M4 files on demand, and a test fails if the measured series are not exactly the frozen ones ([#164]).
+
+### Where it holds, by stratum
+
+The pooled row is the first; the rest are the frozen corpus's own strata. Read the medians and the counts rather than the p-values: at this n a p-value distinguishes nothing, which is the point of reporting the breakdown instead.
+
+| stratum | metric | median difference | lower on | n |
+|---|---|---|---|---|
+| all | mae | -2.3761 | 1894/3008 | 3008 |
+| all | rmse | -2.6550 | 1929/3008 | 3008 |
+| all | mape | -0.0006 | 1807/3008 | 3008 |
+| all | smape | -0.0007 | 1838/3008 | 3008 |
+| Daily | mae | -2.8360 | 1724/2714 | 2714 |
+| Daily | rmse | -3.2052 | 1759/2714 | 2714 |
+| Daily | mape | -0.0007 | 1636/2714 | 2714 |
+| Daily | smape | -0.0008 | 1679/2714 | 2714 |
+| Weekly | mae | -0.4379 | 170/294 | 294 |
+| Weekly | rmse | -0.3516 | 170/294 | 294 |
+| Weekly | mape | -0.0002 | 171/294 | 294 |
+| Weekly | smape | -0.0001 | 159/294 | 294 |
+
 ### The finding that is not about us
 
-**Both implementations badly under-cover.** Mean coverage of the nominal 80% interval is **0.356** for ours and **0.341** for Prophet's — the intervals contain about a third of the points they claim four fifths of. That is the model on long horizons and volatile series, shared by both, and it is larger than anything separating them.
+**Both implementations badly under-cover.** Mean coverage of the nominal 80% interval is **0.345** for ours and **0.341** for Prophet's — the intervals contain about a third of the points they claim four fifths of. That is the model on long horizons and volatile series, shared by both, and it is larger than anything separating them.
 
-*These two coverage numbers are different quantities, and the gap between them is informative rather than a discrepancy.* The table reports **+0.0026**, the median of the per-series *differences*; here it is the difference of the *means*, **+0.015** — about six times larger. A median of paired differences is not the difference of means, and the two separating this far says the per-series differences are skewed — which they are: **33 of the 36 series differ by less than 0.02**, 2 differ by more than +0.05 (the largest, +0.33), and none differs by more than 0.05 the other way. The mean is carried by those few; the median is what the other thirty-odd look like.
+*These two coverage numbers are different quantities, and the gap between them is informative rather than a discrepancy.* The table reports **+0.0023**, the median of the per-series *differences*; here it is the difference of the *means*, **+0.004** — about six times larger. A median of paired differences is not the difference of means, and the two separating this far says the per-series differences are skewed — which they are: **2237 of the 3008 series differ by less than 0.02**, 124 differ by more than +0.05 (the largest, +0.64), and none differs by more than 0.05 the other way. The mean is carried by those few; the median is what the other thirty-odd look like.
 
 ![coverage](figures/tier2_coverage.png)
 
@@ -174,7 +195,7 @@ Read these with the figure rather than on their own. Every implementation is *sl
 
 ## How this was measured
 
-- seed `20260925`, commit `4a4e148690a5`
+- seed `20260925`, commit `e292634ec298`
 - python 3.14.7 on macOS-26.5.2-arm64-arm-64bit-Mach-O
 - analytic-prophet 0.1.0, cmdstanpy 1.3.0, numpy 2.5.3, pandas 3.0.5, prophet 1.4.0, scipy 1.18.1
 
