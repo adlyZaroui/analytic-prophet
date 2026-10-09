@@ -1,0 +1,46 @@
+\section{The model, and where it is not differentiable}
+\label{sec:model}
+
+Prophet models a series $y_1,\dots,y_T$ as a trend plus seasonal and regressor
+terms. With $S$ changepoints at times $s_1,\dots,s_S$ and indicators
+$a_j(t) = \mathbf{1}[t \ge s_j]$, the linear trend is
+\begin{equation}
+  g(t) = \bigl(k + a(t)^\top \delta\bigr)\,t + \bigl(m + a(t)^\top \gamma\bigr),
+  \qquad \gamma_j = -s_j \delta_j ,
+  \label{eq:trend}
+\end{equation}
+so each $\delta_j$ changes the slope at $s_j$ while $\gamma$ keeps the trend
+continuous there. With $K$ additive regressor columns $X$ the prediction is
+$\hat y = g(t) + X\beta$, and the negative log posterior Prophet's Stan program
+specifies is
+\begin{equation}
+  -\log p(\theta \mid y) =
+    T \log\sigma + \frac{\lVert y - \hat y\rVert^2}{2\sigma^2}
+    + \frac{k^2}{2\sigma_k^2} + \frac{m^2}{2\sigma_m^2}
+    + \frac{1}{\tau}\sum_{j=1}^{S}\lvert\delta_j\rvert
+    + \frac{\lVert\beta\rVert^2}{2\sigma_\beta^2}
+    + \frac{\sigma^2}{2\sigma_\varepsilon^2},
+  \label{eq:objective}
+\end{equation}
+with $\theta = (k, m, \delta, \beta, \sigma)$ and $\tau$ the
+\code{changepoint_prior_scale}, $0.05$ by default.
+
+Every term of \eqref{eq:objective} is smooth except one. The Laplace prior
+contributes $\tau^{-1}\sum_j \lvert\delta_j\rvert$, whose derivative in $\delta_j$
+jumps from $-1/\tau$ to $+1/\tau$ at $\delta_j = 0$. The objective therefore has a
+kink along each coordinate hyperplane $\{\delta_j = 0\}$.
+
+That would be harmless if optima avoided those hyperplanes. They do not. The
+Laplace prior is chosen so that most changepoints contribute nothing, and a
+minimiser of \eqref{eq:objective} with $\tau = 0.05$ typically has many
+$\delta_j = 0$ exactly: on the full Peyton Manning series the optimum has
+\pending{\#175}{the count of exact zeros at the optimum, generated}.
+The optimum lies on the non-differentiable set by design.
+
+\paragraph{Convexity.}
+For linear growth and additive seasonality, $\hat y$ is linear in
+$(k, m, \delta, \beta)$ by \eqref{eq:trend}. With $\sigma$ held fixed,
+\eqref{eq:objective} is then a convex quadratic plus the convex
+$\tau^{-1}\lVert\delta\rVert_1$, so the problem is convex and its minimiser is
+unique. Multiplicative seasonality and logistic growth both break this, and
+several arguments in \cref{sec:evidence} are stated only for the convex case.

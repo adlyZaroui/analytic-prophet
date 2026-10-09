@@ -1,0 +1,24 @@
+\section{Why smooth optimizers fail there}
+\label{sec:smooth}
+
+L-BFGS builds a curvature model from successive gradient differences and relies on
+a line search that brackets a point satisfying the Wolfe conditions
+\citep{nocedal2006numerical}. Both assume a gradient that varies continuously.
+Across a kink the gradient differences carry no information about curvature, and
+the bracketing interval can collapse without a sufficient-decrease point inside it.
+\citet{lewis2013nonsmooth} show that BFGS applied to nonsmooth functions often
+continues to make progress, which is part of why the failure here is quiet: it is
+not a clean stop but a slow approach that ends short of the optimum under a
+stopping rule designed for smooth problems.
+
+Newton's method fares no better for a different reason. It needs the Hessian, and
+along $\{\delta_j = 0\}$ the curvature of $\lvert\delta_j\rvert$ is not small but
+undefined. A second-order method defeated at the same place as a first-order one
+is evidence that the obstacle is the objective rather than any one algorithm,
+which is why \cref{sec:evidence} reports both.
+
+Methods built for this structure exist. Orthant-wise limited-memory quasi-Newton
+\citep[OWL-QN;][]{andrew2007scalable} handles an $\ell_1$ term directly by
+restricting each step to an orthant. The approach taken in \cref{sec:reformulation}
+is older and simpler: remove the non-smoothness from the objective rather than
+from the method.

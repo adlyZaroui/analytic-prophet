@@ -1,0 +1,81 @@
+\section{Evidence that Prophet does not solve its objective}
+\label{sec:evidence}
+
+Each piece of evidence below answers a different objection. A gap in the
+objective could be a difference in what is being fitted rather than how; a
+difference in where two optimizers stop could reflect non-uniqueness rather than
+non-convergence; and a failure could be an artefact of one algorithm rather than
+of the objective. The controls are chosen to rule each of those out in turn.
+
+\subsection{The optimum, under Prophet's own density}
+\label{sec:evidence:lp}
+
+We score both solutions with Stan's own log density, evaluated through
+\code{CmdStanModel.log_prob} on Prophet's compiled model, fitting both on
+Prophet's own changepoint locations so that only the optimizer differs. On the
+Peyton Manning series in Prophet's default configuration the corrected optimum
+is higher at every length measured, by \LpMarginShort{} nats at $T = 300$,
+\LpMarginMid{} at $T = 1000$ and \LpMarginLong{} at $T = 2905$.
+
+As a share of the posterior the margin falls by a factor of \LpDecline{} across
+that range, from \LpPercentShort\% to \LpPercentLong\%. It is not a clean decline:
+the absolute margin rises before it falls, and it depends on the width of the
+model as much as its length --- with yearly seasonality alone the margin at
+$T = 2905$ is $+2.34$ nats rather than \LpMarginLong.
+\pending{\#173}{the margin against $T$ on a fine grid, both configurations, as a
+figure}
+We state the direction, which holds in every configuration measured, and claim no
+mechanism for the size.
+
+\subsection{First-order optimality}
+\label{sec:evidence:kkt}
+
+\pending{\#170}{the minimum-norm subgradient at both solutions, per series. Under
+the convex configuration of \cref{sec:model} a near-zero residual certifies
+optimality and a large one certifies its absence; the prediction is a residual of
+order $1/\tau = 20$ wherever Prophet leaves $\delta_j$ small but nonzero.}
+
+\subsection{Scatter under convexity}
+\label{sec:evidence:multistart}
+
+\pending{\#169}{Prophet refitted from many random initialisations with $\sigma$
+held fixed. The objective is then convex and its minimiser unique, so any scatter
+in the solutions is non-convergence, established without reference to this
+implementation. Repeated with $\sigma$ free, where joint convexity fails and
+scatter proves nothing, and reported beside it for that reason.}
+
+\subsection{Smoothing the prior inside Stan}
+\label{sec:evidence:surrogate}
+
+\pending{\#168}{Prophet's Stan program with $\lvert\delta\rvert$ replaced by
+$\sqrt{\delta^2 + \varepsilon^2}$, refitted with Stan's own L-BFGS across
+$\varepsilon$, holding the optimizer, data, initialisation and software stack
+fixed. Reported as two curves: the distance from each smoothed problem's own
+optimum, and the distance of that optimum from the $\ell_1$ one.}
+
+\subsection{A negative control: removing the trend}
+\label{sec:evidence:flat}
+
+Under flat growth the likelihood never sees $k$ or $\delta$, so nothing pulls
+against the prior and every changepoint rate goes to zero. Both implementations
+then reach exactly the same point: identical $\lp$ to Stan's full printed
+precision at every length measured, and every one of the 25 rates exactly zero ---
+for Prophet as much as for this implementation.
+
+This establishes that the two implementations fit the same model, so the margin
+under linear growth is optimizer behaviour and not a difference of specification.
+It does \emph{not} isolate the kink. Flat growth removes the ill-conditioned
+$k$--$\delta$ directions and, at the same time, leaves the objective in $\delta$ as
+$\tau^{-1}\sum_j\lvert\delta_j\rvert$ alone, a function every method minimises
+exactly. The tie is consistent with either mechanism and the smoothing control of
+\cref{sec:evidence:surrogate} is what separates them.
+
+\subsection{One second-order method, two parameterisations}
+\label{sec:evidence:newton}
+
+A Newton method on the natural parameterisation, entering the Laplace prior
+through its subgradient as Stan's Newton does, oscillated across $\delta_j = 0$ and
+remained 66 nats short after Prophet's full budget of 10\,000 iterations. The same
+code on the reformulation of \cref{sec:reformulation} converged in under a hundred.
+\pending{\#174}{regenerate this comparison from a committed script; it currently
+exists only as a recorded result}

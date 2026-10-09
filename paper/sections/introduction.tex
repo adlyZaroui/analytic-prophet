@@ -1,0 +1,53 @@
+\section{Introduction}
+\label{sec:introduction}
+
+Prophet \citep{taylor2018forecasting} fits a decomposable time-series model by
+maximum a~posteriori (MAP) estimation. Its authors specified the model as a Stan
+program \citep{carpenter2017stan} and delegated the optimization to Stan, which
+runs L-BFGS by default and Newton's method on short series. The posterior they
+specified places a Laplace prior on the rates by which the trend changes slope,
+and a Laplace prior contributes a term $\sum_j |\delta_j|/\tau$ to the negative log
+posterior. That term is not differentiable where any $\delta_j = 0$ --- and the
+optimum sits there, because sending most rates to zero is precisely what the
+prior is for.
+
+Stan documents its optimizers as methods for smooth objectives and refers the
+reader to \citet{nocedal2006numerical}. Nothing about this arrangement is an error.
+The model is reasonable, the optimizers are correctly implemented and correctly
+documented, and the delegation is the ordinary way a modelling language is meant
+to be used. \emph{The interaction is the finding}: a smooth method asked to locate
+an optimum on a non-differentiable set does not do so, and nothing in the
+interface between the two reports that it has not.
+
+\paragraph{What this paper claims.}
+Prophet specifies a posterior whose optimum sits on a non-differentiable set,
+delegates its optimization to solvers documented for smooth objectives, and
+consequently does not solve the problem it specifies. This is diagnosable, has
+user-visible consequences reported in Prophet's issue tracker for several years,
+and is removable by an exact reformulation; we report its consequences for the
+optimum and for predictive performance.
+
+\paragraph{What it does not claim.}
+That quasi-Newton methods struggle on $\ell_1$-penalised objectives is textbook
+\citep{nocedal2006numerical,lewis2013nonsmooth}, and orthant-wise methods exist
+precisely because of it \citep{andrew2007scalable}. We did not discover that
+phenomenon and do not present it as new. The contribution is narrower and, we
+think, more useful for being stated precisely:
+\begin{enumerate}
+  \item the diagnosis of the phenomenon in a specific, heavily deployed system;
+  \item controls that isolate the mechanism rather than merely exhibit a gap ---
+        smoothing the prior inside Prophet's own Stan model, running one
+        second-order method on two parameterisations, and a negative control in
+        which the non-smooth directions are removed;
+  \item an exact fix; and
+  \item the attribution of long-standing user reports to it, each cited for what
+        it shows rather than for what would be convenient.
+\end{enumerate}
+
+\paragraph{The size of it.}
+The defect is real and its cost to forecast accuracy is usually small. On a
+frozen census of \CensusSeries{} held-out M4 series the corrected optimum
+forecasts better on \RmseWinRate\% of them, by a median of \RmseAdvantage\% in
+RMSE. We treat that result as corroboration that the optimization gap matters
+somewhat in practice, not as the thesis, and \cref{sec:limitations} is explicit
+about where it is weakest.
