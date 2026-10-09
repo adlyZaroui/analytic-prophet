@@ -127,19 +127,60 @@ def test_the_runner_reads_cmdstans_version_from_its_makefile(tmp_path):
 
 @pytest.fixture(scope="module")
 def cmdstan(prophet_comparison):
-    import cmdstanpy
     try:
-        cmdstanpy.cmdstan_path()
-    except ValueError:
-        pytest.skip(f"CmdStan is not installed; the paper's Stan variants need "
-                    f"{runner.CMDSTAN_VERSION} (cmdstanpy.install_cmdstan(version="
-                    f"'{runner.CMDSTAN_VERSION}'))")
-    return runner.cmdstan_path()
+        return runner.cmdstan_path()
+    except runner.CmdStanMissing as missing:
+        pytest.skip(f"the paper's Stan variants need CmdStan {runner.CMDSTAN_VERSION}: "
+                    f"{missing}")
+
+
+def test_prophets_own_cmdstan_is_never_taken_for_an_installation(cmdstan):
+    """Constructing a Prophet points cmdstanpy at the CmdStan in the wheel, which
+    says 2.37.0 and cannot compile. The runner must look past it -- on CI's
+    Prophet job, trusting cmdstanpy here turned a skip into a failed build."""
+    import cmdstanpy
+    from prophet import Prophet
+
+    Prophet()
+    bundled = Path(cmdstanpy.cmdstan_path())
+    assert not (bundled / "src" / "cmdstan" / "main.cpp").exists()
+    assert runner.cmdstan_path() != bundled
+
+
+def test_a_variant_compiles_after_prophet_has_claimed_cmdstanpy(cmdstan, tmp_path,
+                                                                monkeypatch):
+    """The same trap end to end: a cold build, in a process where Prophet has
+    already set cmdstanpy's path, and Prophet's path given back afterwards."""
+    import cmdstanpy
+    from prophet import Prophet
+
+    Prophet()
+    before = cmdstanpy.cmdstan_path()
+    monkeypatch.setattr(runner, "_build_directory", lambda: tmp_path)
+    compiled = runner.model("fixed_sigma")
+    assert Path(compiled.exe_file).exists()
+    assert cmdstanpy.cmdstan_path() == before
 
 
 def test_cmdstan_is_the_version_prophet_bundles(cmdstan):
     """Asserted, not assumed: another version changes the math library."""
     assert runner._makefile_version(cmdstan) == runner.CMDSTAN_VERSION
+
+
+def test_a_cmdstan_of_another_version_is_refused(tmp_path, monkeypatch):
+    (tmp_path / "src" / "cmdstan").mkdir(parents=True)
+    (tmp_path / "src" / "cmdstan" / "main.cpp").write_text("")
+    (tmp_path / "makefile").write_text("CMDSTAN_VERSION := 2.36.0\n")
+    monkeypatch.setenv("CMDSTAN", str(tmp_path))
+    with pytest.raises(RuntimeError, match="Prophet bundles 2.37.0"):
+        runner.cmdstan_path()
+
+
+def test_no_installation_is_reported_as_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv("CMDSTAN", str(tmp_path / "nowhere"))
+    monkeypatch.setattr(runner.Path, "home", lambda: tmp_path)
+    with pytest.raises(runner.CmdStanMissing):
+        runner.cmdstan_path()
 
 
 @pytest.fixture(scope="module", params=[60, 300])

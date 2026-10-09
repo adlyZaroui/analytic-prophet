@@ -34,6 +34,7 @@ here reproduces Prophet's own binary before any variant is trusted.
 """
 import hashlib
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -58,23 +59,40 @@ NEWTON_BELOW = 100
 ITERATIONS = int(1e4)
 
 
-def cmdstan_path():
-    """CmdStan's location, refusing any version but the one Prophet bundles."""
-    import cmdstanpy
+class CmdStanMissing(RuntimeError):
+    """No CmdStan installation that can compile a program."""
 
-    try:
-        path = Path(cmdstanpy.cmdstan_path())
-    except ValueError as error:
-        raise RuntimeError(
-            f"CmdStan {CMDSTAN_VERSION} is not installed; install it with "
-            f"cmdstanpy.install_cmdstan(version='{CMDSTAN_VERSION}')") from error
-    version = _makefile_version(path)
-    if version != CMDSTAN_VERSION:
-        raise RuntimeError(
-            f"CmdStan at {path} is {version}, but Prophet bundles {CMDSTAN_VERSION}; "
-            f"a different version changes the math library, so a variant would "
-            f"differ from Prophet's program by more than its diff")
-    return path
+
+def cmdstan_path():
+    """The full CmdStan installation the variants compile with.
+
+    **Not `cmdstanpy.cmdstan_path()`.** Constructing a `Prophet` points
+    cmdstanpy at the CmdStan inside the prophet wheel, which runs Prophet's
+    model but holds none of the sources a build needs -- and reports 2.37.0, so
+    a version check alone would let it through. After any `Prophet()` in the
+    process, cmdstanpy's answer is that copy. So the installation is found here
+    instead: `$CMDSTAN`, else cmdstanpy's default location for this version, and
+    it has to have the sources.
+
+    Raises `CmdStanMissing` when there is none, and RuntimeError for any version
+    but the one Prophet bundles.
+    """
+    candidates = [Path(os.environ["CMDSTAN"])] if os.environ.get("CMDSTAN") else []
+    candidates.append(Path.home() / ".cmdstan" / f"cmdstan-{CMDSTAN_VERSION}")
+    for path in candidates:
+        if not (path / "src" / "cmdstan" / "main.cpp").exists():
+            continue
+        version = _makefile_version(path)
+        if version != CMDSTAN_VERSION:
+            raise RuntimeError(
+                f"CmdStan at {path} is {version}, but Prophet bundles {CMDSTAN_VERSION}; "
+                f"a different version changes the math library, so a variant would "
+                f"differ from Prophet's program by more than its diff")
+        return path
+    raise CmdStanMissing(
+        f"no CmdStan {CMDSTAN_VERSION} installation that can compile (looked in "
+        f"{', '.join(str(path) for path in candidates)}); install it with "
+        f"cmdstanpy.install_cmdstan(version='{CMDSTAN_VERSION}')")
 
 
 def _makefile_version(path):
@@ -97,9 +115,9 @@ def model(variant):
     stale executable is never run. Compiled in the cache rather than beside the
     source, which keeps build products out of the repository.
     """
-    from cmdstanpy import CmdStanModel
+    import cmdstanpy
 
-    cmdstan_path()
+    installation = cmdstan_path()
     source = STAN / VARIANTS[variant]
     digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
     directory = _build_directory() / f"{source.stem}-{digest}"
@@ -108,7 +126,18 @@ def model(variant):
     if not stan_file.exists():
         shutil.copyfile(source, stan_file)
     logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
-    return CmdStanModel(stan_file=str(stan_file))
+    # cmdstanpy compiles with whatever its global path says; point it at the
+    # full installation for the build and give Prophet its own back afterwards
+    try:
+        previous = cmdstanpy.cmdstan_path()
+    except ValueError:
+        previous = None
+    cmdstanpy.set_cmdstan_path(str(installation))
+    try:
+        return cmdstanpy.CmdStanModel(stan_file=str(stan_file))
+    finally:
+        if previous:
+            cmdstanpy.set_cmdstan_path(previous)
 
 
 def prophet_inputs(prophet_model, df, **fit_kwargs):
