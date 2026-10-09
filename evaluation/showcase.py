@@ -45,7 +45,7 @@ FIGURE = harness.RESULTS / "figures" / "showcase.png"
 # implementations miss badly shows the difficulty of the series rather than
 # the difference between two optimizers. So the ranking is taken over the
 # series where the model works at all: both implementations within this sMAPE
-# held out. 0.10 keeps 11 of the 36 and is stated in the caption, because a
+# held out. 0.10 keeps 658 of the 3008 and is stated in the caption, because a
 # threshold nobody can see is a thumb on the scale.
 FITS_AT_ALL = 0.10
 

@@ -6,8 +6,9 @@ A reimplementation of [Facebook Prophet](https://github.com/facebook/prophet)'s 
 engine that replaces Stan with a hand-derived, closed-form gradient and a small C++ core.
 
 It fits the same model, and it fits it better: our optimum is ahead of Prophet's by its
-own objective at every size measured, and on **36 held-out M4 series** our forecasts are
-more accurate — a median **0.45%** better in RMSE, lower on **25** of them. Fitting is
+own objective at every size measured, and on a frozen census of **3,008 held-out M4
+series** our forecasts are more accurate — a median **0.40%** better in RMSE, lower on
+**1,929** of them. Fitting is
 faster and uses less memory, which is what the analytic gradient was for.
 
 **Status: early development.** The model is feature-complete against Prophet's, but there
@@ -64,24 +65,25 @@ neither model saw. Each coloured line is continuous through the cutoff: to its l
 model's fit to data it was shown, to its right its forecast. The actual values over the
 horizon are drawn in black, and the bands are the nominal 80% intervals.
 
-They are **chosen by rule, not by eye.** Of Tier 2's 36 series, the ranking is taken over
-the **11 where a Prophet-shaped model fits at all** — both implementations within 10%
+They are **chosen by rule, not by eye.** Of Tier 2's 3,008 series, the ranking is taken over
+the **658 where a Prophet-shaped model fits at all** — both implementations within 10%
 sMAPE held out — because a panel where both miss badly shows the difficulty of the series
 rather than the difference between two optimizers. Within those: the series where our
 cross-validated RMSE beats Prophet's by the most, the one at the median of that ranking,
 and the one where Prophet beats us by the most.
 
-**The top panel is the mechanism; the bottom two are the typical case.** Prophet's
-optimizer stops short on the non-differentiable objective, and that costs most where the
-trend is doing the work — a regime change, as in the top panel, where the L1 kink is
-load-bearing. Elsewhere both implementations fit nearly the same model and the two lines
-sit on top of each other. Across all 36 series the median RMSE advantage is **0.45%**, and
-past two years of history predictions differ by **0.17–0.59%** of the series scale. A
-reader who runs this on their own data should expect the bottom two panels, not the top
-one.
+**The top panel is the mechanism; the middle one is the typical case; the bottom one is
+us losing.** Prophet's optimizer stops short on the non-differentiable objective, and that
+costs most where the trend is doing the work — a regime change, as in the top panel, where
+the L1 kink is load-bearing and we are **54.6%** better. The median of that ranking is
+**+0.1%**: both implementations fit nearly the same model and the two lines sit on top of
+each other. And on the worst series for us Prophet is **78.7%** better, which is the
+honest other end of the distribution.
+Across all 3,008 series the median RMSE advantage is **0.40%**, ours lower on 64% of them.
+A reader who runs this on their own data should expect the middle panel.
 
 **Neither implementation's intervals are well calibrated.** On this corpus they contain
-about a third of the held-out points they claim four fifths of — mean coverage **0.356**
+about a third of the held-out points they claim four fifths of — mean coverage **0.345**
 for ours and **0.341** for Prophet's. That is a property of the model on long horizons, it
 is shared, and it is larger than anything separating the two.
 
@@ -180,7 +182,7 @@ in every configuration measured is the direction.
 
 → [the correctness gate](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md#tier-0--are-the-two-fitting-the-same-model)
 
-**Better forecasts, held out.** 36 M4 series, rolling-origin evaluation on cutoffs from
+**Better forecasts, held out.** A frozen census of 3,008 M4 series, rolling-origin evaluation on cutoffs from
 Prophet's own `generate_cutoffs` and scored by its own `performance_metrics`, so neither
 the splits nor the definitions are ours:
 
@@ -191,35 +193,41 @@ most differ by under 2%.
 
 | | median difference | lower on | p | Holm p |
 |---|---|---|---|---|
-| MAE ⁑ | −1.914 | 26/36 | 0.0063 | 0.0253 |
-| RMSE ⁑ | −2.967 | 25/36 | 0.0183 | 0.0418 |
-| MAPE | −0.0007 | 26/36 | 0.0013 | 0.0077 |
-| sMAPE | −0.0004 | 24/36 | 0.0139 | 0.0418 |
-| coverage | **+0.0026** | — | 0.0025 | 0.0127 |
-| interval width ⁑ | +1.350 | — | 0.4697 | 0.4697 |
+| MAE ⁑ | −2.3761 | 1894/3008 | 8.7e-48 | 3.5e-47 |
+| RMSE ⁑ | −2.6550 | 1929/3008 | 1.2e-51 | 5.9e-51 |
+| MAPE | −0.0006 | 1807/3008 | 1.4e-29 | 2.9e-29 |
+| sMAPE | −0.0007 | 1838/3008 | 8.8e-30 | 2.6e-29 |
+| coverage | **+0.0023** | — | 3.7e-19 | 3.7e-19 |
+| interval width ⁑ | +2.4724 | — | 5.2e-106 | 3.1e-105 |
 
 More accurate points, and **higher** coverage at statistically indistinguishable width —
 negative is better for the error rows, positive for coverage, and the count column is
 blank where a win is not defined.
 
-**⁑ These rows are in the series' own units**, and the 36 M4 series differ in level by
+**⁑ These rows are in the series' own units**, and the 3,008 M4 series differ in level by
 orders of magnitude, so their medians rank direction and are *not* pooled effect sizes —
 a unit of MAE means something different on every series. Read magnitude from the
 scale-free rows, `MAPE`, `sMAPE` and `coverage`, or from the counts. (MASE, the M4
 standard, would be the better answer and needs the tier re-run with a new metric.)
 
 **`Holm p` adjusts across all six comparisons**, Holm rather than Bonferroni because these
-metrics are computed on the same forecasts and are far from independent. **Five of the six
-survive**; interval width does not, which claims nothing it was not already declining to
-claim at a raw p of 0.47.
+metrics are computed on the same forecasts and are far from independent. **All six survive
+— and that is a fact about n, not about the method.** At 3,008 paired series a Wilcoxon
+test rejects on any consistent direction whatever its size, so read the medians and the win
+rates. The p-values are here because omitting them would look like hiding them.
+
+One of these changed its meaning rather than its precision when the corpus grew: at 36
+series **interval width** was indistinguishable and declined to claim anything, and across
+the census our intervals are **wider by a median 2.47** in the series' own units. That is
+unambiguous and it is a loss.
 
 *The coverage row and the calibration figures below are different quantities.* This table
-reports **+0.0026**, the median of the per-series *differences*; mean coverage is 0.356
-against 0.341, a difference of **+0.015**, about six times larger. A median of paired
-differences is not the difference of means, and the two separating this far says the
-per-series differences are skewed — which they are: **33 of the 36 differ by less than
-0.02**, two by more than +0.05 (the largest +0.33), and none by more than 0.05 the other
-way.
+reports **+0.0023**, the median of the per-series *differences*; mean coverage is 0.345
+against 0.341, a difference of **+0.0040**, 1.7 times larger. A median of paired
+differences is not the difference of means, and the two separating says the per-series
+differences are skewed — though not one-sidedly: **2,237 of the 3,008 differ by less than
+0.02**, 124 by more than +0.05 and 87 by more than 0.05 the other way. At 36 series that
+far tail had no members at all, and the README said so.
 → [forecast accuracy](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md#tier-2--does-the-better-map-point-forecast-better)
 
 **Two uncertainty samplers, and Prophet's default is the approximate one.** This is
@@ -300,17 +308,17 @@ results and a generated report. One command regenerates everything.
   closed the last four. That is the *surface*; two behavioural differences are still open
   and tracked, under [known differences](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/deviations.md#known-differences-from-prophet). Enumerated member by member, with the attributes a fit sets, in
   [how far from a drop-in](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/deviations.md#how-far-from-a-drop-in-enumerated).
-- **The held-out evidence is 36 series.** M4 has 100,000. Thirty-six weekly and daily
-  series, rolling-origin, both sides on the same splits and the same scorer, is a
-  defensible first pass and it is what every accuracy claim here rests on — but it is a
-  small sample for a forecasting result, and the showcase figure ranks within the
-  **11** of them where a Prophet-shaped model fits at all. Five of the six comparisons
-  survive Holm adjustment across the family; the magnitude should be read as "measured on
-  this corpus" rather than as a property of the method, and three of the six rows are in
-  the series' own units rather than in anything poolable.
+- **The held-out evidence is 3,008 series, and they are two of M4's six frequencies.**
+  M4 has 100,000. This is every weekly and daily series the protocol can measure — a
+  census, frozen before the run, so there is nothing to have selected — but monthly,
+  quarterly, yearly and hourly are absent, and the showcase figure ranks within the
+  **658** of them where a Prophet-shaped model fits at all. All six comparisons survive
+  Holm adjustment, which at this n says only that the direction is consistent: read the
+  medians and the win rates instead, and note that three of the six rows are in the
+  series' own units rather than in anything poolable.
 - **The intervals are not well calibrated — in either implementation.** On the M4 corpus
   the nominal 80% interval contains about a third of the points it claims four fifths of
-  — mean coverage **0.341** for Prophet and **0.356** for this implementation. That is a property of the model on long
+  — mean coverage **0.341** for Prophet and **0.345** for this implementation. That is a property of the model on long
   horizons and volatile series, it is shared, and it is larger than anything separating
   the two. Nothing above should be read without it.
 

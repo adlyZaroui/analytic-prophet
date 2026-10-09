@@ -116,8 +116,11 @@ def test_the_caption_reports_the_median_advantage_correctly(readme, advantages):
 
 
 def test_the_caption_reports_the_series_count_correctly(readme, advantages):
-    quoted = re.search(r"all (\d+) series the median", readme)
-    assert quoted and int(quoted.group(1)) == len(advantages)
+    # The README writes 3,008 for a reader; the count is 3008.
+    quoted = re.search(r"all ([\d,]+) series the median", readme)
+    assert quoted and int(quoted.group(1).replace(",", "")) == len(advantages), (
+        f"the caption gives {quoted.group(1) if quoted else 'no count'}, the "
+        f"results score {len(advantages)} series")
 
 
 def test_the_caption_reports_coverage_as_the_report_does(readme):
