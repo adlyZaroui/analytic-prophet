@@ -43,16 +43,27 @@ before the tiers rather than after, since a run against a manifest that no
 longer matches its own rule produces numbers about an unknown set of series.
 
 **Running it.** The work is one series per worker and the series do not
-interact, so it parallelises almost linearly: measured at **1.5 s per weekly
-series and 0.8 s per daily one on ten cores**, the full census projects to
-roughly **45 minutes**. Results are checkpointed per series under the cache,
-keyed by commit, so an interrupted run resumes and editing the code starts a
-fresh one by itself. `--no-resume` ignores them.
+interact, so it parallelises almost linearly. **The full census took 5.6 hours
+on eight workers** — about 60 seconds of fitting per series, held steady across
+the run. Results are checkpointed per series under the cache, keyed by commit,
+so an interrupted run resumes and editing the code starts a fresh one by
+itself. `--no-resume` ignores them.
 
-**On the way to M4 entire.** The same machinery reaches 100,000 series at about
-42 hours on ten cores; what it needs is the other four frequencies added to
-`CENSUS_HORIZONS` with their own protocols, after which the manifest is
-re-frozen and the count grows. Nothing here assumes two frequencies.
+That figure replaces a projection of 45 minutes, which was wrong by a factor of
+seven and is worth recording because of how. It was timed on the first series
+the loader yields, and the head of the M4 Daily file is short series with
+**1.8** rolling-origin cutoffs each where the stratum averages **15.2**. Cost
+here scales with cutoffs, not observations, so a few dozen series off the top
+of a file are the cheapest corpus there is. Time a random sample.
+
+**On the way to M4 entire.** At 60 seconds a series, 100,000 series is about
+1,600 worker-hours — eight days on eight workers, or a day on sixty-four. The
+machinery reaches it unchanged; what it needs is the other four frequencies
+added to `CENSUS_HORIZONS` with their own protocols, after which the manifest is
+re-frozen and the count grows. The per-series cost is dominated by the cutoff
+count, so the other lever is the protocol itself: fewer, wider rolling windows
+would cut it directly, and is a decision to make deliberately rather than to
+discover.
 
 ## Why it exists
 

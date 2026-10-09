@@ -43,27 +43,31 @@ The trend's sparsity is reported as Σ|δ| and as the count of **exact** zeros r
 
 The question the README explicitly refuses to answer. Rolling-origin evaluation on cutoffs from `prophet.diagnostics.generate_cutoffs`, scored by `prophet.diagnostics.performance_metrics` — both sides get the same splits and the same scorer.
 
-Differences are paired per series and tested with the **Wilcoxon signed-rank test** (`scipy.stats.wilcoxon`), which is why the summary is a median rather than a mean: forecast errors across series are heavy-tailed, and one series here differs by about 35% while most differ by under 2%.
+Differences are paired per series and tested with the **Wilcoxon signed-rank test** (`scipy.stats.wilcoxon`), which is why the summary is a median rather than a mean: forecast errors across series are heavy-tailed, and the worst series here differs by hundreds of percent while most differ by a couple, differ by under 2%.
 
 | metric | median difference | lower on | p | Holm p |
 |---|---|---|---|---|
-| mae ⁑ | -2.3761 | 1894/3008 | 0.0000 | 0.0000 |
-| rmse ⁑ | -2.6550 | 1929/3008 | 0.0000 | 0.0000 |
-| mape | -0.0006 | 1807/3008 | 0.0000 | 0.0000 |
-| smape | -0.0007 | 1838/3008 | 0.0000 | 0.0000 |
-| coverage | +0.0023 | — | 0.0000 | 0.0000 |
-| interval_width ⁑ | +2.4724 | — | 0.0000 | 0.0000 |
-| sum_abs_delta ⁑ | +0.9930 | — | 0.0000 | — |
-| exact_zeros | +11.0000 | — | 0.0000 | — |
-| l1_penalty ⁑ | +19.8598 | — | 0.0000 | — |
+| mae ⁑ | -2.3761 | 1894/3008 | 8.7e-48 | 3.5e-47 |
+| rmse ⁑ | -2.6550 | 1929/3008 | 1.2e-51 | 5.9e-51 |
+| mape | -0.0006 | 1807/3008 | 1.4e-29 | 2.9e-29 |
+| smape | -0.0007 | 1838/3008 | 8.8e-30 | 2.6e-29 |
+| coverage | +0.0023 | — | 3.7e-19 | 3.7e-19 |
+| interval_width ⁑ | +2.4724 | — | 5.2e-106 | 3.1e-105 |
+| sum_abs_delta ⁑ | +0.9930 | — | &lt;1e-308 | — |
+| exact_zeros | +11.0000 | — | &lt;1e-308 | — |
+| l1_penalty ⁑ | +19.8598 | — | &lt;1e-308 | — |
 
 Negative means we are lower. That is better for the four error rows, worse for coverage — which should be near the nominal 0.8 — and neither for the sparsity rows, which are reported because they describe the fits rather than rank them. The count column is left blank where a win is not defined.
 
-**⁑ These rows are in the series' own units**, and the 36 M4 series differ in level by orders of magnitude. The median of a raw difference across them ranks direction and is *not* a pooled effect size — a unit of MAE means something different on every series. Read magnitude from the scale-free rows: `mape`, `smape` and `coverage`. (MASE, the M4 standard, would be the better answer and needs the tier re-run with a new metric; it is not here.)
+**⁑ These rows are in the series' own units**, and the 3008 M4 series differ in level by orders of magnitude. The median of a raw difference across them ranks direction and is *not* a pooled effect size — a unit of MAE means something different on every series. Read magnitude from the scale-free rows: `mape`, `smape` and `coverage`. (MASE, the M4 standard, would be the better answer and needs the tier re-run with a new metric; it is not here.)
 
-**On testing nine things at once.** The comparisons are the six rows above the sparsity readouts, and the `Holm p` column adjusts across them. Holm rather than Bonferroni because these metrics are computed on the same forecasts and are far from independent: Bonferroni is valid but needlessly blunt, and Holm is valid under arbitrary dependence and uniformly more powerful. **5 of the 5 comparative metrics survive adjustment** — `mae`, `rmse`, `mape`, `smape`, `coverage` — and `interval_width` does not, which claims nothing it was not already declining to claim at p = 0.47. Plain Bonferroni would reject `rmse` and `smape`; including the three sparsity rows in the family changes none of it.
+**On testing nine things at once, and why that has stopped being the interesting question.** The comparisons are the six rows above the sparsity readouts and the `Holm p` column adjusts across them, Holm rather than Bonferroni because these metrics are computed on the same forecasts and are far from independent. **All 6 of the 6 survive adjustment**, at p between 3.1e-105 and 3.7e-19.
 
-**The better MAP point does forecast better** on this corpus.
+*That is a fact about n, not about the method.* At 3008 paired series a Wilcoxon test rejects on any consistent direction whatever its size, so significance here distinguishes nothing and is reported only because leaving it out would look like hiding it. **Read the medians and the win rates.** The one number that changed its meaning rather than its precision when the corpus grew is `interval_width`: at 36 series it was indistinguishable (p = 0.47) and declined to claim anything, and across the census our intervals are **wider by a median +2.47** in the series' own units, which is unambiguous and is a loss. Taken with the coverage row it says the two implementations buy slightly different trade-offs on an interval that is badly calibrated in both.
+
+The three sparsity readouts are excluded from the family on purpose: they describe the fits rather than ranking them, so they are not comparisons and adjusting over them would be adjusting over something else. Including the three sparsity rows in the family changes none of it — every p there underflows, so Holm over nine rejects the same six.
+
+**The better MAP point does forecast better** on this corpus — on 64% of its series by RMSE, which is the honest size of it.
 
 **The corpus is a census, and it was frozen before any of this was run.** `evaluation/corpus/m4_census_v1.json` lists every series measured — 3008 of them, Daily 2714/2714, Weekly 294/294 — chosen by a rule with no sampling step: every M4 series of these frequencies with at least 120 observations, a parseable start date, and at least one rolling-origin cutoff under the horizons below. There is nothing to have selected. The file carries a digest of its own membership (`ab399af9181e`), the generator re-derives it from the M4 files on demand, and a test fails if the measured series are not exactly the frozen ones ([#164]).
 
@@ -90,15 +94,15 @@ The pooled row is the first; the rest are the frozen corpus's own strata. Read t
 
 **Both implementations badly under-cover.** Mean coverage of the nominal 80% interval is **0.345** for ours and **0.341** for Prophet's — the intervals contain about a third of the points they claim four fifths of. That is the model on long horizons and volatile series, shared by both, and it is larger than anything separating them.
 
-*These two coverage numbers are different quantities, and the gap between them is informative rather than a discrepancy.* The table reports **+0.0023**, the median of the per-series *differences*; here it is the difference of the *means*, **+0.004** — about six times larger. A median of paired differences is not the difference of means, and the two separating this far says the per-series differences are skewed — which they are: **2237 of the 3008 series differ by less than 0.02**, 124 differ by more than +0.05 (the largest, +0.64), and none differs by more than 0.05 the other way. The mean is carried by those few; the median is what the other thirty-odd look like.
+*These two coverage numbers are different quantities, and the gap between them is informative rather than a discrepancy.* The table reports **+0.0023**, the median of the per-series *differences*; here it is the difference of the *means*, **+0.0040** — 1.7 times larger. A median of paired differences is not the difference of means, and the two separating says the per-series differences are skewed — which they are, though not one-sidedly: **2237 of the 3008 series differ by less than 0.02**, 124 differ by more than +0.05 (the largest, +0.64) and 87 by more than 0.05 the other way (the largest, -0.77). The tails are uneven rather than absent, which is what pulls the mean above the median; at 36 series the far tail had no members at all and this said so.
 
 ![coverage](figures/tier2_coverage.png)
 
-**What this is.** 36 M4 series (20 weekly, 20 daily), rolling-origin cutoffs from `prophet.diagnostics.generate_cutoffs`, with coverage of the nominal 80% interval computed by `prophet.diagnostics.performance_metrics` for **both** sides, so neither is scored by its own ruler. One dot per series per implementation, joined, sorted by ours; dotted lines are the two means. **Nearer 0.80 is better, and neither is near it.** This is the largest number in the suite and it is shared: the gap between the dots is small, and the gap between both and the dashed line is not. Since [#93] the default sampler on both sides is the approximate one.
+**What this is.** The frozen census of 3008 M4 series, rolling-origin cutoffs from `prophet.diagnostics.generate_cutoffs`, with coverage of the nominal 80% interval computed by `prophet.diagnostics.performance_metrics` for **both** sides, so neither is scored by its own ruler. One dot per series per implementation, joined, sorted by ours; dotted lines are the two means. **Nearer 0.80 is better, and neither is near it.** This is the largest number in the suite and it is shared: the gap between the dots is small, and the gap between both and the dashed line is not. Since [#93] the default sampler on both sides is the approximate one.
 
 ![paired accuracy](figures/tier2_accuracy.png)
 
-**What this is.** The same corpus and protocol as above, scored by Prophet's own `performance_metrics`. Each panel is the per-series relative difference, (ours − Prophet) / Prophet, so the pairing is preserved rather than averaged away. **Left of zero is better for us**, and the shading says so. The summary is a median with an IQR rather than a mean, because forecast errors across series are heavy-tailed — one series differs by about 35% while most differ by under 2%. The axis is bounded by a robust range for that reason, and the panel counts what falls outside it rather than cropping it silently. `n` and the paired p-value are in each panel.
+**What this is.** The same corpus and protocol as above, scored by Prophet's own `performance_metrics`. Each panel is the per-series relative difference, (ours − Prophet) / Prophet, so the pairing is preserved rather than averaged away. **Left of zero is better for us**, and the shading says so. The summary is a median with an IQR rather than a mean, because forecast errors across series are heavy-tailed — the worst differs by hundreds of percent while roughly seven in ten differ by under 2%. The axis is bounded by a robust range for that reason, and the panel counts what falls outside it rather than cropping it silently. `n` and the paired p-value are in each panel.
 
 ## Tier 3 — what it costs
 
@@ -195,7 +199,7 @@ Read these with the figure rather than on their own. Every implementation is *sl
 
 ## How this was measured
 
-- seed `20260925`, commit `e292634ec298`
+- seed `20260925`, commit `4b95de6ecd89`
 - python 3.14.7 on macOS-26.5.2-arm64-arm-64bit-Mach-O
 - analytic-prophet 0.1.0, cmdstanpy 1.3.0, numpy 2.5.3, pandas 3.0.5, prophet 1.4.0, scipy 1.18.1
 
