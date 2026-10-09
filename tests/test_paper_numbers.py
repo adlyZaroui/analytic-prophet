@@ -23,7 +23,8 @@ NUMBERS = PAPER / "generated" / "numbers.tex"
 
 
 def _macros(text):
-    return dict(re.findall(r"\\newcommand\{\\(\w+)\}\{([^}]*)\}", text))
+    # one level of nested braces, for a value such as 5.9\times10^{-8}
+    return dict(re.findall(r"\\newcommand\{\\(\w+)\}\{((?:[^{}]|\{[^{}]*\})*)\}", text))
 
 
 def _generator():
@@ -57,7 +58,7 @@ def test_every_macro_the_paper_uses_is_generated():
     LaTeX build; this says which, faster and by name."""
     defined = set(_macros(NUMBERS.read_text()))
     sources = [PAPER / "main.tex", *sorted((PAPER / "sections").glob("*.tex"))]
-    generated_style = re.compile(r"\\((?:Census|Rmse|Lp)\w+)")
+    generated_style = re.compile(r"\\((?:Census|Rmse|Lp|Kkt)\w+)")
     used = {name for path in sources
             for name in generated_style.findall(path.read_text())}
 
