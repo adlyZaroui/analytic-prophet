@@ -25,15 +25,64 @@ $T = 2905$ is $+2.34$ nats rather than \LpMarginLong.
 \pending{\#173}{the margin against $T$ on a fine grid, both configurations, as a
 figure}
 We state the direction, which holds in every configuration measured, and claim no
-mechanism for the size.
+mechanism for the size. It also holds across the census of \cref{sec:consequences}:
+fitted on each series' full length, the corrected optimum scores higher on
+\KktLpWins{} of the \KktSeries{} series, by a median of \KktLpMedian{} nats and never
+by less than \KktLpMin.
 
 \subsection{First-order optimality}
 \label{sec:evidence:kkt}
 
-\pending{\#170}{the minimum-norm subgradient at both solutions, per series. Under
-the convex configuration of \cref{sec:model} a near-zero residual certifies
-optimality and a large one certifies its absence; the prediction is a residual of
-order $1/\tau = 20$ wherever Prophet leaves $\delta_j$ small but nonzero.}
+A margin in $\lp$ compares two points; a first-order certificate grades each on
+its own. Write \eqref{eq:objective} as a smooth part $s$ plus
+$\tau^{-1}\sum_j\lvert\delta_j\rvert$ and hold $\sigma$ at the point's own value. The
+point is a minimiser if and only if $0$ lies in the subdifferential there:
+$\partial s/\partial x = 0$ for $x$ among $k$, $m$ and $\beta$;
+$\partial s/\partial\delta_j + \operatorname{sign}(\delta_j)/\tau = 0$ wherever
+$\delta_j \ne 0$; and $\lvert\partial s/\partial\delta_j\rvert \le 1/\tau$ wherever
+$\delta_j = 0$. The norm of the subdifferential's minimum-norm element measures how far
+a point is from meeting them. The ``if'' is the convexity of \cref{sec:model}, which
+holds in Prophet's default configuration once $\sigma$ is fixed. Fixing it costs the
+argument nothing in the direction that matters: a point optimal for the full problem
+is stationary in the other coordinates at its own $\sigma$, so a residual bounded
+away from zero proves it is not optimal, with $\sigma$ free or not.
+
+The gradient is Stan's, of Prophet's compiled density, through
+\code{CmdStanModel.log_prob}, so neither implementation grades itself; at the
+reformulation's solution it agrees with this implementation's hand-derived gradient
+to $10^{-7}$. Prophet's point is read at full precision. CmdStan writes the optimum
+with eight significant digits unless asked otherwise, and that rounding alone moves
+the residual by up to about $0.2$.
+
+Each of the \KktSeries{} series of the census of \cref{sec:consequences} is fitted on
+its full length in Prophet's default configuration. Prophet's residual has a median
+of \KktProphetStrict{}, against \KktOursMedian{} for the reformulation. The prediction
+was a residual of order $1/\tau = 20$ wherever Prophet leaves a rate small but not
+zero, and that is where it lies: on \KktStrictAtRate\% of series the largest violation
+is a changepoint rate, of median magnitude $\KktKinkRate$, which has to balance the
+prior's full slope $1/\tau$ and does not.
+
+The obvious objection is that such a rate is zero in all but name. The relaxed
+residual grants that to every rate at once, holding each $\delta_j$ only to the
+condition for $\delta_j = 0$. Since $\operatorname{sign}(\delta_j)/\tau$ is an endpoint
+of $[-1/\tau, 1/\tau]$, the relaxed residual is never larger than the strict one,
+needs no threshold for what counts as zero, and is still a lower bound on the distance
+from $0$ to the subdifferential at the point. Prophet's has a median of
+\KktProphetRelaxed{} and is at least \KktProphetRelaxedMin{} on every series, so no
+reading of its rates satisfies the conditions. It exceeds the reformulation's strict
+residual on \KktWorse{} of the \KktSeries{} series, by a factor of \KktRatio{} at the
+median and never less than \KktRatioMin. What survives the relaxation is not about the kink. On \KktRelaxedAtRate\% of
+series it is a rate whose smooth gradient exceeds $1/\tau$ in magnitude, which
+neither sign nor zero satisfies at that point; on \KktRelaxedAtTrend\% it is the
+trend's slope or offset, which have no kink at all. On the full Peyton Manning series
+Prophet's strict residual is \KktPeytonProphetStrict{} and its relaxed one
+\KktPeytonProphetRelaxed{}, against \KktPeytonOurs{} for the reformulation.
+
+The reformulation's residual is not zero either. At a median of \KktOursMedian{} it is
+about one percent of $1/\tau$, and the largest across the census is \KktOursWorst{}:
+the stopping tolerance of its L-BFGS-B, not exact optimality. What the certificate
+establishes is the comparison, series by series, and that Prophet's points fail the
+conditions under any reading of their rates.
 
 \subsection{Scatter under convexity}
 \label{sec:evidence:multistart}

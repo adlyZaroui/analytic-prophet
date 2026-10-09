@@ -35,6 +35,12 @@ fails to compile rather than printing a stale value. This is the rule
 `evaluation/report.py` already follows, and the one whose absence turned the
 suite red when the 3,008-series census replaced the 36-series sample.
 
+The paper's own experiments, as opposed to the evaluation suite's, commit their
+output to `results/` and are read from there: the first-order certificate (#170)
+is `experiments/kkt.py`, writing `results/kkt_census.csv` and
+`results/kkt_peyton_manning.csv`. It is resumable and parallel, and took 37 minutes
+on eight workers.
+
 ## Results not yet measured
 
 A `\pending{#issue}{…}` marker renders in red where the paper states something

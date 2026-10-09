@@ -58,9 +58,10 @@ optimization to Stan's L-BFGS and Newton methods, which are documented as method
 for smooth objectives. We show that, as a consequence, Prophet does not solve the
 problem it specifies: under Prophet's own posterior density its solutions score
 below the optimum at every series length measured, and its changepoint rates
-never reach the exact zeros the optimum has.
-\pending{\#169, \#170}{the first-order optimality certificate and the multi-start
-scatter under convexity}
+never reach the exact zeros the optimum has. On every one of \KktSeries{} M4 series,
+Prophet's solution fails the first-order optimality conditions, even when each
+changepoint rate is read in the way most favourable to it.
+\pending{\#169}{the multi-start scatter under convexity}
 The defect is diagnosable, is consistent with user reports in Prophet's issue
 tracker going back several years, and is removed by an exact reformulation that
 splits each rate into non-negative parts. On a frozen census of \CensusSeries{}
