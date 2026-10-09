@@ -7,6 +7,14 @@ comparison uses a corpus frozen before it was measured, identified by the digest
 \texttt{\CensusDigest} of its membership: a census of every M4 weekly and daily
 series the protocol can measure, so there was nothing to select.
 
+The controls that change Prophet's Stan program
+(Sections~\ref{sec:evidence:multistart} and~\ref{sec:evidence:surrogate})
+compile modified copies of it, each a minimal diff kept beside the original in
+\code{paper/stan/}, with CmdStan~2.37.0, the version Prophet bundles. Compiled
+the same way, the unmodified program reproduces Prophet's shipped executable
+exactly, in the optimum, the log density and its gradient, on both of Prophet's
+optimizer paths; the test suite checks this before any variant is used.
+
 \pending{\#180}{one command regenerating every experiment and figure; pinned
 versions of Prophet, CmdStan and the numerical stack; the build commit printed
 here}
