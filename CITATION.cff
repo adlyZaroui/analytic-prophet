@@ -19,6 +19,7 @@ authors:
   - family-names: Zaroui
     given-names: Adly
     alias: adlyZaroui
+    email: mohamed-adly.zaroui@outlook.com
 repository-code: https://github.com/adlyZaroui/analytic-prophet
 url: https://github.com/adlyZaroui/analytic-prophet
 license: MIT
