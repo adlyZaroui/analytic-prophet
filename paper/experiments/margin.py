@@ -205,10 +205,10 @@ def draw(rows, out=FIGURE):
         raise ValueError("a non-positive margin cannot be drawn on a log axis; "
                          "the figure needs a different scale before it can show it")
 
-    style = {"default": ("#4c72b0", "o", "default (Prophet's own seasonalities)"),
-             "yearly_only": ("#dd8452", "s", "yearly only")}
+    style = {"default": ("#4c72b0", "o", "default (Prophet's own seasonality selection)"),
+             "yearly_only": ("#dd8452", "s", "yearly only, from 730 days")}
     matplotlib.rcParams.update({"font.size": 8, "pdf.fonttype": 42})
-    figure, axes = plt.subplots(1, 2, figsize=(7.2, 2.9))
+    figure, axes = plt.subplots(1, 2, figsize=(7.2, 3.0))
     panels = (("margin", "lp$\\_\\_$ margin, ours $-$ Prophet's (nats)"),
               ("relative_margin_percent", "relative margin (% of Prophet's lp$\\_\\_$)"))
     for axis, (column, label) in zip(axes, panels):
@@ -222,16 +222,23 @@ def draw(rows, out=FIGURE):
         axis.set_yscale("log")
         axis.set_xlabel("series length $T$ (rows of Peyton Manning)")
         axis.set_ylabel(label)
-        axis.axvline(NEWTON_BELOW, color="0.35", linestyle="--", linewidth=0.8)
-        axis.axvline(YEARLY_FROM, color="0.35", linestyle=":", linewidth=0.8)
         axis.grid(True, which="major", color="0.9", linewidth=0.5)
-        bottom, top = axis.get_ylim()
-        axis.text(NEWTON_BELOW * 0.93, top, "Newton | L-BFGS", rotation=90,
+        # The two places the problem or its solver changes, labelled where the
+        # data leave room: Prophet's method on either side of T = 100 at the
+        # top, the default model gaining yearly seasonality at the bottom.
+        marks = axis.get_xaxis_transform()
+        axis.axvline(NEWTON_BELOW, color="0.35", linestyle="--", linewidth=0.8)
+        axis.text(NEWTON_BELOW * 0.92, 0.97, "Newton", transform=marks,
                   ha="right", va="top", fontsize=6.5, color="0.3")
-        axis.text(YEARLY_FROM * 0.93, top, "yearly on (730 days)", rotation=90,
-                  ha="right", va="top", fontsize=6.5, color="0.3")
-    axes[0].legend(loc="lower right", fontsize=6.5, framealpha=0.9)
-    figure.tight_layout()
+        axis.text(NEWTON_BELOW * 1.08, 0.97, "L-BFGS", transform=marks,
+                  ha="left", va="top", fontsize=6.5, color="0.3")
+        axis.axvline(YEARLY_FROM, color="0.35", linestyle=":", linewidth=0.8)
+        axis.text(YEARLY_FROM * 1.06, 0.03, "default\ngains yearly", transform=marks,
+                  ha="left", va="bottom", fontsize=6.5, color="0.3")
+    handles, labels = axes[0].get_legend_handles_labels()
+    figure.legend(handles, labels, loc="upper center", ncol=2, fontsize=7,
+                  frameon=False, bbox_to_anchor=(0.5, 1.0))
+    figure.tight_layout(rect=(0, 0, 1, 0.93))
     out.parent.mkdir(parents=True, exist_ok=True)
     # no timestamp, so redrawing unchanged results gives an unchanged file
     figure.savefig(out, metadata={"CreationDate": None, "ModDate": None})

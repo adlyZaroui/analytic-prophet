@@ -18,12 +18,42 @@ is higher at every length measured, by \LpMarginShort{} nats at $T = 300$,
 \LpMarginMid{} at $T = 1000$ and \LpMarginLong{} at $T = 2905$.
 
 As a share of the posterior the margin falls by a factor of \LpDecline{} across
-that range, from \LpPercentShort\% to \LpPercentLong\%. It is not a clean decline:
-the absolute margin rises before it falls, and it depends on the width of the
-model as much as its length --- with yearly seasonality alone the margin at
-$T = 2905$ is $+2.34$ nats rather than \LpMarginLong.
-\pending{\#173}{the margin against $T$ on a fine grid, both configurations, as a
-figure}
+that range, from \LpPercentShort\% to \LpPercentLong\%. The margin itself does not
+decline, and it depends on the width of the model as much as its length: with yearly
+seasonality alone the margin at $T = 2905$ is \MarginYearlyLong{} nats rather than
+\LpMarginLong.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/margin_vs_length}
+  \caption{The $\lp$ margin of the corrected optimum over Prophet's, under Prophet's
+    own density, fitted on the first $T$ rows of the Peyton Manning series:
+    absolute (left) and as a share of Prophet's $\lp$ (right), on logarithmic
+    axes. Higher means Prophet stopped further from the optimum. Blue is Prophet's
+    default seasonality selection, which adds yearly seasonality once the history
+    spans 730 days, at $T = \MarginYearlyFrom$ (dotted); orange forces yearly
+    seasonality alone and starts there. Left of the dashed line Prophet, and this
+    implementation, run Newton's method; right of it, L-BFGS. Below $T = 33$ Prophet
+    places fewer than 25 changepoints.}
+  \label{fig:margin}
+\end{figure}
+
+\Cref{fig:margin} measures the margin on a finer grid: \MarginCells{} fits, at
+\MarginLengths{} lengths from $T = 20$ to $2905$ in the default configuration and at
+those from $T = \MarginYearlyFrom$ with yearly seasonality alone. The margin is
+positive in every one of them. Its absolute size has no trend in $T$: wherever
+Prophet runs L-BFGS it moves between \MarginLbfgsMin{} and \MarginLbfgsMax{} nats from
+one length to the next, with a median of \MarginLbfgsMedian, while $\lp$ itself grows
+roughly in proportion to $T$, so the fall of the relative margin is the growth of
+its denominator. Two steps do coincide with a change in the problem or in the
+solver. Where the default model gains yearly seasonality the margin falls from
+\MarginBeforeYearly{} to \MarginAfterYearly{} nats. And between $T = 99$ and
+$T = 100$ the data gain one observation, Prophet's solver changes from Newton to
+L-BFGS, and the margin rises from \MarginAtNinetyNine{} to \MarginAtHundred{} nats.
+Across the Newton range the median margin is \MarginNewtonMedian{} nats, against
+\MarginLbfgsMedian{} across the L-BFGS one, so the size of the gap at short lengths is
+largely a statement about which method Prophet ran.
+
 We state the direction, which holds in every configuration measured, and claim no
 mechanism for the size. It also holds across the census of \cref{sec:consequences}:
 fitted on each series' full length, the corrected optimum scores higher on

@@ -39,7 +39,10 @@ The paper's own experiments, as opposed to the evaluation suite's, commit their
 output to `results/` and are read from there: the first-order certificate (#170)
 is `experiments/kkt.py`, writing `results/kkt_census.csv` and
 `results/kkt_peyton_manning.csv`. It is resumable and parallel, and took 37 minutes
-on eight workers.
+on eight workers. The margin against series length (#173) is
+`experiments/margin.py`, writing `results/margin.csv` and
+`figures/margin_vs_length.pdf` in about three minutes; `--draw` redraws the figure
+from the committed CSV without refitting.
 
 ## Results not yet measured
 

@@ -132,9 +132,37 @@ def certificate():
     }
 
 
+def margin():
+    """#173: the lp__ margin on the fine grid of T, both configurations."""
+    rows = list(csv.DictReader(open(PAPER_RESULTS / "margin.csv")))
+    cell = {(row["configuration"], int(row["observations"])): float(row["margin"])
+            for row in rows}
+    lbfgs = [float(row["margin"]) for row in rows if row["prophet_algorithm"] == "LBFGS"]
+    newton = [float(row["margin"]) for row in rows if row["prophet_algorithm"] == "Newton"]
+    yearly_from = min(size for configuration, size in cell if configuration == "yearly_only")
+
+    def figure(value):
+        return f"{value:.2g}"
+
+    return {
+        "MarginCells": f"{len(rows):,}",
+        "MarginLengths": f"{sum(1 for configuration, _ in cell if configuration == 'default')}",
+        "MarginLbfgsMin": figure(min(lbfgs)),
+        "MarginLbfgsMax": figure(max(lbfgs)),
+        "MarginLbfgsMedian": figure(statistics.median(lbfgs)),
+        "MarginNewtonMedian": figure(statistics.median(newton)),
+        "MarginAtNinetyNine": figure(cell[("default", 99)]),
+        "MarginAtHundred": figure(cell[("default", 100)]),
+        "MarginBeforeYearly": figure(cell[("default", yearly_from - 1)]),
+        "MarginAfterYearly": figure(cell[("default", yearly_from)]),
+        "MarginYearlyFrom": f"{yearly_from}",
+        "MarginYearlyLong": f"{cell[('yearly_only', 2905)]:+.2f}",
+    }
+
+
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
-    return {**census(), **posterior(), **certificate()}
+    return {**census(), **posterior(), **certificate(), **margin()}
 
 
 def render(values):
