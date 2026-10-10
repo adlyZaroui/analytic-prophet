@@ -9,10 +9,11 @@ non-differentiability: none of them mentions it.
 Prophet's changepoint rates never reach zero under linear growth, so deciding
 which changepoints ``matter'' needs a cutoff; Prophet's plotting code draws those
 with $\lvert\bar\delta_j\rvert \ge 0.01$. In issue~\#1422 a user reads that cutoff
-as selecting the trend's breakpoints, and a contributor corrects it: the threshold
-is ``applied only for visualization''. We cite the thread for the confusion,
-which upstream resolved correctly, rather than for a defect. Under the
-reformulation rates reach zero exactly, and the question answers itself.
+as selecting the trend's breakpoints, and another participant in the thread
+corrects it: the threshold is ``applied only for visualization''. We cite the
+thread for the confusion, which the thread itself resolved correctly, rather than
+for a defect. Under the reformulation rates reach zero exactly, and the question
+answers itself.
 
 \paragraph{Sensitivity to the prior scale.}
 In issue~\#1280 a change of $2.2\times10^{-10}$ in
@@ -35,9 +36,11 @@ convex configuration of \cref{sec:model}.
 prior, to separate the kink from under-identification}
 
 \paragraph{Non-finite log-probabilities under logistic growth.}
-Issue~\#1032 reports L-BFGS reaching non-finite log-probabilities and the Newton
-retry failing with \texttt{B[1] is -nan}, under logistic growth with
-multiplicative seasonality. That is outside the convex setting, and a non-finite
+Issue~\#1032, opened by a maintainer, records a series under logistic growth with
+multiplicative seasonality on which L-BFGS stalls and Newton fails with
+\texttt{B[1] is -nan}. Reproducing it in the thread it came from (\#842), the
+maintainer found L-BFGS exiting on log-probabilities of NaN and the automatic
+Newton retry failing in the same way. That is outside the convex setting, and a non-finite
 value is a different failure from stopping short. The thread remains open and its
 mechanism is not established; we cite it as an observed failure and do not count
 it as evidence for the kink.

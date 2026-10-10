@@ -1,8 +1,58 @@
 \section{Related work}
 \label{sec:related}
 
-\pending{\#177}{place the paper against nonsmooth quasi-Newton methods
-\citep{lewis2013nonsmooth}, orthant-wise $\ell_1$ optimisation
-\citep{andrew2007scalable}, the lasso and its solution path
-\citep{tibshirani1996regression,efron2004least}, and the Prophet and Stan papers
-\citep{taylor2018forecasting,carpenter2017stan}}
+\paragraph{Prophet and Stan.}
+\citet{taylor2018forecasting} introduce the changepoint prior
+$\delta_j \sim \mathrm{Laplace}(0, \tau)$ as a sparse prior for selecting
+changepoints automatically, and fit the model with ``Stan's L-BFGS to find a
+maximum a posteriori estimate''. \citet{carpenter2017stan} describe Stan's
+optimizers, L-BFGS by default, with reference to \citet{nocedal2006numerical}, and a
+run that ends as soon as any of its tolerances on the log density, the gradient or
+the parameters is met. Both descriptions are accurate. This paper is about what
+happens where the two meet.
+
+\paragraph{Quasi-Newton methods on nonsmooth objectives.}
+The textbook treatment of L-BFGS and Newton's method assumes smoothness
+\citep{nocedal2006numerical}. \citet{lewis2013nonsmooth} study BFGS on nonsmooth
+functions and find it more capable than that assumption suggests, given a line
+search on the weak Wolfe condition; their suggestion that L-BFGS codes offer such a
+line search is the nearest thing in that literature to the change
+\cref{sec:smooth} points at. \citet{andrew2007scalable} start from the observation
+that L-BFGS cannot be used as it stands for an $\ell_1$-regularised loss and modify
+it, as OWL-QN, by keeping each step within an orthant. An earlier version of this
+implementation used OWL-QN before the reformulation of \cref{sec:reformulation}
+replaced it.
+
+\paragraph{Methods built for the $\ell_1$ term.}
+Besides orthant-wise quasi-Newton methods, cyclical coordinate descent along a
+regularisation path \citep{friedman2010regularization} and iterative
+shrinkage-thresholding \citep{beck2009fast} handle an $\ell_1$ penalty directly.
+Each of them changes the method. The reformulation of \cref{sec:reformulation}
+changes the problem instead: written as a difference of non-negative parts, the
+penalty becomes linear and the bounds are left to a bound-constrained quasi-Newton
+method \citep[L-BFGS-B;][]{byrd1995limited}. The device is old.
+\citet[Section~6]{tibshirani1996regression} gives it, attributing it to David Gay,
+as one of two algorithms for the lasso; \citet{chen2001atomic} use it to state basis
+pursuit as a linear program, noting that the equivalence of minimum-$\ell_1$
+problems with linear programming had been known since the 1950s; and
+\citet{figueiredo2007gradient} solve the resulting bound-constrained quadratic
+program by gradient projection, which is the closest in spirit to what is done
+here. What \cref{sec:reformulation} adds is the statement of exactness for
+Prophet's full posterior, including its non-convex configurations, and for the
+local minimisers and first-order points that a solver can actually deliver.
+
+\paragraph{The lasso and its solution path.}
+With $\sigma$ fixed, linear growth and additive seasonality, Prophet's MAP problem
+is a least-squares problem with Gaussian penalties on $k$, $m$ and $\beta$ and an
+$\ell_1$ penalty on $\delta$: a lasso-type problem \citep{tibshirani1996regression}.
+For the lasso itself the solution path is piecewise linear in the penalty and can
+be computed exactly \citep{efron2004least}; the lasso literature therefore offers a
+standard against which a sequence of Prophet fits across $\tau$ can be read
+(\cref{sec:consequences}).
+
+\paragraph{What is not new.}
+None of the methods above is ours, and neither is the observation that L-BFGS is a
+poor fit for an $\ell_1$ term. The contribution is the four items listed in
+\cref{sec:introduction}: a diagnosis in a specific, widely deployed system, the
+controls that isolate it, an exact fix stated for that system's full model, and the
+attribution of its user reports.

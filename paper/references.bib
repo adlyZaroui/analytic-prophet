@@ -1,6 +1,7 @@
-% Each entry is to be checked against its source for what it actually says,
-% not only for its metadata, before submission (#177) -- the discipline #138
-% applied to upstream issues.
+% Every entry was checked against its source for what the paper uses it to
+% say, not only for its metadata: DOIs against Crossref, claims against the
+% text itself. paper/citations.md records, per entry, the passage each claim
+% rests on (#177) -- the discipline #138 applied to upstream issues.
 
 @article{taylor2018forecasting,
   author  = {Taylor, Sean J. and Letham, Benjamin},
@@ -30,6 +31,7 @@
   author    = {Nocedal, Jorge and Wright, Stephen J.},
   title     = {Numerical Optimization},
   edition   = {Second},
+  series    = {Springer Series in Operations Research and Financial Engineering},
   publisher = {Springer},
   address   = {New York},
   year      = {2006},
@@ -77,4 +79,76 @@
   pages   = {407--499},
   year    = {2004},
   doi     = {10.1214/009053604000000067}
+}
+
+@article{byrd1995limited,
+  author  = {Byrd, Richard H. and Lu, Peihuang and Nocedal, Jorge and Zhu, Ciyou},
+  title   = {A Limited Memory Algorithm for Bound Constrained Optimization},
+  journal = {SIAM Journal on Scientific Computing},
+  volume  = {16},
+  number  = {5},
+  pages   = {1190--1208},
+  year    = {1995},
+  doi     = {10.1137/0916069}
+}
+
+@article{chen2001atomic,
+  author  = {Chen, Scott Shaobing and Donoho, David L. and Saunders, Michael A.},
+  title   = {Atomic Decomposition by Basis Pursuit},
+  journal = {SIAM Review},
+  volume  = {43},
+  number  = {1},
+  pages   = {129--159},
+  year    = {2001},
+  doi     = {10.1137/S003614450037906X}
+}
+
+@article{figueiredo2007gradient,
+  author  = {Figueiredo, M{\'a}rio A. T. and Nowak, Robert D. and Wright, Stephen J.},
+  title   = {Gradient Projection for Sparse Reconstruction: Application to
+             Compressed Sensing and Other Inverse Problems},
+  journal = {IEEE Journal of Selected Topics in Signal Processing},
+  volume  = {1},
+  number  = {4},
+  pages   = {586--597},
+  year    = {2007},
+  doi     = {10.1109/JSTSP.2007.910281}
+}
+
+@article{friedman2010regularization,
+  author  = {Friedman, Jerome and Hastie, Trevor and Tibshirani, Robert},
+  title   = {Regularization Paths for Generalized Linear Models via Coordinate Descent},
+  journal = {Journal of Statistical Software},
+  volume  = {33},
+  number  = {1},
+  pages   = {1--22},
+  year    = {2010},
+  doi     = {10.18637/jss.v033.i01}
+}
+
+@article{beck2009fast,
+  author  = {Beck, Amir and Teboulle, Marc},
+  title   = {A Fast Iterative Shrinkage-Thresholding Algorithm for Linear Inverse Problems},
+  journal = {SIAM Journal on Imaging Sciences},
+  volume  = {2},
+  number  = {1},
+  pages   = {183--202},
+  year    = {2009},
+  doi     = {10.1137/080716542}
+}
+
+% Stan's documentation at 2.37, the CmdStan version Prophet bundles
+% (released 2025-09-02). Cited at that version because the text changes.
+@manual{stan2025reference,
+  author       = {{Stan Development Team}},
+  title        = {Stan Reference Manual, Version 2.37},
+  year         = {2025},
+  url          = {https://mc-stan.org/docs/2_37/reference-manual/}
+}
+
+@manual{stan2025functions,
+  author       = {{Stan Development Team}},
+  title        = {Stan Functions Reference, Version 2.37},
+  year         = {2025},
+  url          = {https://mc-stan.org/docs/2_37/functions-reference/}
 }

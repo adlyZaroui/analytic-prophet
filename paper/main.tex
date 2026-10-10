@@ -54,8 +54,8 @@ Prophet is a widely deployed forecasting library that fits its model by maximum
 a~posteriori estimation. The posterior it specifies places a Laplace prior on
 the trend's changepoint rates, which makes the objective non-differentiable
 exactly where its optimum tends to lie, at rates of zero. Prophet delegates the
-optimization to Stan's L-BFGS and Newton methods, which are documented as methods
-for smooth objectives. We show that, as a consequence, Prophet does not solve the
+optimization to Stan's L-BFGS and Newton methods, which are methods for smooth
+objectives. We show that, as a consequence, Prophet does not solve the
 problem it specifies: under Prophet's own posterior density its solutions score
 below the optimum at every series length measured, and its changepoint rates
 never reach the exact zeros the optimum has. On every one of \KktSeries{} M4 series,
