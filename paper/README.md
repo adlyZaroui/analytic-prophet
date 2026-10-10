@@ -42,7 +42,9 @@ is `experiments/kkt.py`, writing `results/kkt_census.csv` and
 on eight workers. The margin against series length (#173) is
 `experiments/margin.py`, writing `results/margin.csv` and
 `figures/margin_vs_length.pdf` in about three minutes; `--draw` redraws the figure
-from the committed CSV without refitting.
+from the committed CSV without refitting. The natural-vs-split Newton control (#174) is
+`experiments/newton.py`, writing `results/newton.csv` and `results/newton_traces.csv` in
+about two minutes.
 
 ## Results not yet measured
 

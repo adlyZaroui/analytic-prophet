@@ -26,8 +26,8 @@ for short series, and what it costs".
 The Hessian turned out not to need deriving: central differences of the
 *analytic* gradient give one at 2n gradient evaluations, and at these sizes that
 is cheap. What Newton did need was the split reformulation (#23) -- on the
-natural parameterization it oscillates across the Laplace kink and exhausts
-Prophet's whole iteration budget 66 nats short.
+natural parameterization it oscillates across the Laplace kink until Stan's own
+stopping tests end it 1.2 to 7.1 nats short (paper/experiments/newton.py).
 """
 import types
 
@@ -402,10 +402,11 @@ def test_newton_runs_on_the_split_reformulation(peyton_manning_df):
     """Why Newton needed #23 as much as L-BFGS did.
 
     On the natural parameterization the Laplace prior leaves a kink exactly
-    where the optimum sits; Newton has no mechanism to land on one and, measured,
-    oscillates across it at about 1e-5 progress a step -- exhausting Prophet's
-    whole 10000-iteration budget 66 nats short. Split, the L1 term is linear, so
-    its curvature is zero rather than undefined.
+    where the optimum sits; Newton has no mechanism to land on one and, measured
+    by paper/experiments/newton.py, oscillates across it until its progress is
+    ~1e-6 to 1e-5 a step and Stan's own stopping tests end it 1.2 to 7.1 nats
+    short. Split, the L1 term is linear, so its curvature is zero rather than
+    undefined.
 
     The check that this is what is running: at an optimum reached under the
     split bounds, every delta_pos/delta_neg pair has at most one non-zero

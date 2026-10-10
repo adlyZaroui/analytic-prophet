@@ -103,11 +103,13 @@ def projected_newton(objective, gradient_fn, z0, lower, upper):
 
     It runs on the split reformulation for the same reason L-BFGS-B does. On
     the natural parameterization the Laplace prior leaves a kink exactly where
-    the optimum sits, and Newton has no mechanism to land on one: measured, it
-    oscillates across the kink making about 1e-5 progress a step, still ~66
-    nats short after Prophet's whole 10,000-iteration budget. Split, the L1
-    term is linear, so its curvature is zero rather than undefined, and what is
-    left is a smooth problem with bounds.
+    the optimum sits, and Newton has no mechanism to land on one. Measured by
+    paper/experiments/newton.py, which runs this function unchanged on both
+    parameterizations: the rates change sign thousands of times, progress falls
+    to ~1e-6 to 1e-5 a step, and Stan's own stopping tests end the run
+    1.2 to 7.1 nats short with no rate exactly zero. Split, the L1 term is
+    linear, so its curvature is zero rather than undefined, and what is left is
+    a smooth problem with bounds.
 
     Active set: a coordinate sitting at a bound while the gradient pushes it
     further into that bound is already as good as it gets. It does not count
