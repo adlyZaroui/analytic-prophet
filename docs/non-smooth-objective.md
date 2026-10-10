@@ -287,20 +287,39 @@ removed both shortfalls. `tests/test_short_series.py` asserts the agreement, so 
 measured.
 
 **Newton needed the split reformulation too**, and that is the part worth keeping. The
-first version ran on the natural parameterization — `(k, m, delta, beta, zeta)`, no
-bounds, the Laplace prior entering through its subgradient, which is what Stan's Newton
-does. It does not converge. It oscillates across the kink at `delta = 0` making about
-**1e-5** progress per step, and after Prophet's entire 10,000-iteration budget it is
-still **66 nats** short. Moved onto the
-[split reformulation](#the-fix-a-smooth-reformulation), where the L1 term is linear and
-its curvature is exactly zero rather than undefined, the same code converges in under a
-hundred iterations.
+first version ran on the natural parameterization, with the Laplace prior entering through
+its subgradient (`sign(0) = 0`, as in Stan). It does not reach the optimum. That first
+version was never committed, and the figures first recorded for it here — 66 nats short
+after exhausting Prophet's 10,000-iteration budget — did not survive a rerun.
+`paper/experiments/newton.py` (#174) now runs the shipped `projected_newton`, unchanged,
+on both parameterizations from Prophet's own start, on Peyton Manning at six lengths from
+T = 50 to 2905:
+
+| | natural | [split](#the-fix-a-smooth-reformulation) |
+|---|---|---|
+| short of the optimum | **1.2 to 7.1 nats** | 0 |
+| iterations | 240 to 1,409 | 44 to 528 |
+| how it stops | Stan's own convergence tests | Stan's own convergence tests |
+| sign changes of the rates in a run | 1,022 to 9,549 | at most 29 |
+| progress per step, last 100 steps (median) | 2.6e-6 to 9.8e-6 | — |
+| rates exactly zero | none | 15 to 25 of 25 |
+
+It oscillates across the kink at `delta = 0`, crawls, and then *declares convergence* — it
+does not need the iteration budget to fail. On the split reformulation, where the L1 term
+is linear and its curvature is exactly zero rather than undefined, the same code reaches
+the optimum and lands exactly where `fit(backend="python", algorithm="Newton")` does.
 
 That is the [central claim](#prophets-optimizer-stops-short-on-this-objective) measured
-from the other side. A second-order method, with an exact gradient, given Prophet's whole
-iteration budget, cannot reach the optimum of this objective as written; remove the
-single kink and it arrives in under a hundred steps. The obstacle is the
-non-differentiability, not the optimizer.
+from the other side: one second-order method with an exact gradient, varying only how the
+rates are represented, stops short on the objective as written and reaches the optimum once
+the kink is gone.
+
+**Stan's own Newton is a different method and comes closer.** Its Hessian is a four-point
+finite difference of the gradient with a step of 1e-3, against ~1.5e-8 here, and it damps
+by reflecting negative eigenvalues. Run by Prophet on the same series it stops 0.0021 to
+0.21 nats short — never at the optimum, never with a rate exactly zero. The earlier text
+here said the natural version did "what Stan's Newton does"; that is true of its gradient
+and not of its Hessian, and the difference shows.
 
 The Hessian is not derived in closed form, which is what #25 expected the blocking work
 to be. It is central differences of the **analytic** gradient — `2n` gradient

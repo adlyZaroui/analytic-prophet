@@ -160,9 +160,35 @@ def margin():
     }
 
 
+def newton():
+    """#174: one Newton method on two parameterizations, and Stan's beside it."""
+    rows = list(csv.DictReader(open(PAPER_RESULTS / "newton.csv")))
+
+    def column(arm, name, kind=float):
+        return [kind(row[name]) for row in rows if row["arm"] == arm]
+
+    def span(values, form):
+        return form(min(values)), form(max(values))
+
+    lengths = sorted(set(column("split", "observations", int)))
+    words = "zero one two three four five six seven eight nine ten".split()
+    out = {"NewtonLengths": words[len(lengths)] if len(lengths) < len(words) else f"{len(lengths)}",
+           "NewtonLengthMin": f"{lengths[0]}", "NewtonLengthMax": f"{lengths[-1]}"}
+    for prefix, arm, name, form in (
+            ("NewtonSplitIter", "split", "iterations", lambda v: f"{v:.0f}"),
+            ("NewtonSplitZeros", "split", "exact_zeros", lambda v: f"{v:.0f}"),
+            ("NewtonIter", "natural", "iterations", lambda v: f"{v:,.0f}"),
+            ("NewtonShort", "natural", "shortfall", lambda v: f"{v:.1f}"),
+            ("NewtonFlips", "natural", "sign_flips", lambda v: f"{v:,.0f}"),
+            ("NewtonProgress", "natural", "median_progress_tail", _scientific),
+            ("NewtonStan", "stan_newton", "shortfall", lambda v: f"{v:.2g}")):
+        out[f"{prefix}Min"], out[f"{prefix}Max"] = span(column(arm, name), form)
+    return out
+
+
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
-    return {**census(), **posterior(), **certificate(), **margin()}
+    return {**census(), **posterior(), **certificate(), **margin(), **newton()}
 
 
 def render(values):

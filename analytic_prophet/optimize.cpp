@@ -744,10 +744,11 @@ OptimizeResult newton(Eigen::VectorXd params,
     // The SAME split reformulation optimize() uses, and for the same reason.
     // On the natural parameterization the Laplace prior leaves a kink exactly
     // where the optimum sits; Newton has no mechanism to land on one, and
-    // measured, it oscillates across it making ~1e-5 progress a step -- still
-    // 66 nats short of the optimum after Prophet's whole 10,000-iteration
-    // budget. Split, the L1 becomes linear, its curvature is zero rather than
-    // undefined, and what is left is a smooth problem with bounds.
+    // measured (paper/experiments/newton.py, the Python twin of this), it
+    // oscillates across it until its progress is ~1e-6 to 1e-5 a step and
+    // Stan's own stopping tests end it 1.2 to 7.1 nats short, with no rate
+    // exactly zero. Split, the L1 becomes linear, its curvature is zero rather
+    // than undefined, and what is left is a smooth problem with bounds.
     SplitObjective objective{t, changepoints_t, A, x_design, y_scaled,
                              sigma_obs_prior_scale, sigma_k, sigma_m,
                              Eigen::VectorXd(sigmas), Eigen::VectorXd(s_m),

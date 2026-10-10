@@ -11,11 +11,11 @@ continues to make progress, which is part of why the failure here is quiet: it i
 not a clean stop but a slow approach that ends short of the optimum under a
 stopping rule designed for smooth problems.
 
-Newton's method fares no better for a different reason. It needs the Hessian, and
+Newton's method is exposed for a different reason. It needs the Hessian, and
 along $\{\delta_j = 0\}$ the curvature of $\lvert\delta_j\rvert$ is not small but
-undefined. A second-order method defeated at the same place as a first-order one
-is evidence that the obstacle is the objective rather than any one algorithm,
-which is why \cref{sec:evidence} reports both.
+undefined. A second-order method that also stops short of the optimum is evidence
+that the obstacle is the objective rather than any one algorithm, which is why
+\cref{sec:evidence} reports both.
 
 Methods built for this structure exist. Orthant-wise limited-memory quasi-Newton
 \citep[OWL-QN;][]{andrew2007scalable} handles an $\ell_1$ term directly by
