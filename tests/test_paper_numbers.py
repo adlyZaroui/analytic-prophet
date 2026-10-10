@@ -58,7 +58,7 @@ def test_every_macro_the_paper_uses_is_generated():
     LaTeX build; this says which, faster and by name."""
     defined = set(_macros(NUMBERS.read_text()))
     sources = [PAPER / "main.tex", *sorted((PAPER / "sections").glob("*.tex"))]
-    generated_style = re.compile(r"\\((?:Census|Rmse|Lp|Kkt)\w+)")
+    generated_style = re.compile(r"\\((?:Census|Rmse|Lp|Kkt|Margin)\w+)")
     used = {name for path in sources
             for name in generated_style.findall(path.read_text())}
 
