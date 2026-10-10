@@ -5,9 +5,9 @@ Write each rate as the difference of two non-negative parts,
 $\delta_j = \delta_j^+ - \delta_j^-$ with $\delta_j^+, \delta_j^- \ge 0$, and
 replace $\lvert\delta_j\rvert$ in \eqref{eq:objective} by $\delta_j^+ + \delta_j^-$.
 The penalty becomes linear, so the objective is smooth, and the non-smoothness
-moves into simple bound constraints that L-BFGS-B handles natively. The
-reformulation is standard for $\ell_1$ problems; what needs stating is that it is
-exact here, and why.
+moves into simple bound constraints that L-BFGS-B \citep{byrd1995limited} handles
+natively. The reformulation is standard for $\ell_1$ problems
+(\cref{sec:related}); what needs stating is that it is exact here, and why.
 
 Collect the remaining parameters as $\theta = (k, m, \beta, \sigma)$ and write
 Prophet's objective \eqref{eq:objective} as

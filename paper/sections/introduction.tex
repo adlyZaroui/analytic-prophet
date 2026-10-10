@@ -11,8 +11,17 @@ posterior. That term is not differentiable where any $\delta_j = 0$ --- and the
 optimum sits there, because sending most rates to zero is precisely what the
 prior is for.
 
-Stan documents its optimizers as methods for smooth objectives and refers the
-reader to \citet{nocedal2006numerical}. Nothing about this arrangement is an error.
+Stan's reference manual describes its optimizers by pointing to
+\citet{nocedal2006numerical} for ``thorough description and analysis''
+\citep{stan2025reference}, a text that ``focuses on smooth functions, by which we
+generally mean functions whose second derivatives exist and are continuous'' and
+leaves nonsmooth optimization out of its scope. Stan's function reference does warn
+that the absolute value, among other step-like functions, ``can seriously hinder
+sampling and optimization efficiency for gradient-based methods (e.g., NUTS, HMC,
+BFGS) if applied to parameters'' \citep{stan2025functions}. The double-exponential
+distribution, whose log density contains the same absolute value, carries no such
+warning, and it is through the distribution that Prophet's model reaches it.
+Nothing about this arrangement is an error.
 The model is reasonable, the optimizers are correctly implemented and correctly
 documented, and the delegation is the ordinary way a modelling language is meant
 to be used. \emph{The interaction is the finding}: a smooth method asked to locate
@@ -21,17 +30,19 @@ interface between the two reports that it has not.
 
 \paragraph{What this paper claims.}
 Prophet specifies a posterior whose optimum sits on a non-differentiable set,
-delegates its optimization to solvers documented for smooth objectives, and
+delegates its optimization to solvers designed for smooth objectives, and
 consequently does not solve the problem it specifies. This is diagnosable, has
 user-visible consequences reported in Prophet's issue tracker for several years,
 and is removable by an exact reformulation; we report its consequences for the
 optimum and for predictive performance.
 
 \paragraph{What it does not claim.}
-That quasi-Newton methods struggle on $\ell_1$-penalised objectives is textbook
-\citep{nocedal2006numerical,lewis2013nonsmooth}, and orthant-wise methods exist
-precisely because of it \citep{andrew2007scalable}. We did not discover that
-phenomenon and do not present it as new. The contribution is narrower and, we
+That L-BFGS is ill-suited to an $\ell_1$-penalised objective is well known:
+\citet{andrew2007scalable} open by noting that it ``cannot be used for an
+L1-regularized loss due to its non-differentiability whenever some parameter is
+zero'', and methods built for the $\ell_1$ term exist because of it
+(\cref{sec:related}). We did not discover that phenomenon and do not present it
+as new. The contribution is narrower and, we
 think, more useful for being stated precisely:
 \begin{enumerate}
   \item the diagnosis of the phenomenon in a specific, heavily deployed system;

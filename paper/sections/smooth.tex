@@ -3,13 +3,25 @@
 
 L-BFGS builds a curvature model from successive gradient differences and relies on
 a line search that brackets a point satisfying the Wolfe conditions
-\citep{nocedal2006numerical}. Both assume a gradient that varies continuously.
-Across a kink the gradient differences carry no information about curvature, and
-the bracketing interval can collapse without a sufficient-decrease point inside it.
-\citet{lewis2013nonsmooth} show that BFGS applied to nonsmooth functions often
-continues to make progress, which is part of why the failure here is quiet: it is
-not a clean stop but a slow approach that ends short of the optimum under a
-stopping rule designed for smooth problems.
+\citep{nocedal2006numerical}, whose convergence theory for BFGS assumes a twice
+continuously differentiable objective \citep[Assumption~6.1]{nocedal2006numerical}.
+Both assume a gradient that varies continuously. Across a kink the gradient
+differences carry no information about curvature, and the bracketing interval can
+collapse without a sufficient-decrease point inside it.
+
+BFGS is not helpless on nonsmooth functions. \citet{lewis2013nonsmooth} find that,
+with a line search built on the \emph{weak} Wolfe condition, it consistently
+converges to local minimisers in their experiments, at a linear rate. They are as
+clear that ``for nonsmooth optimization, it is clear that enforcing the strong Wolfe
+condition is not possible in general'', and suggest that L-BFGS codes offer a
+weak-Wolfe line search for that reason. Stan's line search imposes the strong
+conditions (\code{stan/optimization/bfgs_linesearch.hpp}), and Stan's L-BFGS differs
+from their method in its limited memory and in stopping tests on changes in the
+objective, the gradient and the parameters as well. We do not try to separate
+which of these matters most; \cref{sec:evidence} establishes what the combination
+does. The failure is quiet: in every fit of \cref{fig:margin} where Prophet ran
+L-BFGS it terminated normally, without the fall-back to Newton that Prophet
+triggers on an abnormal exit.
 
 Newton's method is exposed for a different reason. It needs the Hessian, and
 along $\{\delta_j = 0\}$ the curvature of $\lvert\delta_j\rvert$ is not small but

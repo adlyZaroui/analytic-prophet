@@ -4,7 +4,7 @@ A preprint for **arXiv stat.CO**: a numerical-software case study with a
 mechanism, controls and a fix.
 
 > Prophet specifies a posterior whose optimum sits on a non-differentiable set,
-> delegates optimization to solvers documented for smooth objectives, and
+> delegates optimization to solvers designed for smooth objectives, and
 > consequently does not solve the problem it specifies. This is diagnosable, has
 > user-visible consequences reported in the issue tracker for years, is removable
 > by an exact reformulation, and the consequences on the optimum and predictive
@@ -108,6 +108,9 @@ implementation and stays in `evaluation/`.
 ## Register
 
 Prophet's authors specified a model in Stan and delegated optimization; Stan
-documents its optimizers as smooth methods. Nobody made an error, and the paper
-says so. Each upstream issue is cited for what its thread shows — read in full,
-and never as a report of non-differentiability, which none of them is.
+describes its optimizers by reference to a text on smooth optimization, and warns
+about absolute values of parameters in its functions reference rather than on the
+distribution Prophet uses. Nobody made an error, and the paper says so. Each
+upstream issue is cited for what its thread shows — read in full, and never as a
+report of non-differentiability, which none of them is. `citations.md` records, for
+every source, the passage each claim rests on (#177).
