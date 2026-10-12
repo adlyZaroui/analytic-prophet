@@ -126,8 +126,12 @@ small and entirely explicit, so the gradient can be written down instead. Both
 consequences are measured rather than assumed, and these are the measurements.
 
 Fitting is **1.4–8.2× faster** than Prophet, and which end you get depends on the series:
-**8.2× at T = 50, falling to 1.4× by T = 1000 and 1.5× at T = 2905**, because Prophet pays
-a fixed cmdstan subprocess cost that matters most when there is least to do. The advantage
+**8.2× at T = 50, falling to 1.4× by T = 1000 and 1.5× at T = 2905**, and very little of it
+is the gradient. From T = 100 up, where Prophet runs L-BFGS, a CmdStan call capped at a single
+iteration takes a quarter to a half of Prophet's whole fit, and without it the two fit in
+about the same time: the advantage there is the cost of calling CmdStan. Below 100
+observations Prophet runs Newton instead, and at T = 50 that, not the subprocess, is most of
+its time (`paper/experiments/overhead.py`). The advantage
 is a trough rather than a decline — `T = 1000` is the narrowest point measured, not the
 longest series. Predicting is faster on both of the paths described below, **1.8×** on the
 approximate one and **2.6×** on the exact one. The fit's peak memory is **about two

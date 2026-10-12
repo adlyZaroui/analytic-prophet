@@ -74,6 +74,12 @@ def posterior():
     return out
 
 
+def _word(count):
+    """Small counts as words, as prose writes them: six, not 6."""
+    words = "zero one two three four five six seven eight nine ten".split()
+    return words[count] if 0 <= count < len(words) else f"{count:,}"
+
+
 def _scientific(value):
     """A magnitude for math mode: 5.9\\times10^{-8}."""
     mantissa, exponent = f"{value:.1e}".split("e")
@@ -171,8 +177,7 @@ def newton():
         return form(min(values)), form(max(values))
 
     lengths = sorted(set(column("split", "observations", int)))
-    words = "zero one two three four five six seven eight nine ten".split()
-    out = {"NewtonLengths": words[len(lengths)] if len(lengths) < len(words) else f"{len(lengths)}",
+    out = {"NewtonLengths": _word(len(lengths)),
            "NewtonLengthMin": f"{lengths[0]}", "NewtonLengthMax": f"{lengths[-1]}"}
     for prefix, arm, name, form in (
             ("NewtonSplitIter", "split", "iterations", lambda v: f"{v:.0f}"),
@@ -186,9 +191,86 @@ def newton():
     return out
 
 
+def _evaluation():
+    """The report and showcase modules, so the paper reuses their definitions
+    -- Holm's adjustment, the showcase's pool -- rather than restating them."""
+    import sys
+    for path in (REPO, REPO / "evaluation", REPO / "benchmark"):
+        if str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+    import report
+    import showcase
+    return report, showcase
+
+
+def limitations():
+    """#178: every figure the limitations section states, from committed results."""
+    report, showcase = _evaluation()
+    rows = _rows("tier2_accuracy")
+    paired = {row["metric"]: float(row["value"]) for row in rows
+              if row["series"] == "paired" and row["configuration"] == "all"}
+
+    coverage = defaultdict(list)
+    for row in rows:
+        if row["metric"] == "coverage" and row["series"] not in ("paired", "corpus"):
+            coverage[row["implementation"]].append(float(row["value"]))
+
+    rmse = _per_series(rows, "rmse")
+    relative = [(v["analytic_prophet"] - v["prophet"]) / v["prophet"] for v in rmse.values()]
+    pool = showcase._advantages(RESULTS / "tier2_accuracy.csv")
+
+    adjusted = report.holm({metric: paired[f"{metric}_p_value"]
+                            for metric in report.TIER2_COMPARISONS})
+    survivors = sum(1 for value in adjusted.values() if value < 0.05)
+
+    calendar = {row["frequency"]: row for row in
+                csv.DictReader(open(PAPER_RESULTS / "m4_calendar.csv"))}
+    daily = calendar["Daily"]
+
+    overhead = list(csv.DictReader(open(PAPER_RESULTS / "overhead.csv")))
+    lbfgs = [row for row in overhead if row["prophet_algorithm"] == "LBFGS"]
+    newton = min((row for row in overhead if row["prophet_algorithm"] == "Newton"),
+                 key=lambda row: int(row["observations"]))
+
+    def share(row):
+        return float(row["one_iteration_call"]) / float(row["prophet_fit"])
+
+    def parity(row):
+        return (float(row["prophet_fit"]) - float(row["one_iteration_call"])) / float(row["ours_fit"])
+
+    return {
+        "LimCoverageOurs": f"{statistics.fmean(coverage['analytic_prophet']):.3f}",
+        "LimCoverageProphet": f"{statistics.fmean(coverage['prophet']):.3f}",
+        "LimWidthMedian": f"{paired['interval_width_median']:.2f}",
+        "LimWidthWider": f"{paired['interval_width_losses']:,.0f}",
+        "LimWorstCensus": f"{max(relative) * 100:.0f}",
+        "LimBestCensus": f"{-min(relative) * 100:.1f}",
+        "LimWorstPool": f"{-pool[-1][0] * 100:.1f}",
+        "LimPoolSize": f"{len(pool):,}",
+        "LimPoolThreshold": f"{showcase.FITS_AT_ALL:.2f}",
+        "LimHolmSurvivors": _word(survivors),
+        "LimHolmComparisons": _word(len(report.TIER2_COMPARISONS)),
+        "LimHolmMin": _scientific(min(adjusted.values())),
+        "LimHolmMax": _scientific(max(adjusted.values())),
+        "LimMfourSeries": f"{sum(int(row['m4_series']) for row in calendar.values()):,}",
+        "LimMfourFrequencies": _word(len(calendar)),
+        "LimDailyModalShare": f"{int(daily['modal_count']) / int(daily['census_series']) * 100:.0f}",
+        "LimDailyStarts": f"{int(daily['distinct_starts'])}",
+        "LimWeeklyFutureStarts": f"{int(calendar['Weekly']['starts_after_run_year'])}",
+        "LimOverheadShareMin": f"{min(map(share, lbfgs)) * 100:.0f}",
+        "LimOverheadShareMax": f"{max(map(share, lbfgs)) * 100:.0f}",
+        "LimParityMin": f"{min(map(parity, lbfgs)):.1f}",
+        "LimParityMax": f"{max(map(parity, lbfgs)):.1f}",
+        "LimNewtonLength": f"{int(newton['observations'])}",
+        "LimNewtonSpeedup": f"{float(newton['prophet_fit']) / float(newton['ours_fit']):.1f}",
+        "LimNewtonShare": f"{share(newton) * 100:.0f}",
+    }
+
+
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
-    return {**census(), **posterior(), **certificate(), **margin(), **newton()}
+    return {**census(), **posterior(), **certificate(), **margin(), **newton(),
+            **limitations()}
 
 
 def render(values):
