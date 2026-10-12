@@ -55,8 +55,11 @@ def test_every_cited_key_is_defined_and_every_entry_is_cited():
 
 
 def test_articles_and_books_carry_a_doi():
+    """Manuals and repositories have no DOI; they carry the URL that was read."""
     for key, (kind, body) in _entries().items():
-        if kind != "manual":
+        if kind in ("manual", "misc"):
+            assert re.search(r"url\s*=\s*\{https://[^}]+\}", body), f"{key} has no URL"
+        else:
             assert re.search(r"doi\s*=\s*\{10\.\d{4,9}/[^}]+\}", body), f"{key} has no DOI"
 
 

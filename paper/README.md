@@ -44,7 +44,10 @@ on eight workers. The margin against series length (#173) is
 `figures/margin_vs_length.pdf` in about three minutes; `--draw` redraws the figure
 from the committed CSV without refitting. The natural-vs-split Newton control (#174) is
 `experiments/newton.py`, writing `results/newton.csv` and `results/newton_traces.csv` in
-about two minutes.
+about two minutes. The limitations (#178) add two: `experiments/overhead.py` times the
+cost of calling CmdStan against whole fits (`results/overhead.csv`, under a minute), and
+`experiments/m4_calendar.py` records what M4's info file holds and how the census's
+starting dates are distributed (`results/m4_calendar.csv`; needs the M4 cache).
 
 ## Results not yet measured
 

@@ -1,0 +1,7 @@
+frequency,m4_series,census_series,metadata_columns,distinct_starts,modal_start,modal_count,starts_after_run_year,run_year
+Daily,4227,2714,M4id+category+Frequency+Horizon+SP+StartingDate,122,30-03-01 12:00,1506,0,2026
+Hourly,414,0,M4id+category+Frequency+Horizon+SP+StartingDate,0,,0,0,2026
+Monthly,48000,0,M4id+category+Frequency+Horizon+SP+StartingDate,0,,0,0,2026
+Quarterly,24000,0,M4id+category+Frequency+Horizon+SP+StartingDate,0,,0,0,2026
+Weekly,359,294,M4id+category+Frequency+Horizon+SP+StartingDate,42,03-01-73 12:00,30,43,2026
+Yearly,23000,0,M4id+category+Frequency+Horizon+SP+StartingDate,0,,0,0,2026

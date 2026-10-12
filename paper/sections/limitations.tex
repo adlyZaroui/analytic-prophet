@@ -2,29 +2,52 @@
 \label{sec:limitations}
 
 \begin{itemize}
-  \item \textbf{The gap shrinks with series length.} The posterior margin falls
-        by a factor of \LpDecline{} as a share of the posterior between $T = 300$
-        and $T = 2905$, and is not monotone in absolute terms.
-  \item \textbf{M4 barely exercises what Prophet is built for.} M4 is anonymised
-        and its dates are synthetic, so holiday and day-of-week effects have no
+  \item \textbf{The gap shrinks with series length, relative to the posterior.}
+        As a share of Prophet's $\lp$ the margin falls by a factor of
+        \LpDecline{} between $T = 300$ and $T = 2905$. The margin itself does not
+        fall: wherever Prophet runs L-BFGS it moves between \MarginLbfgsMin{} and
+        \MarginLbfgsMax{} nats with no trend in $T$ (\cref{fig:margin}), while
+        $\lp$ grows with every observation. On long series the difference in the
+        objective is a small part of it.
+  \item \textbf{M4 barely exercises what Prophet is built for.} M4 records a
+        domain for each series and no location, so there are no holidays to
+        specify, and its starting dates were withheld from participants during
+        the competition \citep{m4methods}. In this census \LimDailyModalShare\%
+        of the daily series share a single starting timestamp, and there are
+        \LimDailyStarts{} distinct starts among them; this implementation's loader
+        also reads two-digit years so that \LimWeeklyFutureStarts{} weekly series
+        start in the future. Both implementations see the same dates, so the
+        comparison is unaffected, but holiday and day-of-week effects have no
         held-out evidence here at all.
-  \item \textbf{Both implementations badly under-cover.} Each nominal 80\%
-        interval contains about a third of the held-out points, a shared failure
-        larger than anything separating the two.
+  \item \textbf{Both implementations badly under-cover.} The nominal 80\%
+        interval contains on average a fraction \LimCoverageOurs{} of the held-out
+        points for this implementation and \LimCoverageProphet{} for Prophet:
+        about a third, for both. That shared failure is larger than anything
+        separating the two.
   \item \textbf{Our intervals are wider.} Across the census they are wider than
-        Prophet's by a median of 2.47 in the series' own units --- a loss.
-  \item \textbf{The distribution has long tails both ways.} On the worst series
-        for this implementation Prophet's forecast is better by 78.7\%.
-  \item \textbf{Two of M4's six frequencies.} The census is every weekly and
-        daily series the protocol can measure; monthly, quarterly, yearly and
-        hourly are absent.
-  \item \textbf{Speed at small $T$ is mostly not the gradient.} Prophet pays a
-        fixed cost to launch a CmdStan subprocess, which dominates when there is
-        least to fit.
-  \item \textbf{Significance is uninformative at this $n$.} Every comparison
-        rejects at p-values far below any conventional threshold, which
+        Prophet's by a median of \LimWidthMedian{} in the series' own units, and
+        wider on \LimWidthWider{} of the \CensusSeries{} series --- a loss.
+  \item \textbf{The distribution has long tails both ways, and ours is the longer.}
+        The median RMSE advantage is \RmseAdvantage\%, but on the worst series for
+        this implementation its RMSE is \LimWorstCensus\% above Prophet's; on its
+        best it is \LimBestCensus\% below. Restricted to the \LimPoolSize{} series
+        on which both forecast to within an sMAPE of \LimPoolThreshold, the worst
+        is \LimWorstPool\%.
+  \item \textbf{Two of M4's \LimMfourFrequencies{} frequencies.} The census is
+        every weekly and daily series the protocol can measure, \CensusSeries{} of
+        M4's \LimMfourSeries{} \citep{makridakis2020m4}; monthly, quarterly,
+        yearly and hourly are absent.
+  \item \textbf{The speed difference is mostly not the gradient.} Where Prophet
+        runs L-BFGS, a CmdStan call capped at a single iteration takes
+        \LimOverheadShareMin--\LimOverheadShareMax\% of Prophet's whole fit, and
+        without it Prophet's fit takes between \LimParityMin{} and \LimParityMax{}
+        times as long as this implementation's: the measured advantage there is
+        the cost of calling CmdStan. Below $T = 100$ it is something else. At
+        $T = \LimNewtonLength$ this implementation is \LimNewtonSpeedup{} times
+        faster, the same call is only \LimNewtonShare\% of Prophet's fit, and the
+        rest is Stan's Newton method.
+  \item \textbf{Significance is uninformative at this $n$.} All
+        \LimHolmSurvivors{} of the \LimHolmComparisons{} comparisons survive Holm
+        adjustment, at $p$ between $\LimHolmMin$ and $\LimHolmMax$, which
         establishes only that the direction is consistent.
 \end{itemize}
-
-\pending{\#178}{generate the interval-width, worst-case and frequency figures from
-the committed results rather than stating them here}

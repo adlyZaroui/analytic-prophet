@@ -153,6 +153,32 @@ Process.* 1(4):586–597, 2007.
 - "the LARS modification calculates all possible Lasso estimates for a given
   problem"; the text refers to "the piecewise linear Lasso path".
 
+## The M4 data (§7, and the census throughout)
+
+**`makridakis2020m4`** — Makridakis, Spiliotis & Assimakopoulos, *Int. J. Forecast.*
+36(1):54–74, 2020. Cited for the competition and its 100,000 series. The full text is
+behind a paywall and was **not** read for anything beyond the title, abstract and
+metadata. The six frequencies and 100,000 series are confirmed instead from the
+organizers' info file (next entry), via `paper/results/m4_calendar.csv`: Yearly 23,000,
+Quarterly 24,000, Monthly 48,000, Weekly 359, Daily 4,227, Hourly 414.
+
+**`m4methods`** — the organizers' data release, `github.com/Mcompetitions/M4-methods`.
+The README says the info file gives each series' "ID (M4id), domain (category),
+frequency (Frequency), number of forecasts requested (Horizon), seasonal periods (SP)
+and starting date (StartingDate)", and: "Note that originally the starting date wasn't
+provided to the participants." No location is recorded.
+
+An earlier draft of §7 said M4's "dates are synthetic". Nothing here supports that
+word. What is supported is in `paper/results/m4_calendar.csv` (#178):
+
+- **the dates look partly like placeholders:** 1,506 of the census's 2,714 daily series
+  share the timestamp `30-03-01 12:00`, and there are 122 distinct starts among them;
+- **this project's loader moves some of them:** `StartingDate` has two-digit years and
+  the loader resolves them with a window that moves with the current year, so 43 weekly
+  series start in the future when run in 2026.
+
+The section now says those things instead.
+
 ## Prophet's issue tracker (§6)
 
 Re-read in full for this check: comments, authors and GitHub author associations.
