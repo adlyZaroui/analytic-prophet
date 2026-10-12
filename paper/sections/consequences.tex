@@ -32,8 +32,34 @@ maintainer added as the workaround. The maintainer diagnosed the stall as
 under-identification --- plausibly so, for ten points, two changepoints, an extra
 regressor and multiplicative seasonality --- and the reproducer is outside the
 convex configuration of \cref{sec:model}.
-\pending{\#172}{rerun on current Prophet and on the reformulation, with a smoothed
-prior, to separate the kink from under-identification}
+
+Ported exactly and run on current Prophet, the reproducer no longer stalls. Under
+the default rule, Newton reaches the best of \StallStarts{} random starts of this
+implementation to within $\StallNewtonShort$ nats. With L-BFGS forced, Stan stops
+after \StallLbfgsIter{} iterations on its parameter-change test, \StallLbfgsShort{}
+nats short, at a point that fails the first-order conditions even when its rates are
+read as zero (relaxed residual \StallLbfgsRelaxed). Both explanations are visible in
+that stop, and they do different work. Smoothing the prior alone (\cref{sec:evidence:surrogate}),
+with everything else held fixed, brings the same L-BFGS to within $\StallSmoothShort$
+nats at $\varepsilon = \StallSmoothEps$: the kink is what stops it. And the shortfall
+points along the softest direction of the curvature at the optimum, to a cosine of
+\StallLbfgsCosine, a direction \StallCondition{} times softer than the stiffest: the
+under-identification the maintainer diagnosed is what the stop costs. The variants
+the thread reports as curing the stall no longer change anything. On all
+\StallVariants{} of them L-BFGS stops short, by \StallVariantShortMin{} to
+\StallVariantShortMax{} nats after \StallVariantIterMin{} to \StallVariantIterMax{}
+iterations, Newton comes within $\StallVariantNewtonMax$, and no fit takes longer than
+\StallSecondsMax{} seconds. The workaround \#842 produced is what keeps short series
+on the optimum today.
+
+This implementation does not do better here by default. The model is not convex ---
+\StallStarts{} random starts reach \StallOptima{} distinct local optima, \StallBestReach{}
+of them the best --- and its own default rule, which follows Prophet's to Newton, stops
+at a saddle point: stationary, but with curvature $\StallOursEigen$ along one
+direction, \StallOursShort{} nats below the optimum that its L-BFGS reaches. From the
+same starting point Stan's Newton, which reflects negative eigenvalues of the Hessian,
+reaches the optimum; this implementation's adds damping to the Hessian instead, and
+stops at the saddle.
 
 \paragraph{Non-finite log-probabilities under logistic growth.}
 Issue~\#1032, opened by a maintainer, records a series under logistic growth with

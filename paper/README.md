@@ -51,7 +51,10 @@ starting dates are distributed (`results/m4_calendar.csv`; needs the M4 cache). 
 smoothing control (#168) is `experiments/smoothing.py`: Prophet's Stan program with the
 prior smoothed, fitted by Stan's L-BFGS across 17 values of ε at three lengths, writing
 `results/smoothing.csv` and `figures/smoothing.pdf` in about two minutes (needs CmdStan
-2.37.0, see below).
+2.37.0, see below). The prophet#842 reproducer (#172) is `experiments/issue842.py`: the
+thread's ten-point reprex on current Prophet, this implementation and the smoothed
+program, plus the variants the thread lists, writing `results/issue842.csv` and
+`results/issue842_variants.csv` in under half a minute.
 
 ## Results not yet measured
 
