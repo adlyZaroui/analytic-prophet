@@ -31,7 +31,11 @@ smoothing term's Hessian is diagonal and exact; F's is central differences of
 the analytic gradient. It is started from A and from L1, and the two answers
 are recorded. B is certified three ways: Stan's own gradient of the smoothed
 program at B, the Newton decrement (the improvement a further full Newton step
-predicts), and the agreement of the two starts.
+predicts), and the agreement of the two starts. Near the l1 end one start can
+crawl and exhaust its iterations -- at eps = 1e-8 the smoothed kink is nearly a
+kink again, which is #174's finding from the other side -- so the run records how
+many starts converged, takes the better, and refuses a B whose decrement says it
+has not converged.
 
     python paper/experiments/smoothing.py
 
@@ -66,13 +70,16 @@ LENGTHS = (300, 1000, 2905)
 # from |delta| by at most 1e-8, at 1 it is quadratic over every rate's range.
 EPSILONS = tuple(10.0 ** (half_decade / 2) for half_decade in range(-16, 1))
 NEWTON_ITERATIONS = 500
+# A Newton decrement below this is converged at any lp__ this experiment sees.
+CONVERGED = 1e-9
 
 FIELDS = ["observations", "epsilon",
           "lp_smooth_A", "lp_smooth_B", "lp_smooth_L1",
           "lp_l1_A", "lp_l1_B", "lp_l1_L1", "lp_l1_prophet",
           "gap_smooth", "gap_l1", "bias_l1", "bias_smooth", "total_l1",
           "stan_algorithm", "stan_iterations", "stan_grad_norm", "stan_stopped_by",
-          "newton_iterations", "newton_decrement", "starts_disagree", "stan_grad_at_B",
+          "newton_iterations", "newton_decrement", "starts_converged", "starts_disagree",
+          "stan_grad_at_B",
           "l1_certificate"]
 
 
@@ -215,6 +222,9 @@ def measure(size):
 
         solutions = [tight_solve(model, design, epsilon, start) for start in (xa, l1)]
         xb, fb, newton_iterations, decrement = min(solutions, key=lambda s: s[1])
+        if not decrement < CONVERGED:
+            raise RuntimeError(f"T={size}, eps={epsilon}: no start converged "
+                               f"(best Newton decrement {decrement:.2e})")
         lp_smooth_B, frame_B = lp_smooth(xb, epsilon)
         lp_smooth_A, lp_smooth_L1 = lp_smooth(xa, epsilon)[0], lp_smooth(l1, epsilon)[0]
         lp_l1_A, lp_l1_B = lp_l1(xa)[0], lp_l1(xb)[0]
@@ -228,7 +238,8 @@ def measure(size):
             "stan_algorithm": algorithm, "stan_iterations": iterations,
             "stan_grad_norm": grad_norm, "stan_stopped_by": reason,
             "newton_iterations": newton_iterations, "newton_decrement": decrement,
-            "starts_disagree": abs(solutions[0][1] - solutions[1][1]),
+            "starts_converged": sum(1 for solution in solutions if solution[3] < CONVERGED),
+            "starts_disagree": float(abs(solutions[0][1] - solutions[1][1])),
             "stan_grad_at_B": float(np.max(np.abs(frame_B.drop(columns=["lp__"]).to_numpy()))),
             "l1_certificate": certificate,
         })
@@ -261,7 +272,7 @@ def main(argv=None):
         writer = csv.DictWriter(handle, fieldnames=FIELDS, lineterminator="\n")
         writer.writeheader()
         for row in rows:
-            writer.writerow({key: (repr(value) if isinstance(value, float) else value)
+            writer.writerow({key: (repr(float(value)) if isinstance(value, float) else value)
                              for key, value in row.items()})
     with open(RESULTS.with_suffix(".meta.json"), "w") as handle:
         json.dump(harness.run_metadata({"lengths": list(LENGTHS), "epsilons": list(EPSILONS),
