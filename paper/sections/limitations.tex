@@ -46,6 +46,11 @@
         $T = \LimNewtonLength$ this implementation is \LimNewtonSpeedup{} times
         faster, the same call is only \LimNewtonShare\% of Prophet's fit, and the
         rest is Stan's Newton method.
+  \item \textbf{This implementation's Newton path can stop at a saddle.} Below
+        $T = 100$ it follows Prophet's rule to Newton, and its damped Newton
+        method does not use negative curvature. On the non-convex reproducer of
+        \cref{sec:consequences} it stops at a saddle point \StallOursShort{} nats
+        below the optimum its L-BFGS reaches, where Stan's Newton does not.
   \item \textbf{Significance is uninformative at this $n$.} All
         \LimHolmSurvivors{} of the \LimHolmComparisons{} comparisons survive Holm
         adjustment, at $p$ between $\LimHolmMin$ and $\LimHolmMax$, which

@@ -325,10 +325,52 @@ def smoothing():
     return out
 
 
+def stall():
+    """#172: the prophet#842 reproducer on current Prophet and this implementation."""
+    points = {row["point"]: row for row in csv.DictReader(open(PAPER_RESULTS / "issue842.csv"))}
+    variants = list(csv.DictReader(open(PAPER_RESULTS / "issue842_variants.csv")))
+    summary = json.loads((PAPER_RESULTS / "issue842.meta.json").read_text())["summary"]
+
+    def value(name, column):
+        return float(points[name][column])
+
+    eigenvalues = summary["eigenvalues"]
+    smoothed = {float(row["epsilon"]): row for name, row in points.items()
+                if name.startswith("smoothed")}
+    best_smoothed = min(smoothed.values(), key=lambda row: float(row["shortfall"]))
+    lbfgs = [row for row in variants if row["algorithm"] == "LBFGS"]
+    newton = [row for row in variants if row["algorithm"] == "Newton"]
+    optima = summary["local_optima"]
+    return {
+        "StallLbfgsIter": f"{int(points['prophet LBFGS']['iterations'])}",
+        "StallLbfgsShort": f"{value('prophet LBFGS', 'shortfall'):.3f}",
+        "StallLbfgsRelaxed": f"{value('prophet LBFGS', 'residual_relaxed'):.2f}",
+        "StallLbfgsCosine": f"{value('prophet LBFGS', 'cos_softest'):.3f}",
+        "StallNewtonShort": _scientific(value("prophet Newton", "shortfall")),
+        "StallNewtonIter": f"{int(points['prophet Newton']['iterations'])}",
+        "StallSmoothShort": _scientific(float(best_smoothed["shortfall"])),
+        "StallSmoothEps": _scientific(float(best_smoothed["epsilon"])).replace("1.0\\times", ""),
+        "StallSmoothIdentical": f"{value('smoothed eps=1e-08', 'shortfall'):.3f}",
+        "StallCondition": f"{eigenvalues[-1] / eigenvalues[0]:.0f}",
+        "StallStarts": f"{sum(count for _, count in optima)}",
+        "StallOptima": _word(len(optima)),
+        "StallBestReach": f"{optima[0][1]}",
+        "StallOursShort": f"{value('ours default', 'shortfall'):.2f}",
+        "StallOursEigen": f"{value('ours default', 'min_eigenvalue'):.2f}",
+        "StallVariants": _word(len(lbfgs)),
+        "StallVariantShortMin": f"{min(float(r['shortfall']) for r in lbfgs):.3f}",
+        "StallVariantShortMax": f"{max(float(r['shortfall']) for r in lbfgs):.2f}",
+        "StallVariantIterMin": f"{min(int(r['iterations']) for r in lbfgs)}",
+        "StallVariantIterMax": f"{max(int(r['iterations']) for r in lbfgs)}",
+        "StallVariantNewtonMax": _scientific(max(float(r["shortfall"]) for r in newton)),
+        "StallSecondsMax": f"{max(float(r['seconds']) for r in variants):.2f}",
+    }
+
+
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
     return {**census(), **posterior(), **certificate(), **margin(), **newton(),
-            **limitations(), **smoothing()}
+            **limitations(), **smoothing(), **stall()}
 
 
 def render(values):
