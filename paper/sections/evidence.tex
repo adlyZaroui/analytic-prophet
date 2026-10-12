@@ -126,11 +126,62 @@ scatter proves nothing, and reported beside it for that reason.}
 \subsection{Smoothing the prior inside Stan}
 \label{sec:evidence:surrogate}
 
-\pending{\#168}{Prophet's Stan program with $\lvert\delta\rvert$ replaced by
-$\sqrt{\delta^2 + \varepsilon^2}$, refitted with Stan's own L-BFGS across
-$\varepsilon$, holding the optimizer, data, initialisation and software stack
-fixed. Reported as two curves: the distance from each smoothed problem's own
-optimum, and the distance of that optimum from the $\ell_1$ one.}
+The most direct attribution holds everything fixed but the smoothness. We replace
+$\lvert\delta_j\rvert$ in Prophet's Stan program by
+$\sqrt{\delta_j^2 + \varepsilon^2} - \varepsilon$, which is zero at zero, never exceeds
+$\lvert\delta_j\rvert$, and tends to it as $\varepsilon \to 0$, and fit it with Stan's
+own L-BFGS: the same data, the same initialisation, the same tolerances and a fixed
+seed, compiled with the CmdStan Prophet ships, whose unmodified program reproduces
+Prophet's executable exactly (\cref{sec:reproducibility}). There are \SmoothValues{}
+values of $\varepsilon$, from $\SmoothEpsMin$ to $1$, at the three lengths of
+\cref{sec:evidence:lp}.
+
+Measuring Stan's result against the $\ell_1$ optimum alone would mix two things: how
+far Stan stops from the problem it was given, and how far that problem has moved. So
+each smoothed problem is also solved independently, by a damped Newton method with the
+smoothing term's Hessian exact, started both from Stan's point and from the $\ell_1$
+optimum; its Newton decrement is at most $\SmoothDecrementMax$ nats in every case. Two
+curves follow (\cref{fig:smoothing}). The \emph{convergence gap} is how far Stan's
+L-BFGS stops short of the smoothed problem's own optimum; the \emph{smoothing bias} is
+how far that optimum sits from the $\ell_1$ one. Each is scored under both densities, the
+smoothed one and Prophet's.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/smoothing}
+  \caption{Prophet's Stan program with $\lvert\delta_j\rvert$ replaced by
+    $\sqrt{\delta_j^2+\varepsilon^2}-\varepsilon$, fitted by Stan's own L-BFGS. Blue: the
+    convergence gap, how far Stan stops short of the smoothed problem's own optimum.
+    Orange: the smoothing bias, how far that optimum sits from Prophet's $\ell_1$ optimum.
+    Solid lines are scored by the density each point was optimal for, dashed by the
+    other; scored by Prophet's density the convergence gap is slightly negative in a few
+    cells, drawn open at their magnitude. Dotted: Prophet's own shortfall on its actual
+    problem. Peyton Manning, default configuration.}
+  \label{fig:smoothing}
+\end{figure}
+
+At $\varepsilon = \SmoothEpsMin$ the smoothed program is Prophet's for every practical
+purpose, and Stan stops short of its optimum by amounts comparable to Prophet's
+shortfall on the $\ell_1$ problem: \SmoothGapAtMinShort, \SmoothGapAtMinMid{} and
+\SmoothGapAtMinLong{} nats at the three lengths, against \LpMarginShort, \LpMarginMid{}
+and \LpMarginLong. As $\varepsilon$
+grows the convergence gap falls, by a factor of up to \SmoothDropShort, \SmoothDropMid{}
+and \SmoothDropLong{} at the three lengths, while the smoothing bias rises, in proportion
+to $\varepsilon$ up to $\varepsilon = 10^{-2}$, and the two cross near $\varepsilon = \SmoothCrossingShort$,
+$\SmoothCrossingMid$ and $\SmoothCrossingLong$. At the best $\varepsilon$ on the grid
+($\SmoothBestEpsShort$, $\SmoothBestEpsMid$ and $\SmoothBestEpsLong$), Stan's own L-BFGS on
+the smoothed program lands within $\SmoothBestShort$, $\SmoothBestMid$ and
+$\SmoothBestLong$ nats of Prophet's $\ell_1$ optimum --- \SmoothFactorShort, \SmoothFactorMid{}
+and \SmoothFactorLong{} times closer than Prophet gets on its actual problem. Nothing but the
+smoothness of the objective changed.
+
+The gap does not vanish as $\varepsilon$ grows. Wherever $\varepsilon \ge 10^{-4}$ it
+stays between $\SmoothPlateauMinShort$ and $\SmoothPlateauMaxShort$ nats at
+$T = 300$, and between $\SmoothPlateauMinLong$ and $\SmoothPlateauMaxLong$ at $T = 2905$,
+where Stan ends on its relative-gradient test, as it does in \SmoothStoppedGradient{} of
+the \SmoothRuns{} runs. What remains there is not the kink, which the smoothed problem does
+not have, but the point at which Stan's stopping rule declares a smooth problem
+solved.
 
 \subsection{A negative control: removing the trend}
 \label{sec:evidence:flat}
