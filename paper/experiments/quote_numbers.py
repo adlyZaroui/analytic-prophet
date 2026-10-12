@@ -267,10 +267,68 @@ def limitations():
     }
 
 
+def _log_crossing(epsilon, gap, bias):
+    """Where the falling gap meets the rising bias, interpolated in log space."""
+    import math
+    for i in range(1, len(epsilon)):
+        if bias[i] > gap[i] and bias[i - 1] <= gap[i - 1]:
+            x0, x1 = math.log10(epsilon[i - 1]), math.log10(epsilon[i])
+            r0, r1 = math.log10(gap[i - 1] / bias[i - 1]), math.log10(gap[i] / bias[i])
+            return 10 ** (x0 + (x1 - x0) * r0 / (r0 - r1))
+    raise ValueError("the curves do not cross on this grid")
+
+
+def _two_figures(value):
+    """Two significant figures, in LaTeX's notation when small: for math mode."""
+    return _scientific(value) if abs(value) < 1e-3 else f"{value:.2g}"
+
+
+def smoothing():
+    """#168: Prophet's program with the prior smoothed, fitted by Stan's L-BFGS."""
+    rows = list(csv.DictReader(open(PAPER_RESULTS / "smoothing.csv")))
+    for row in rows:
+        for key, value in row.items():
+            if key not in ("stan_algorithm", "stan_stopped_by"):
+                row[key] = float(value)
+    by = defaultdict(list)
+    for row in rows:
+        by[int(row["observations"])].append(row)
+    tags = {300: "Short", 1000: "Mid", 2905: "Long"}
+    epsilons = sorted({row["epsilon"] for row in rows})
+    out = {"SmoothValues": f"{len(epsilons)}",
+           "SmoothEpsMin": _scientific(epsilons[0]).replace("1.0\\times", ""),
+           "SmoothRuns": f"{len(rows)}",
+           "SmoothStoppedGradient": f"{sum(1 for r in rows if 'relative gradient' in r['stan_stopped_by'])}",
+           "SmoothDecrementMax": _scientific(max(r["newton_decrement"] for r in rows)),
+           "SmoothIterMin": f"{min(r['stan_iterations'] for r in rows):,.0f}",
+           "SmoothIterMax": f"{max(r['stan_iterations'] for r in rows):,.0f}"}
+    for size, cells in sorted(by.items()):
+        tag = tags[size]
+        cells.sort(key=lambda r: r["epsilon"])
+        first = cells[0]
+        prophet = first["lp_l1_L1"] - first["lp_l1_prophet"]
+        best = min(cells, key=lambda r: r["total_l1"])
+        crossing = _log_crossing([r["epsilon"] for r in cells], [r["gap_smooth"] for r in cells],
+                                 [r["bias_l1"] for r in cells])
+        plateau = [r["gap_smooth"] for r in cells if r["epsilon"] >= 1e-4]
+        drop = first["gap_smooth"] / min(r["gap_smooth"] for r in cells)
+        out.update({
+            f"SmoothDrop{tag}": f"{float(f'{drop:.2g}'):,.0f}",
+            f"SmoothGapAtMin{tag}": f"{first['gap_smooth']:.2f}",
+            f"SmoothBest{tag}": _two_figures(best["total_l1"]),
+            f"SmoothBestEps{tag}": _scientific(best["epsilon"]).replace("1.0\\times", ""),
+            f"SmoothFactor{tag}": f"{prophet / best['total_l1']:,.0f}",
+            f"SmoothCrossing{tag}": _scientific(crossing),
+            f"SmoothPlateauMin{tag}": _two_figures(min(plateau)),
+            f"SmoothPlateauMax{tag}": _two_figures(max(plateau)),
+        })
+    return out
+
+
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
     return {**census(), **posterior(), **certificate(), **margin(), **newton(),
-            **limitations()}
+            **limitations(), **smoothing()}
 
 
 def render(values):

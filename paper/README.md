@@ -47,7 +47,11 @@ from the committed CSV without refitting. The natural-vs-split Newton control (#
 about two minutes. The limitations (#178) add two: `experiments/overhead.py` times the
 cost of calling CmdStan against whole fits (`results/overhead.csv`, under a minute), and
 `experiments/m4_calendar.py` records what M4's info file holds and how the census's
-starting dates are distributed (`results/m4_calendar.csv`; needs the M4 cache).
+starting dates are distributed (`results/m4_calendar.csv`; needs the M4 cache). The
+smoothing control (#168) is `experiments/smoothing.py`: Prophet's Stan program with the
+prior smoothed, fitted by Stan's L-BFGS across 17 values of ε at three lengths, writing
+`results/smoothing.csv` and `figures/smoothing.pdf` in about two minutes (needs CmdStan
+2.37.0, see below).
 
 ## Results not yet measured
 

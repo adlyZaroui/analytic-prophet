@@ -65,6 +65,7 @@ import harness                                      # noqa: E402
 import stan_runner as runner                        # noqa: E402
 
 RESULTS = PAPER / "results" / "smoothing.csv"
+FIGURE = PAPER / "figures" / "smoothing.pdf"
 LENGTHS = (300, 1000, 2905)
 # From effectively l1 to effectively quadratic: at 1e-8 the surrogate differs
 # from |delta| by at most 1e-8, at 1 it is quadratic over every rate's range.
@@ -176,8 +177,8 @@ def _point(x, layout):
             "sigma_obs": x[layout.sigma_obs_idx], "beta": x[layout.beta]}
 
 
-def measure(size):
-    """Every eps at one length, as rows."""
+def measure(size, epsilons=EPSILONS):
+    """Every eps at one length, as rows. `epsilons` lets a test refit one cell."""
     from prophet import Prophet
 
     from analytic_prophet import AnalyticProphet
@@ -214,7 +215,7 @@ def measure(size):
     lp_prophet = lp_l1(prophet_point)[0]
 
     rows = []
-    for epsilon in EPSILONS:
+    for epsilon in epsilons:
         A, result = runner.fit("smooth", data, inits, epsilon=epsilon, sig_figs=18,
                                seed=harness.SEED)
         algorithm, iterations, grad_norm, reason = _parse_stdout(result.runset.stdout_files[0])
@@ -257,11 +258,75 @@ def read(path=RESULTS):
     return rows
 
 
+def draw(rows, out=FIGURE):
+    """The two curves, each under both densities, one panel per length.
+
+    Log axes. Three of the four curves are positive by construction: B is the
+    smoothed problem's optimum and L1 is Prophet's, so each beats the other
+    point under its own density. The fourth -- the convergence gap scored by
+    the l1 density -- need not be: B is not optimal for Prophet's problem, so A
+    can score slightly higher there at large eps. That curve is drawn as its
+    magnitude, with open markers where it is negative, rather than dropped by
+    the log axis or squeezed onto a symmetric-log one. `draw` refuses any other
+    non-positive value instead of hiding it.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    for column in ("gap_smooth", "bias_l1", "bias_smooth"):
+        if any(row[column] <= 0 for row in rows):
+            raise ValueError(f"{column} has a non-positive value, which a log axis "
+                             "cannot show; the figure needs rethinking first")
+    matplotlib.rcParams.update({"font.size": 8, "pdf.fonttype": 42})
+    lengths = sorted({int(row["observations"]) for row in rows})
+    figure, axes = plt.subplots(1, len(lengths), figsize=(7.2, 2.9), sharey=True)
+    lines = (("gap_smooth", "#4c72b0", "-", "o", "convergence gap, smoothed density"),
+             ("gap_l1", "#4c72b0", "--", ".",
+              "convergence gap, $\\ell_1$ density (magnitude; open = negative)"),
+             ("bias_l1", "#dd8452", "-", "s", "smoothing bias, $\\ell_1$ density"),
+             ("bias_smooth", "#dd8452", "--", None, "smoothing bias, smoothed density"))
+    for axis, size in zip(axes, lengths):
+        cells = sorted((row for row in rows if int(row["observations"]) == size),
+                       key=lambda row: row["epsilon"])
+        epsilon = [row["epsilon"] for row in cells]
+        for column, colour, style, marker, label in lines:
+            values = [abs(row[column]) for row in cells]
+            axis.plot(epsilon, values, color=colour, linestyle=style, marker=marker,
+                      markersize=2.6, linewidth=0.9, label=label)
+            negative = [(e, v) for e, v, row in zip(epsilon, values, cells) if row[column] < 0]
+            if negative:
+                axis.plot(*zip(*negative), linestyle="none", marker="o", markersize=4.5,
+                          markerfacecolor="white", markeredgecolor=colour, markeredgewidth=0.9)
+        prophet = cells[0]["lp_l1_L1"] - cells[0]["lp_l1_prophet"]
+        axis.axhline(prophet, color="0.45", linestyle=":", linewidth=0.9,
+                     label="Prophet's own shortfall on the $\\ell_1$ problem")
+        axis.set_xscale("log")
+        axis.set_yscale("log")
+        axis.set_title(f"$T = {size}$", fontsize=8)
+        axis.set_xlabel("smoothing $\\varepsilon$")
+        axis.grid(True, which="major", color="0.9", linewidth=0.5)
+    axes[0].set_ylabel("nats (better point $-$ worse point)")
+    handles, labels = axes[0].get_legend_handles_labels()
+    figure.legend(handles, labels, loc="upper center", ncol=2, fontsize=6.5,
+                  frameon=False, bbox_to_anchor=(0.5, 1.0))
+    figure.tight_layout(rect=(0, 0, 1, 0.84))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(out, metadata={"CreationDate": None, "ModDate": None})
+    plt.close(figure)
+    return out
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--workers", type=int, default=min(len(LENGTHS), os.cpu_count() or 1))
+    parser.add_argument("--draw", action="store_true",
+                        help="only redraw the figure from the committed results")
     args = parser.parse_args(argv)
+    if args.draw:
+        print(f"wrote {draw(read()).relative_to(REPO)}")
+        return
     runner.cmdstan_path()
     for variant in ("original", "smooth"):
         runner.model(variant)                 # compile once, before the pool
@@ -280,6 +345,7 @@ def main(argv=None):
                   handle, indent=1, sort_keys=True)
         handle.write("\n")
     print(f"wrote {RESULTS.relative_to(REPO)} ({len(rows)} rows)")
+    print(f"wrote {draw(read()).relative_to(REPO)}")
 
 
 if __name__ == "__main__":
