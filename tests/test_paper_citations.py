@@ -45,7 +45,8 @@ def _cited():
 
 
 def _normalise(text):
-    return re.sub(r"\s+", " ", text).strip().lower()
+    """Case, line breaks and LaTeX's escaped percent sign do not count."""
+    return re.sub(r"\s+", " ", text.replace("\\%", "%")).strip().lower()
 
 
 def test_every_cited_key_is_defined_and_every_entry_is_cited():
@@ -121,3 +122,43 @@ def test_lewis_and_overton_are_not_cited_for_struggling_quasi_newton_methods():
         # the sentence the citation belongs to, from its start to the citation
         sentence = re.split(r"(?<=[.!?])\s", text[:match.start()])[-1]
         assert "struggle" not in sentence and "textbook" not in sentence, sentence
+
+
+def test_every_issue_is_cited_as_a_link_not_a_bare_number():
+    """Issues are cited through \\prophetissue or \\projectissue, which link to the
+    thread; a bare \\#842 would print a number nobody can follow."""
+    tex = _tex()
+    bare = re.findall(r"\\#\d+", tex)
+    assert not bare, f"bare issue numbers in the paper: {sorted(set(bare))}"
+    preamble = (PAPER / "main.tex").read_text()
+    assert r"https://github.com/facebook/prophet/issues/#1" in preamble
+    assert r"https://github.com/adlyZaroui/analytic-prophet/issues/#1" in preamble
+    for argument in re.findall(r"\\pending\{([^}]*)\}", tex):
+        assert argument.isdigit(), f"\\pending{{{argument}}} does not link to its issue"
+
+
+def test_every_upstream_issue_cited_is_recorded_with_its_link():
+    record = RECORD.read_text()
+    for number in set(re.findall(r"\\prophetissue\{(\d+)\}", _tex())):
+        assert f"https://github.com/facebook/prophet/issues/{number}" in record, number
+
+
+def _paragraph(text, title):
+    start = text.index(r"\paragraph{" + title)
+    following = text.find(r"\paragraph{", start + 1)
+    return text[start:following if following != -1 else len(text)]
+
+
+def test_no_upstream_report_is_put_down_to_the_kink_beyond_the_experiments():
+    """#179: an upstream report is attributed to the kink only as far as an
+    experiment in paper/ shows. #842's attribution rests on the smoothing control
+    run on its own reproducer (#172); #1032's has no experiment and is
+    disclaimed; #1422 and #1280 are not attributed at all."""
+    text = (PAPER / "sections" / "consequences.tex").read_text()
+    assert "kink" not in _paragraph(text, "Exact sparsity").lower()
+    assert "kink" not in _paragraph(text, "Sensitivity to the prior scale").lower()
+    nan = _normalise(_paragraph(text, "Non-finite log-probabilities"))
+    assert nan.count("kink") == 1 and "do not count it as evidence for the kink" in nan
+    stalls = _paragraph(text, "Stalls")
+    assert r"\cref{sec:evidence:surrogate}" in stalls
+    assert (PAPER / "results" / "issue842.csv").exists()

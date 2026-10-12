@@ -8,35 +8,43 @@ non-differentiability: none of them mentions it.
 \paragraph{Exact sparsity and the plotting threshold.}
 Prophet's changepoint rates never reach zero under linear growth, so deciding
 which changepoints ``matter'' needs a cutoff; Prophet's plotting code draws those
-with $\lvert\bar\delta_j\rvert \ge 0.01$. In issue~\#1422 a user reads that cutoff
-as selecting the trend's breakpoints, and another participant in the thread
-corrects it: the threshold is ``applied only for visualization''. We cite the
+with $\lvert\bar\delta_j\rvert \ge 0.01$. In issue~\prophetissue{1422} a user reads
+that cutoff as selecting the trend's breakpoints: ``only the changepoints having a delta
+> 0.01 (threshold) are selected. The piecewise linear trend model uses these selected
+changepoints as its breakpoints.'' Another participant in the thread corrects it: the
+threshold is ``applied only for visualization''. We cite the
 thread for the confusion, which the thread itself resolved correctly, rather than
 for a defect. Under the reformulation rates reach zero exactly, and the question
 answers itself.
 
 \paragraph{Sensitivity to the prior scale.}
-In issue~\#1280 a change of $2.2\times10^{-10}$ in
-\code{changepoint_prior_scale} --- exactly the difference between $0.01$ and
-its single-precision representation --- moved forecast accuracy by 2\%. The
-headline did not reproduce; a maintainer offered as ``one possibility'' that the
-optimizer ``was running into issues with one of the changepoint prior scales'',
-and judged the residual variation ``inline with expectation''.
+In issue~\prophetissue{1280} a user changes \code{changepoint_prior_scale} by
+$2.2\times10^{-10}$ --- exactly the difference between $0.01$ and its single-precision
+representation --- and reports ``a decrease of around 2\% accuracy''. The headline did
+not survive: ``I have not been able to reproduce the 2\% case'', the reporter wrote,
+finding ``a variation of 0.8\% accuracy'' on a simplified model instead. A maintainer
+offered as ``one possibility'' that the optimizer ``was running into issues with one of
+the changepoint prior scales'', suggested trying Newton, and judged the variation
+``inline with expectation''.
 The solution path of \cref{sec:evidence:path} is the direct test of that
 possibility. At exactly the thread's change, $\tau = 0.01$ against its single-precision
 neighbour, Prophet's rates on the Peyton Manning series move by up to
 \TauPairProphetFixed{} and its $\lp$ by up to \TauPairLpMax{} nats, while the exact
 optimum moves by $\TauPairExact$; the forecast a year ahead moves by at most
 \TauPairForecastMax\%. That bears out the maintainer's possibility as a mechanism, on a
-different series. It does not reproduce the thread's 2\%.
+different series. It does not reproduce the thread's 2\%, which its reporter could not
+reproduce either.
 
 \paragraph{Stalls, and the origin of the short-series rule.}
-Issue~\#842 reports a ten-point series on which L-BFGS stalls indefinitely. It
-is the origin of Prophet's rule that runs Newton below 100 observations, which a
-maintainer added as the workaround. The maintainer diagnosed the stall as
-under-identification --- plausibly so, for ten points, two changepoints, an extra
-regressor and multiplicative seasonality --- and the reproducer is outside the
-convex configuration of \cref{sec:model}.
+Issue~\prophetissue{842} reports a ten-point series on which L-BFGS stalls
+indefinitely. It is the origin of Prophet's rule that runs Newton below 100
+observations: on 2019-04-22 a maintainer announced ``a rule that defaults to Newton if
+there are less than X datapoints, where X will probably be 100'', released to CRAN on
+2019-05-21.
+The maintainer diagnosed the stall as under-identification, ``happening because the
+model parameters are not very well specified by so little data'' --- plausibly so, for
+ten points, two changepoints, an extra regressor and multiplicative seasonality --- and
+the reproducer is outside the convex configuration of \cref{sec:model}.
 
 Ported exactly and run on current Prophet, the reproducer no longer stalls. Under
 the default rule, Newton reaches the best of \StallStarts{} random starts of this
@@ -54,8 +62,8 @@ the thread reports as curing the stall no longer change anything. On all
 \StallVariants{} of them L-BFGS stops short, by \StallVariantShortMin{} to
 \StallVariantShortMax{} nats after \StallVariantIterMin{} to \StallVariantIterMax{}
 iterations, Newton comes within $\StallVariantNewtonMax$, and no fit takes longer than
-\StallSecondsMax{} seconds. The workaround \#842 produced is what keeps short series
-on the optimum today.
+\StallSecondsMax{} seconds. The workaround \prophetissue{842} produced is what keeps
+short series on the optimum today.
 
 This implementation does not do better here by default. The model is not convex ---
 \StallStarts{} random starts reach \StallOptima{} distinct local optima, \StallBestReach{}
@@ -67,12 +75,16 @@ reaches the optimum; this implementation's adds damping to the Hessian instead, 
 stops at the saddle.
 
 \paragraph{Non-finite log-probabilities under logistic growth.}
-Issue~\#1032, opened by a maintainer, records a series under logistic growth with
-multiplicative seasonality on which L-BFGS stalls and Newton fails with
-\texttt{B[1] is -nan}. Reproducing it in the thread it came from (\#842), the
-maintainer found L-BFGS exiting on log-probabilities of NaN and the automatic
-Newton retry failing in the same way. That is outside the convex setting, and a non-finite
-value is a different failure from stopping short. The thread remains open and its
+Issue~\prophetissue{1032}, opened by a maintainer, records a series under logistic
+growth with multiplicative seasonality on which L-BFGS stalls and Newton fails with
+\texttt{B[1] is -nan}. Reproducing it in the thread it came from
+(\prophetissue{842}), the maintainer found that ``the L-BFGS doesn't freeze but it does
+exit with an error since it starts getting log probabilities of NaN, and then it
+automatically retries with Newton which also runs into NaNs''. The reporter adds that
+training ``no longer stalls when I modify the number of changepoints (either adding more
+or less) or perturb the training data even very slightly'', which is suggestive and no
+more. That is outside the convex setting, and a non-finite value is a different failure
+from stopping short. The thread remains open and its
 mechanism is not established; we cite it as an observed failure and do not count
 it as evidence for the kink.
 

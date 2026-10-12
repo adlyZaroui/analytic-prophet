@@ -181,32 +181,44 @@ The section now says those things instead.
 
 ## Prophet's issue tracker (§6)
 
-Re-read in full for this check: comments, authors and GitHub author associations.
+Re-read in full for this check: comments, authors, dates and GitHub author associations.
+The paper cites each issue as a link to its thread. None of the four threads mentions
+non-differentiability, the kink, L1, the Laplace prior or a subgradient; that was checked
+by searching every comment, so §6's "none of them mentions it" stands.
 
-- **#1422** (closed). The opening post: "only the changepoints having a delta > 0.01
-  (**threshold**) are selected. The piecewise linear trend model uses these selected
-  changepoints as its breakpoints." The reply "Delta is an absolute threshold applied
-  only for visualization and doesn't affect the model or its predictions" is by
-  `benmwhite`, whose GitHub association with the repository is *none*. No maintainer
-  posted. The paper said "a contributor corrects it … which upstream resolved
-  correctly"; it now says another participant corrected it and the thread resolved it.
-  Prophet's `add_changepoints_to_plot` uses `threshold: float = 0.01` on
-  `np.abs(np.nanmean(m.params['delta'], axis=0))`.
-- **#1280** (closed), opened by `FredericoCoelhoNunes`: a change of
-  `changepoint_prior_scale` "from 0.01 to 0.009999999776482582" moved accuracy by
-  "around 2%". `bletham` (Ben Letham, a Prophet author): "One possibility is that in
-  the earlier dataset the optimizer was running into issues with one of the
-  changepoint prior scales"; "this seems inline with expectation to me" (the source's
-  spelling).
-- **#842** (closed). Ten weekly points, `seasonality.mode = "multiplicative"`,
-  `n.changepoints = 2`, an extra regressor; the fit stalls until the process is
-  killed. `bletham`: the model parameters "are not very well specified";
-  "overparameterization"; "the next version I will put a rule that defaults to Newton
-  if there are less than X datapoints".
-- **#1032** (open), opened by `bletham` from humphreyapplebee's report: logistic
-  growth, multiplicative seasonality; "With LBGFS … the training stalls"; with Newton,
-  "B[1] is -nan, but must not be nan!". The NaN log-probabilities come from `bletham`'s
-  reproduction in #842: "for me the L-BFGS doesn't freeze but it does exit with an
-  error since it starts getting log probabilities of NaN, and then it automatically
-  retries with Newton which also runs into NaNs and throws the B[1] error". The paper
-  had attributed that to #1032 itself; it now says where it comes from.
+- **[#1422](https://github.com/facebook/prophet/issues/1422)** (closed). The opening post
+  reads the plotting cutoff as selecting breakpoints: "only the changepoints having a delta
+  > 0.01 (threshold) are selected. The piecewise linear trend model uses these selected
+  changepoints as its breakpoints." The source puts **threshold** in bold; the paper quotes
+  it plain. The reply "Delta is an absolute threshold applied only for visualization and
+  doesn't affect the model or its predictions" is by `benmwhite`, whose GitHub association
+  with the repository is *none*. No maintainer posted. The paper said "a contributor
+  corrects it … which upstream resolved correctly"; it now says another participant
+  corrected it and the thread resolved it. Prophet's `add_changepoints_to_plot` uses
+  `threshold: float = 0.01` on `np.abs(np.nanmean(m.params['delta'], axis=0))`.
+- **[#1280](https://github.com/facebook/prophet/issues/1280)** (closed). The opening post
+  (`FredericoCoelhoNunes`, 2020-01-15) changes `changepoint_prior_scale` "from 0.01 to
+  0.009999999776482582", which is exactly `float32(0.01)`, and reports "a decrease of
+  around 2% accuracy". Three weeks later the same reporter: "I have not been able to
+  reproduce the 2% case", finding "a variation of 0.8% accuracy" on a simplified model.
+  `bletham` (Ben Letham, a Prophet author), 2020-02-05: "One possibility is that in the
+  earlier dataset the optimizer was running into issues with one of the changepoint prior
+  scales; you might try the Newton optimizer which I have found to be a bit more robust
+  than the default"; "this seems inline with expectation to me" (the source's spelling).
+- **[#842](https://github.com/facebook/prophet/issues/842)** (closed). Ten weekly points,
+  `seasonality.mode = "multiplicative"`, `n.changepoints = 2`, an extra regressor; the fit
+  stalls until the process is killed. `bletham`, 2019-02-11: the stalls are "happening
+  because the model parameters are not very well specified by so little data". 2019-04-22:
+  "In the meantime, the next version I will put a rule that defaults to Newton if there are
+  less than X datapoints, where X will probably be 100." 2019-05-21: "Pushed to CRAN".
+  2019-09-05: "Generally the issue seems to be overparameterization of the model."
+- **[#1032](https://github.com/facebook/prophet/issues/1032)** (open), opened by `bletham`
+  from humphreyapplebee's report: logistic growth, multiplicative seasonality; "With LBGFS
+  … the training stalls"; with Newton, "B[1] is -nan, but must not be nan!". The reporter:
+  "training no longer stalls when I modify the number of changepoints (either adding more or
+  less) or perturb the training data even very slightly (e.g. by dropping a significant
+  figure from one of the dates)". The NaN log-probabilities come from `bletham`'s
+  reproduction in #842: "for me the L-BFGS doesn't freeze but it does exit with an error
+  since it starts getting log probabilities of NaN, and then it automatically retries with
+  Newton which also runs into NaNs and throws the B[1] error". The paper had attributed
+  that to #1032 itself; it now says where it comes from.
