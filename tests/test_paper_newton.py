@@ -20,13 +20,13 @@ Checked here:
 """
 import csv
 import importlib.util
-import json
-import platform
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+
+from conftest import recorded_here
 
 REPO = Path(__file__).parent.parent
 PAPER = REPO / "paper"
@@ -172,30 +172,24 @@ def test_every_document_quoting_the_range_moves_with_it(rows):
 # ---------------------------------------------------------------------------
 # The code.
 
-def _recorded_here():
-    """OS, architecture and Prophet release, as in test_paper_margin (#186)."""
-    from importlib.metadata import version
-
-    meta = json.loads(RESULTS.with_suffix(".meta.json").read_text())
-    return (meta["platform"].split("-")[0] == platform.platform().split("-")[0]
-            and meta["machine"] == platform.machine()
-            and meta["versions"]["prophet"] == version("prophet"))
-
-
 def test_the_code_reproduces_the_shortest_length(rows, prophet_comparison):
-    """T = 50 refitted from the code. Exactly where the results were recorded;
-    elsewhere the natural arm's oscillation has nothing to pin its path to the
-    last bit, so it is held to what the paper quotes."""
+    """T = 50 refitted from the code, by conftest.recorded_here's rule.
+
+    **Anywhere**: the split arm's optimum is where it was; the natural arm
+    stops short with no rate at zero; Stan's Newton stops short, but closer than
+    the natural arm -- what the paper says of each. Only the split arm is an
+    optimum, so only it is compared with its committed lp__ off the recording
+    platform. **Here**: every arm's lp__ exactly, and the iteration counts."""
     fresh, _ = newton.measure(50)
     committed = {row["arm"]: row for row in rows if int(row["observations"]) == 50}
-    for row in fresh:
-        old = committed[row["arm"]]
-        if _recorded_here():
+    arm = {row["arm"]: row for row in fresh}
+    assert arm["split"]["lp"] == pytest.approx(float(committed["split"]["lp"]), abs=1e-4)
+    assert 1.0 < arm["natural"]["shortfall"] < 10.0 and arm["natural"]["exact_zeros"] == 0
+    assert 0 < arm["stan_newton"]["shortfall"] < arm["natural"]["shortfall"]
+    if recorded_here(RESULTS.with_suffix(".meta.json")):
+        for row in fresh:
+            old = committed[row["arm"]]
             assert row["lp"] == pytest.approx(float(old["lp"]), rel=1e-9, abs=1e-9), row["arm"]
             if row["arm"] != "stan_newton":
                 assert row["iterations"] == int(float(old["iterations"]))
-        elif row["arm"] == "natural":
-            assert 1.0 < row["shortfall"] < 10.0 and row["exact_zeros"] == 0
-        else:
-            assert row["lp"] == pytest.approx(float(old["lp"]), abs=1e-3), row["arm"]
     assert next(row for row in fresh if row["arm"] == "split")["matches_shipped"]

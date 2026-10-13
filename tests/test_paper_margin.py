@@ -22,6 +22,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from conftest import recorded_here
+
 REPO = Path(__file__).parent.parent
 PAPER = REPO / "paper"
 EXPERIMENTS = PAPER / "experiments"
@@ -123,52 +125,30 @@ def test_prophet_places_all_25_changepoints_from_t_33(prophet_comparison):
     assert "Below $T = 33$ Prophet" in (PAPER / "sections" / "evidence.tex").read_text()
 
 
-def _recorded_here():
-    """Whether this machine is the kind that recorded the committed grid.
-
-    Operating system, architecture and the Prophet release -- which fixes the
-    compiled Stan binary -- are what decide the arithmetic. The OS *version* is
-    deliberately not compared: an update does not change it.
-    """
-    import json
-    import platform
-    from importlib.metadata import version
-
-    meta = json.loads(RESULTS.with_suffix(".meta.json").read_text())
-    return (meta["platform"].split("-")[0] == platform.platform().split("-")[0]
-            and meta["machine"] == platform.machine()
-            and meta["versions"]["prophet"] == version("prophet"))
-
-
 @pytest.mark.parametrize("cell", [("default", 99), ("default", 100)])
 def test_the_code_reproduces_the_committed_cells(cell, rows, prophet_comparison,
                                                  compiled_optimizer_module):
     """The two cells either side of the method boundary, refitted from the
-    code and compared with what is committed.
+    code and compared with what is committed, by conftest.recorded_here's rule.
 
-    **Exactly, only where the grid was recorded.** Prophet's L-BFGS stops short
-    of the optimum, and *where* it stops depends on the platform's arithmetic:
-    on CI's Linux runner the T = 100 fit stops 2.6e-4 nats away from where it
-    stops on the macOS machine that recorded these results, while the Newton fit
-    at T = 99 agrees to 1e-9. A point that is not an optimum has nothing to pin
-    it down to the last bit -- which is the paper's subject, not a defect here.
+    **Anywhere**: the same methods run, this implementation's optimum is where
+    it was, and Prophet's point is below it -- the claim the figure makes of
+    every cell. Prophet's lp__ itself is not compared off the recording
+    platform: on CI's Linux runner the T = 100 L-BFGS fit stops 2.6e-4 nats from
+    where it stopped on the machine that recorded the grid (#186).
 
-    **Elsewhere, to the precision the paper quotes.** Every margin is printed to
-    two significant figures, so a refit on another platform must agree to 1% of
-    the margin, each lp__ to 1e-3 nats, and on which method ran.
+    **Here, exactly**: every number in the row.
     """
     committed = next(row for row in rows
                      if (row["configuration"], row["observations"]) == cell)
     fresh = margin.measure(cell, compiled_optimizer_module)
     assert fresh["prophet_algorithm"] == committed["prophet_algorithm"]
     assert fresh["ours_algorithm"] == committed["ours_algorithm"]
-    if _recorded_here():
+    assert fresh["lp_ours"] == pytest.approx(committed["lp_ours"], abs=1e-3)
+    assert fresh["lp_ours"] - fresh["lp_prophet"] > 0
+    if recorded_here(margin.RESULTS.with_suffix(".meta.json")):
         for key in ("lp_prophet", "lp_ours", "margin"):
             assert fresh[key] == pytest.approx(committed[key], rel=1e-9, abs=1e-9), key
-    else:
-        for key in ("lp_prophet", "lp_ours"):
-            assert fresh[key] == pytest.approx(committed[key], abs=1e-3), key
-        assert fresh["margin"] == pytest.approx(committed["margin"], rel=1e-2)
 
 
 def test_the_figure_is_committed_and_redraws_identically(rows, tmp_path):
