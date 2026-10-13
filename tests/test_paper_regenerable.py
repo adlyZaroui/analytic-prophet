@@ -23,13 +23,13 @@ committed results, with Prophet's count checked to be the "none" the text says.
 import csv
 import importlib.util
 import inspect
-import json
-import platform
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+
+from conftest import recorded_here
 
 REPO = Path(__file__).parent.parent
 PAPER = REPO / "paper"
@@ -56,14 +56,6 @@ def _text(name):
     return " ".join((PAPER / "sections" / f"{name}.tex").read_text().split())
 
 
-def _recorded_here(results):
-    from importlib.metadata import version
-    meta = json.loads(results.with_suffix(".meta.json").read_text())
-    return (meta["platform"].split("-")[0] == platform.platform().split("-")[0]
-            and meta["machine"] == platform.machine()
-            and meta["versions"]["prophet"] == version("prophet"))
-
-
 # -- flat growth --------------------------------------------------------------
 
 def test_flat_growth_is_complete_and_every_rate_is_exactly_zero():
@@ -85,13 +77,16 @@ def test_flat_growth_agrees_far_inside_the_margins():
 
 
 def test_flat_growth_refits_as_committed(compiled_optimizer_module, prophet_comparison):
-    """T = 300 again, through both implementations. Exact zeros are exact
-    anywhere; the lp is held tightly on the recording platform."""
+    """T = 300 again, through both implementations, by conftest.recorded_here's
+    rule. Under flat growth both reach the optimum, every rate exactly zero, so
+    the point is pinned by the problem and compared anywhere; here, exactly."""
     committed = {r["implementation"]: r for r in flat.read() if r["observations"] == 300}
     for row in flat.measure(300, compiled_optimizer_module):
         assert row["exact_zeros"] == 25
-        tolerance_lp = 1e-9 if _recorded_here(flat.RESULTS) else 1e-4
-        assert row["lp"] == pytest.approx(committed[row["implementation"]]["lp"], abs=tolerance_lp)
+        old = committed[row["implementation"]]["lp"]
+        assert row["lp"] == pytest.approx(old, abs=1e-4)
+        if recorded_here(flat.RESULTS.with_suffix(".meta.json")):
+            assert row["lp"] == pytest.approx(old, abs=1e-9)
 
 
 # -- the tolerances -----------------------------------------------------------

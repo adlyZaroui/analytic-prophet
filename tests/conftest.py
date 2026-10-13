@@ -127,6 +127,49 @@ def load_pyproject():
         return tomllib.load(handle)
 
 
+# Set to 1 to run the suite as a machine that did not record the committed
+# results -- CI's Linux runner -- would, on the machine that did.
+NOT_RECORDED_HERE = "ANALYTIC_PROPHET_NOT_RECORDED_HERE"
+
+
+def recorded_here(meta_path):
+    """Whether this machine has the arithmetic a committed result was made with.
+
+    **The rule for every test that refits something and compares it with a
+    committed result** (#186, #169):
+
+      * An **optimum** -- this implementation's certified solution, Newton on
+        the split, a fit where every rate is exactly zero -- is pinned by the
+        problem, so it is compared on any platform, to its solver's tolerance.
+      * A **point where an optimizer merely stopped** -- Prophet's L-BFGS
+        endpoint, Stan's Newton short of the optimum, the natural-parameter
+        Newton -- is pinned by nothing. Where it stops depends on the last bits
+        of the platform's arithmetic, and on CI's Linux runner it has stopped
+        2.6e-4 nats (#186) and a full nat (#169) from where it stopped on the
+        machine that recorded it. That is the paper's subject, not a defect.
+        So it is compared with the committed number **only here**, exactly;
+        everywhere else the test checks what the paper claims about the point,
+        against the committed optimum, which no platform moves.
+
+    There is no tolerance that makes the second kind portable, which is why
+    tests/test_ci.py refuses `... if recorded_here(...) else <tolerance>`.
+
+    Operating system, architecture and the Prophet release -- which fixes the
+    compiled Stan binary -- decide the arithmetic. The OS *version* is
+    deliberately not compared: an update does not change it.
+    """
+    import json
+    import platform
+    from importlib.metadata import version
+
+    if os.environ.get(NOT_RECORDED_HERE) == "1":
+        return False
+    meta = json.loads(Path(meta_path).read_text())
+    return (meta["platform"].split("-")[0] == platform.platform().split("-")[0]
+            and meta["machine"] == platform.machine()
+            and meta["versions"]["prophet"] == version("prophet"))
+
+
 def pin_yearly_only(model):
     """Force the pre-#16-task-3 component set: yearly at order 10, nothing else.
 
