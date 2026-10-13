@@ -2,18 +2,30 @@
 \label{sec:reproducibility}
 
 Every number in the text is generated from committed results by
-\code{paper/experiments/quote_numbers.py}; none is typed by hand. The forecast
-comparison uses a corpus frozen before it was measured, identified by the digest
-\texttt{\CensusDigest} of its membership: a census of every M4 weekly and daily
-series the protocol can measure, so there was nothing to select.
+\code{paper/experiments/quote_numbers.py}, and the test suite fails if a section types
+a number that is not one of Prophet's settings or part of an experiment's design. Every
+result and figure is in turn written by a script under \code{paper/experiments/} or by
+the evaluation suite, and one command, \texttt{make reproduce} in \code{paper/}, reruns
+all of them and rebuilds this document. It takes hours, almost all of them spent on the
+two passes over the census.
+
+This document was built from commit \texttt{\BuildCommit} of
+\url{https://github.com/adlyZaroui/analytic-prophet}. Its results were produced with
+Python~\EnvPython, Prophet~\EnvProphet, cmdstanpy~\EnvCmdstanpy, NumPy~\EnvNumpy,
+pandas~\EnvPandas{} and SciPy~\EnvScipy, pinned in \code{paper/requirements.txt}. Each
+result records the environment and the commit it was produced at, and the test suite
+holds every record to the pins. The forecast comparison uses a corpus frozen before it
+was measured, identified by the digest \texttt{\CensusDigest} of its membership: a
+census of every M4 weekly and daily series the protocol can measure, so there was
+nothing to select.
 
 The controls that change Prophet's Stan program
-(Sections~\ref{sec:evidence:multistart} and~\ref{sec:evidence:surrogate})
-compile modified copies of it, each a minimal diff kept beside the original in
-\code{paper/stan/}, with CmdStan~2.37.0, the version Prophet bundles. Compiled
-the same way, the unmodified program reproduces Prophet's shipped executable
-exactly, in the optimum, the log density and its gradient, on both of Prophet's
-optimizer paths; the test suite checks this before any variant is used.
+(Sections~\ref{sec:evidence:multistart}, \ref{sec:evidence:surrogate}
+and~\ref{sec:evidence:path}) compile modified copies of it, each a minimal diff kept
+beside the original in \code{paper/stan/}, with CmdStan~\EnvCmdStan, the version
+Prophet bundles. Compiled the same way, the unmodified program reproduces Prophet's
+shipped executable exactly, in the optimum, the log density and its gradient, on both
+of Prophet's optimizer paths; the test suite checks this before any variant is used.
 
 One earlier measurement is not reproduced, and nothing here rests on it. This
 implementation's first backend was the C library liblbfgs, and a sweep of the prior's
@@ -22,7 +34,3 @@ The library was linked from the system rather than kept in the repository, the b
 has since been replaced, and the sweep survives only in the project's notes. The
 sweep of SciPy's L-BFGS-B in \cref{sec:evidence:surrogate} asks the same question of an
 optimizer that is installed, and is regenerated with everything else.
-
-\pending{180}{one command regenerating every experiment and figure; pinned
-versions of Prophet, CmdStan and the numerical stack; the build commit printed
-here}

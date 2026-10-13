@@ -25,6 +25,33 @@ make check      # fail while any result is still marked pending
 make arxiv      # source tarball for arXiv; refused while anything is pending
 ```
 
+`make` builds from the committed results, in seconds. **`make reproduce`
+regenerates the results themselves first**: every script under `experiments/`,
+in the order the Makefile lists them, and the evaluation tiers the paper quotes
+(0 and 2), then the numbers and the PDF. It takes hours, almost all of them the
+two passes over the census (`experiments/kkt.py` and Tier 2). It needs CmdStan
+2.37.0 (below), and fetches the M4 files on first use (`evaluation/corpora.py`).
+Run in the pinned environment on the platform the results record (each
+`.meta.json` names it), it regenerates what is committed, timings aside. On
+another platform Stan's L-BFGS can stop at slightly different points (#186), and
+the tests that refit a committed result allow for that.
+
+```bash
+pip install -r paper/requirements.txt && pip install -e .
+cd paper && make reproduce
+```
+
+`requirements.txt` is the environment every committed result was produced in.
+Each result's `.meta.json` records the versions it ran with, and
+`tests/test_paper_reproducibility.py` holds every record to the pins, so a
+result regenerated under a drifted numpy shows up as a failing test rather than
+as a quietly different number.
+
+The PDF prints the commit it was built from. `make` writes it to
+`generated/build.tex` at every build, marked `+modified` when the working tree
+differs from that commit; the file is not committed, because a file cannot hold
+the hash of the commit that contains it.
+
 ## Where the numbers come from
 
 **None is typed into a `.tex` file.** `experiments/quote_numbers.py` reads the
@@ -83,7 +110,8 @@ A `\pending{#issue}{…}` marker renders in red where the paper states something
 it has not yet measured, naming the issue that will. `make check` lists them and
 `make arxiv` refuses to package a draft that still has any. The experiments are
 tracked under the [`paper`](https://github.com/adlyZaroui/analytic-prophet/labels/paper)
-label.
+label. None remain: the last, #180, was this reproducibility machinery, and
+`tests/test_paper_reproducibility.py` now fails if a marker comes back.
 
 ## Layout
 
@@ -93,7 +121,9 @@ sections/             one file per section
 references.bib        bibliography
 experiments/          the scripts behind every number and figure
 stan/                 Prophet's Stan program and the modified copies (#183)
-generated/            their output — macros and tables the .tex includes
+generated/            their output — macros and tables the .tex includes, and the
+                      build commit `make` writes (not committed)
+requirements.txt      the environment every committed result was produced in
 figures/              generated figures
 ```
 
@@ -135,6 +165,22 @@ exactly what its diff says. Those tests skip without CmdStan.
 Every experiment for the paper lives under `experiments/`. The one exception is
 the evaluation corpus (#164), which also serves the general evaluation of this
 implementation and stays in `evaluation/`.
+
+## Archiving the software, once the results are final
+
+arXiv assigns the paper a DOI on announcement. The software it measured gets
+its own, so that the reproducibility section can cite an archived version
+rather than a commit on a host that can change. That is done once, after every
+result is final, and from the author's accounts:
+
+1. enable this repository in Zenodo's GitHub integration;
+2. publish a tagged GitHub release of the commit the numbers were generated
+   from — the commit `make reproduce` ran at, which the PDF prints;
+3. Zenodo archives the release and issues a DOI from `CITATION.cff`;
+4. cite that DOI in the reproducibility section, and rebuild.
+
+The release has to come after the numbers are final, so that the archived
+version is the one measured.
 
 ## Register
 

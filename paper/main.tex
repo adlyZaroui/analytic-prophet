@@ -24,6 +24,10 @@
 % experiments/quote_numbers.py. None is typed here by hand.
 \input{generated/numbers}
 
+% The commit this PDF is built from, which `make` writes at every build. It is
+% not committed, so a build that bypasses make says so rather than failing.
+\InputIfFileExists{generated/build.tex}{}{\newcommand{\BuildCommit}{unrecorded}}
+
 % A result the paper states but has not yet measured.  It renders visibly so
 % that nothing unmeasured can reach a submitted version unnoticed; the build
 % refuses to produce a submission while any remain (see Makefile).
@@ -51,7 +55,7 @@
   {\small Independent researcher}\\[1pt]
   {\small\href{mailto:mohamed-adly.zaroui@outlook.com}%
                 {\texttt{mohamed-adly.zaroui@outlook.com}}}}
-\date{\today}
+\date{\today\\[2pt]{\small Built from commit \texttt{\BuildCommit}}}
 
 \begin{document}
 \maketitle
