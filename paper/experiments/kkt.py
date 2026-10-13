@@ -31,9 +31,9 @@ optimal even holding its own sigma.
 **Prophet's point is read at full precision.** CmdStan writes the optimum with
 eight significant digits unless told otherwise, and Prophet does not tell it
 otherwise, so `Prophet().params` is a rounded copy of where L-BFGS stopped.
-Rounding alone perturbs the gradient -- by up to about 0.2 on the series tried,
-against violations of 2 to 10 -- so the fit here asks for all eighteen, and
-what is graded is the optimizer rather than its output format.
+Rounding alone moves the residual -- by a fraction of a nat, against violations
+of tens (`rounding.py` measures it, #175) -- so the fit here asks for all
+eighteen, and what is graded is the optimizer rather than its output format.
 
 **A relaxed residual answers the obvious objection.** Prophet's rates are
 never exactly zero under linear growth, so wherever one is tiny the strict
@@ -194,9 +194,9 @@ def _fit_both(df, lib_path):
         # sig_figs reaches `optimize` through Prophet's own args.update(kwargs).
         # It changes what CmdStan prints, not what it computes: by default the
         # optimum is written to eight significant digits, and that rounding alone
-        # moves a residual by up to about 0.2 -- small beside the violations,
-        # but the certificate is of where the optimizer stopped, not of its
-        # printout, so it is read at full precision.
+        # moves a residual by a fraction of a nat (rounding.py) -- small beside the
+        # violations, but the certificate is of where the optimizer stopped, not
+        # of its printout, so it is read at full precision.
         stan_model, stan_data, theirs = harness.capture_stan_model(
             Prophet(**harness.PROPHET_KWARGS), df, sig_figs=18)
     changepoints_t = np.asarray(stan_data["t_change"], dtype=float)

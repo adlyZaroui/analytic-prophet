@@ -63,6 +63,20 @@ writing `results/tau_path.csv`, `tau_refine.csv`, `tau_pairs.csv` and
 three lengths, σ fixed and free, against this implementation's certified optimum, writing
 `results/multistart.csv` in about five minutes.
 
+Four more make the results the paper used to state without a script regenerable (#175).
+`experiments/flat.py` is the flat-growth negative control (`results/flat.csv`, seconds).
+`experiments/tolerance.py` reruns Prophet's L-BFGS with Stan's five stopping tolerances at
+machine precision, and through `Prophet.fit` with the same arguments
+(`results/tolerance.csv`, a minute). `experiments/strength.py` sweeps the prior's strength
+for SciPy's unbounded L-BFGS-B against an exact, certified optimum
+(`results/strength.csv`, two minutes). It replaces a sweep on liblbfgs, the original
+backend, which cannot be rerun and which the paper does not quote.
+`experiments/rounding.py` measures what CmdStan's eight printed digits do to Prophet's
+residual on 200 random census series (`results/rounding.csv`, four minutes on four
+workers; needs the M4 cache). No number is typed into a section unless
+`tests/test_paper_numbers.py` lists it as a constant, such as Prophet's defaults or the
+lengths measured.
+
 ## Results not yet measured
 
 A `\pending{#issue}{…}` marker renders in red where the paper states something

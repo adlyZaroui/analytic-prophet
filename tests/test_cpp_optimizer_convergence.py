@@ -25,6 +25,9 @@ line search, assumes a smooth objective and cannot bracket a step across a
 kink, so it gave up almost immediately. Sweeping changepoint_prior_scale showed the failure
 tracking the L1 strength exactly: 1/changepoint_prior_scale = 20 died at 2 iterations, while
 1/changepoint_prior_scale = 1e-6 (an effectively smooth objective) ran 3528.
+(Historical: liblbfgs was a system library and is gone, so that sweep cannot be
+rerun; paper/experiments/strength.py asks the same question of SciPy's L-BFGS-B,
+#175.)
 
 The fix is OWL-QN, liblbfgs's built-in support for exactly this class of
 objective, which takes the L1 coefficient itself and handles the kink by

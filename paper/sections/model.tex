@@ -34,7 +34,9 @@ That would be harmless if optima avoided those hyperplanes. They do not. The
 Laplace prior is chosen so that most changepoints contribute nothing, and a
 minimiser of \eqref{eq:objective} with $\tau = 0.05$ typically has many
 $\delta_j = 0$ exactly: on the full Peyton Manning series the optimum has
-\pending{175}{the count of exact zeros at the optimum, generated}.
+\KktZerosPeyton{} of its 25 rates at zero, and across the census of
+\cref{sec:consequences} a median of \KktZerosCensusMedian. Prophet's solutions have
+none, on any of the \KktSeries{} series.
 The optimum lies on the non-differentiable set by design.
 
 \paragraph{Convexity.}
