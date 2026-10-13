@@ -54,7 +54,11 @@ prior smoothed, fitted by Stan's L-BFGS across 17 values of ε at three lengths,
 2.37.0, see below). The prophet#842 reproducer (#172) is `experiments/issue842.py`: the
 thread's ten-point reprex on current Prophet, this implementation and the smoothed
 program, plus the variants the thread lists, writing `results/issue842.csv` and
-`results/issue842_variants.csv` in under half a minute.
+`results/issue842_variants.csv` in under half a minute. The τ solution path (#171) is
+`experiments/tau_path.py`: λ = 1/τ swept for Prophet and for the exact path, σ fixed and
+free, with a zoom, a bisection of each path's largest step and prophet#1280's change,
+writing `results/tau_path.csv`, `tau_refine.csv`, `tau_pairs.csv` and
+`figures/tau_path.pdf` in about seven minutes on eight workers.
 
 ## Results not yet measured
 

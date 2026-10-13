@@ -22,8 +22,13 @@ its single-precision representation --- moved forecast accuracy by 2\%. The
 headline did not reproduce; a maintainer offered as ``one possibility'' that the
 optimizer ``was running into issues with one of the changepoint prior scales'',
 and judged the residual variation ``inline with expectation''.
-\pending{\#171}{the solution path in $1/\tau$, which is continuous for a convex
-$\ell_1$ problem and is the direct test of that possibility}
+The solution path of \cref{sec:evidence:path} is the direct test of that
+possibility. At exactly the thread's change, $\tau = 0.01$ against its single-precision
+neighbour, Prophet's rates on the Peyton Manning series move by up to
+\TauPairProphetFixed{} and its $\lp$ by up to \TauPairLpMax{} nats, while the exact
+optimum moves by $\TauPairExact$; the forecast a year ahead moves by at most
+\TauPairForecastMax\%. That bears out the maintainer's possibility as a mechanism, on a
+different series. It does not reproduce the thread's 2\%.
 
 \paragraph{Stalls, and the origin of the short-series rule.}
 Issue~\#842 reports a ten-point series on which L-BFGS stalls indefinitely. It

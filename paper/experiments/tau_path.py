@@ -269,8 +269,10 @@ def _write(path, fields, rows):
 def draw(rows, out=FIGURE):
     """Rates against lambda for both paths and both settings, and the forecast.
 
-    Columns: Prophet's path, the exact path, the zoom around the default with
-    both, and the forecast a year ahead. Rows: sigma fixed, sigma free.
+    Columns: Prophet's path and the exact path over the whole grid; then, near
+    the default lambda = 20 where the grid is 0.025 apart, the three rates
+    Prophet moves most, and the forecast a year past the end, both paths.
+    Rows: sigma fixed, sigma free.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -287,17 +289,16 @@ def draw(rows, out=FIGURE):
             delta = np.array([[x[f"delta_{j + 1}"] for j in range(S)] for x in cells])
             return lam, delta, np.array([x["yhat_h"] for x in cells])
 
-        for c, path, title in ((0, "prophet", "Prophet (Stan L-BFGS)"),
-                               (1, "ours_exact", "exact path (this implementation)")):
+        for c, path, title in ((0, "prophet", "Prophet"), (1, "ours_exact", "exact path")):
             lam, delta, _ = series("global", path)
             axis = axes[r, c]
             axis.plot(lam, delta, color=colours[path], linewidth=0.5)
             axis.set_xscale("log")
             axis.axvline(20, color="0.6", linestyle=":", linewidth=0.7)
-            axis.set_title(f"{title}, $\\\\sigma$ {setting}", fontsize=7)
-            axis.set_xlabel("$\\\\lambda = 1/\\\\tau$")
+            axis.set_title(f"{title}, $\\sigma$ {setting}", fontsize=7)
+            axis.set_xlabel("$\\lambda = 1/\\tau$")
             if c == 0:
-                axis.set_ylabel("changepoint rates $\\\\delta_j$")
+                axis.set_ylabel("changepoint rates $\\delta_j$")
         axis = axes[r, 2]
         lam_p, delta_p, _ = series("zoom", "prophet")
         lam_o, delta_o, _ = series("zoom", "ours_exact")
@@ -306,20 +307,17 @@ def draw(rows, out=FIGURE):
             axis.plot(lam_p, delta_p[:, j], color=colours["prophet"], linewidth=0.7,
                       marker=".", markersize=2.5)
             axis.plot(lam_o, delta_o[:, j], color=colours["ours_exact"], linewidth=0.9)
-        axis.set_title(f"zoom near $\\\\lambda = 20$, $\\\\sigma$ {setting}", fontsize=7)
-        axis.set_xlabel("$\\\\lambda$ (linear)")
+        axis.set_title(f"three rates, near $\\lambda = 20$", fontsize=7)
+        axis.set_xlabel("$\\lambda$ (linear)")
         axis = axes[r, 3]
-        for path, label in (("prophet", "Prophet"), ("ours_exact", "exact path"),
-                            ("ours_default", "this implementation, default fit")):
-            if not any(x["path"] == path and x["setting"] == setting for x in rows):
-                continue
-            lam, _, yhat = series("global", path)
-            axis.plot(lam, yhat, color=colours[path], linewidth=0.7, label=label)
-        axis.set_xscale("log")
-        axis.set_title(f"forecast {HORIZON_DAYS} days ahead, $\\\\sigma$ {setting}", fontsize=7)
-        axis.set_xlabel("$\\\\lambda = 1/\\\\tau$")
-        if r == 1:
-            axis.legend(fontsize=5.5, frameon=False)
+        for path, label, marker in (("prophet", "Prophet", "."), ("ours_exact", "exact path", None)):
+            lam, _, yhat = series("zoom", path)
+            axis.plot(lam, yhat, color=colours[path], linewidth=0.8, marker=marker,
+                      markersize=2.5, label=label)
+        axis.set_title(f"forecast, {HORIZON_DAYS} days on, $\\sigma$ {setting}", fontsize=7)
+        axis.set_xlabel("$\\lambda$ (linear)")
+        if r == 0:
+            axis.legend(fontsize=6, frameon=False)
     figure.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(out, metadata={"CreationDate": None, "ModDate": None})

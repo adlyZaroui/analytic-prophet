@@ -183,6 +183,45 @@ the \SmoothRuns{} runs. What remains there is not the kink, which the smoothed p
 not have, but the point at which Stan's stopping rule declares a smooth problem
 solved.
 
+\subsection{The solution path in $\tau$}
+\label{sec:evidence:path}
+
+With $\sigma$ fixed the problem is convex, and its minimiser moves continuously as $\tau$
+changes --- piecewise linearly in $\lambda = 1/\tau$, as for the lasso
+\citep{efron2004least}. With $\sigma$ free nothing guarantees it, but that is the setting
+Prophet's users fit. We sweep $\lambda$ over \TauGlobalPoints{} values from \TauLamMin{}
+to \TauLamMax{} on the Peyton Manning series in both settings. Prophet is refitted from
+its own initialisation at every value, as a user changing \code{changepoint_prior_scale}
+does; the exact path is computed by this implementation's Newton method on the
+reformulation, warm-started from each neighbouring value and certified at every point,
+with a relaxed residual of at most $\TauExactResidualMax$. Prophet's points sit a median
+of \TauGapMedianFixed{} nats below the exact path with $\sigma$ fixed and
+\TauGapMedianFree{} with it free, and up to \TauGapMax, with a median residual of
+\TauProphetResidualMedian.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/tau_path}
+  \caption{The solution path in $\lambda = 1/\tau$ on the Peyton Manning series. Left two
+    columns: the 25 changepoint rates over the whole grid, Prophet's (Stan's L-BFGS from
+    Prophet's initialisation at each $\lambda$) and the exact path. Right two columns:
+    near the default $\lambda = 20$, on a grid \TauZoomStep{} apart, the three rates
+    Prophet moves most and the forecast 365 days past the end of the series, both paths.
+    Top row: $\sigma$ fixed, where the problem is convex; bottom row: $\sigma$ free.}
+  \label{fig:tau}
+\end{figure}
+
+\Cref{fig:tau} shows a difference in kind. Near the default, on a grid \TauZoomStep{}
+apart in $\lambda$, the exact path's rates move by a constant \TauExactZoomStep{} per
+step, as a piecewise-linear path must, and Prophet's by as much as \TauProphetZoomMax{},
+irregularly. Halving the interval of each path's largest step \TauLevels{} times, down to a
+width of \TauFinalWidth{} in $\lambda$, separates steep motion from a jump: the exact
+path's step halves every time, to $\TauExactFinal$, while Prophet's stays at
+\TauProphetFinalFixed{} with $\sigma$ fixed and \TauProphetFinalFree{} with it free.
+Prophet's path does not move steeply; it jumps, and the forecast jumps with it. This
+implementation's default fit, from a cold start, stays within \TauDefaultDeviation{} of
+the exact path.
+
 \subsection{A negative control: removing the trend}
 \label{sec:evidence:flat}
 
