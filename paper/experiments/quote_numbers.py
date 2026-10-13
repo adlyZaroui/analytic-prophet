@@ -367,10 +367,83 @@ def stall():
     }
 
 
+def tau_path():
+    """#171: the solution path in lambda = 1/tau, Prophet's and the exact one."""
+    import numpy as np
+    rows = list(csv.DictReader(open(PAPER_RESULTS / "tau_path.csv")))
+    refine = list(csv.DictReader(open(PAPER_RESULTS / "tau_refine.csv")))
+    pairs = list(csv.DictReader(open(PAPER_RESULTS / "tau_pairs.csv")))
+    for row in rows:
+        for key, value in row.items():
+            if key not in ("grid", "setting", "path"):
+                row[key] = float(value)
+
+    def path(grid, setting, name):
+        cells = sorted((r for r in rows if r["grid"] == grid and r["setting"] == setting
+                        and r["path"] == name), key=lambda r: r["lam"])
+        return cells, np.array([[r[f"delta_{j + 1}"] for j in range(25)] for r in cells])
+
+    def steps(grid, setting, name):
+        _, delta = path(grid, setting, name)
+        return np.max(np.abs(np.diff(delta, axis=0)), axis=1)
+
+    def final(setting, name):
+        level = max(int(r["level"]) for r in refine)
+        return next(float(r["step"]) for r in refine if r["setting"] == setting
+                    and r["path"] == name and int(r["level"]) == level)
+
+    settings = ("fixed", "free")
+    exact_residual = max(r["residual"] for r in rows if r["path"] == "ours_exact")
+    prophet_residual = statistics.median(r["residual"] for r in rows
+                                         if r["path"] == "prophet" and r["grid"] == "global")
+    gap = {}
+    for setting in settings:
+        prophet_cells, _ = path("global", setting, "prophet")
+        exact_cells, _ = path("global", setting, "ours_exact")
+        gap[setting] = [e["lp"] - q["lp"] for e, q in zip(exact_cells, prophet_cells)]
+    default_cells, default_delta = path("global", "free", "ours_default")
+    _, exact_delta = path("global", "free", "ours_exact")
+    widths = [float(r["width"]) for r in refine if int(r["level"]) == max(int(x["level"]) for x in refine)]
+    zoom_cells, _ = path("zoom", "free", "ours_exact")
+    global_cells, _ = path("global", "free", "ours_exact")
+    at = {(float(r["tau"]), r["setting"], r["path"]): r for r in pairs}
+
+    def pair(tau, setting, name, column):
+        return abs(float(at[(tau, setting, name)][column]))
+
+    return {
+        "TauGlobalPoints": f"{len(global_cells)}",
+        "TauLamMin": f"{global_cells[0]['lam']:.0f}",
+        "TauLamMax": f"{global_cells[-1]['lam']:.0f}",
+        "TauZoomPoints": f"{len(zoom_cells)}",
+        "TauZoomStep": f"{zoom_cells[1]['lam'] - zoom_cells[0]['lam']:.3f}",
+        "TauLevels": _word(max(int(r["level"]) for r in refine)),
+        "TauFinalWidth": f"{max(widths):.4f}",
+        "TauProphetFinalFixed": f"{final('fixed', 'prophet'):.2g}",
+        "TauProphetFinalFree": f"{final('free', 'prophet'):.2g}",
+        "TauExactFinal": _scientific(max(final(s, 'ours_exact') for s in settings)),
+        "TauProphetZoomMax": f"{max(steps('zoom', s, 'prophet').max() for s in settings):.2g}",
+        "TauExactZoomStep": f"{max(steps('zoom', s, 'ours_exact').max() for s in settings):.2g}",
+        "TauExactResidualMax": _scientific(exact_residual),
+        "TauProphetResidualMedian": f"{prophet_residual:.0f}",
+        "TauGapMedianFixed": f"{statistics.median(gap['fixed']):.2g}",
+        "TauGapMedianFree": f"{statistics.median(gap['free']):.2g}",
+        "TauGapMax": f"{max(max(v) for v in gap.values()):.2g}",
+        "TauDefaultDeviation": f"{float(np.max(np.abs(default_delta - exact_delta))):.2g}",
+        "TauPairProphetFree": f"{pair(0.01, 'free', 'prophet', 'delta_change'):.2g}",
+        "TauPairProphetFixed": f"{pair(0.01, 'fixed', 'prophet', 'delta_change'):.2g}",
+        # at prophet#1280's own value, tau = 0.01 against float32(0.01)
+        "TauPairExact": _scientific(max(pair(0.01, s, "ours_exact", "delta_change")
+                                        for s in settings)),
+        "TauPairLpMax": f"{max(pair(0.01, s, 'prophet', 'lp_change') for s in settings):.2g}",
+        "TauPairForecastMax": f"{max(pair(0.01, s, 'prophet', 'yhat_relative') for s in settings) * 100:.2g}",
+    }
+
+
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
     return {**census(), **posterior(), **certificate(), **margin(), **newton(),
-            **limitations(), **smoothing(), **stall()}
+            **limitations(), **smoothing(), **stall(), **tau_path()}
 
 
 def render(values):
