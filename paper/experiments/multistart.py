@@ -53,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kkt                                          # noqa: E402  (sets up paths)
 import corpora                                      # noqa: E402
 import harness                                      # noqa: E402
+import issue842                                     # noqa: E402
 import smoothing                                    # noqa: E402
 import stan_runner as runner                        # noqa: E402
 
@@ -63,7 +64,7 @@ OURS = 10
 TAU = 0.05
 FIELDS = ["observations", "setting", "implementation", "start", "lp", "shortfall",
           "residual", "delta_distance", "theta_distance", "sigma_obs", "exact_zeros",
-          "iterations", "stopped_by"]
+          "algorithm", "iterations", "stopped_by"]
 
 
 def starts(size, n_changepoints, n_beta, count=STARTS):
@@ -114,7 +115,11 @@ class Problem:
                 "beta": np.asarray(fitted.params["beta"][0], dtype=float)}
 
     def prophet(self, start, sigma=None):
-        """Stan's L-BFGS from `start`; (point, iterations, reason)."""
+        """Stan's L-BFGS from `start`; (point, algorithm, iterations, reason).
+
+        `algorithm` is what finished the run: Prophet falls back to Newton when
+        L-BFGS exits abnormally, and the runner does the same, so a fit can end
+        on Newton and the row says so."""
         variant = "original" if sigma is None else "fixed_sigma"
         inits = {"k": start["k"], "m": start["m"], "delta": list(start["delta"]),
                  "beta": list(start["beta"])}
@@ -122,8 +127,10 @@ class Problem:
             inits["sigma_obs"] = start["sigma_obs"]
         params, result = runner.fit(variant, self.data, inits, sigma_obs=sigma,
                                     sig_figs=18, seed=harness.SEED)
-        _, iterations, _, reason = smoothing._parse_stdout(result.runset.stdout_files[0])
-        return params, iterations, reason
+        path = result.runset.stdout_files[0]
+        algorithm = smoothing._parse_stdout(path)[0]
+        iterations, reason = issue842._parse_log(path)
+        return params, algorithm, iterations, reason
 
     def score(self, point):
         lp, frame = runner.log_prob("original", self.data, point)
@@ -135,7 +142,8 @@ class Problem:
         return lp, kkt.summarise(kkt.certificate(gradient, delta, TAU), delta)["norm_relaxed"]
 
 
-def _row(problem, setting, implementation, index, point, reference, iterations="", reason=""):
+def _row(problem, setting, implementation, index, point, reference, algorithm="",
+         iterations="", reason=""):
     lp, residual = problem.score(point)
     theta = lambda p: np.concatenate([[p["k"], p["m"]], np.ravel(p["beta"])])
     return {"observations": problem.size, "setting": setting, "implementation": implementation,
@@ -144,7 +152,7 @@ def _row(problem, setting, implementation, index, point, reference, iterations="
             "theta_distance": float(np.max(np.abs(theta(point) - theta(reference)))),
             "sigma_obs": float(point["sigma_obs"]),
             "exact_zeros": int(np.sum(np.asarray(point["delta"]) == 0.0)),
-            "iterations": iterations, "stopped_by": reason}
+            "algorithm": algorithm, "iterations": iterations, "stopped_by": reason}
 
 
 def measure(size):
@@ -162,9 +170,9 @@ def measure(size):
                    "beta": np.asarray(problem.inits["beta"], dtype=float),
                    "sigma_obs": problem.inits["sigma_obs"]}
         for index, start in [("default", default)] + list(enumerate(draws)):
-            point, iterations, reason = problem.prophet(start, sigma)
+            point, algorithm, iterations, reason = problem.prophet(start, sigma)
             rows.append(_row(problem, setting, "prophet", index, point, reference,
-                             iterations, reason))
+                             algorithm, iterations, reason))
         for index, start in enumerate(draws[:OURS]):
             point = problem.ours(sigma=sigma, start=start)
             rows.append(_row(problem, setting, "analytic_prophet", index, point, reference))
