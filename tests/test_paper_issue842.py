@@ -16,12 +16,13 @@ Newton path ends at a saddle. Checked here:
 import csv
 import importlib.util
 import json
-import platform
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+
+from conftest import recorded_here
 
 REPO = Path(__file__).parent.parent
 PAPER = REPO / "paper"
@@ -119,18 +120,14 @@ def test_every_variant_stops_short_under_lbfgs_and_not_under_newton(variants):
             assert float(row["shortfall"]) < 1e-3, row
 
 
-def _recorded_here():
-    from importlib.metadata import version
-    meta = json.loads((RESULTS / "issue842.meta.json").read_text())
-    return (meta["platform"].split("-")[0] == platform.platform().split("-")[0]
-            and meta["machine"] == platform.machine()
-            and meta["versions"]["prophet"] == version("prophet"))
-
-
 @pytest.mark.parametrize("algorithm, point", [(None, "prophet Newton"), ("LBFGS", "prophet LBFGS")])
 def test_prophets_bundled_binary_reproduces_the_committed_fits(algorithm, point, points,
                                                                prophet_comparison):
-    """Through Prophet's own fit and executable -- no CmdStan install needed."""
+    """Through Prophet's own fit and executable -- no CmdStan install needed.
+
+    By conftest.recorded_here's rule. **Anywhere**: Newton reaches the optimum,
+    which pins it, and L-BFGS stops more than 0.01 nats short of it -- what
+    the paper says of each. **Here**: the committed lp__ exactly."""
     import logging
 
     import _prophet_bridge as bridge
@@ -141,8 +138,10 @@ def test_prophets_bundled_binary_reproduces_the_committed_fits(algorithm, point,
         issue842.prophet_model(), issue842.frame(), **kwargs)
     lp = bridge.stan_log_prob(stan_model, stan_data, params["k"][0], params["m"][0],
                               params["delta"], params["sigma_obs"][0], params["beta"])
-    committed = float(points[point]["lp"])
-    if _recorded_here():
-        assert lp == pytest.approx(committed, abs=1e-6)
+    best = float(points["ours best of 40 starts"]["lp"])
+    if point == "prophet Newton":
+        assert lp == pytest.approx(best, abs=1e-5)
     else:
-        assert lp == pytest.approx(committed, abs=1e-2)
+        assert best - lp > 0.01
+    if recorded_here(RESULTS / "issue842.meta.json"):
+        assert lp == pytest.approx(float(points[point]["lp"]), abs=1e-6)

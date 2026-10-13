@@ -15,13 +15,13 @@ rests on a few checkable facts, each tested here against the committed data:
 """
 import csv
 import importlib.util
-import json
-import platform
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+
+from conftest import recorded_here
 
 REPO = Path(__file__).parent.parent
 PAPER = REPO / "paper"
@@ -125,21 +125,18 @@ def test_the_paper_does_not_claim_the_threads_two_percent():
     assert r"\cref{sec:evidence:path}" in text
 
 
-def _recorded_here():
-    from importlib.metadata import version
-    meta = json.loads(tau_path.PATH.with_suffix(".meta.json").read_text())
-    return (meta["platform"].split("-")[0] == platform.platform().split("-")[0]
-            and meta["machine"] == platform.machine()
-            and meta["versions"]["prophet"] == version("prophet"))
-
-
 def test_prophets_bundled_binary_reproduces_a_committed_point(rows, prophet_comparison):
     """lambda = 20, sigma free: Prophet().fit with changepoint_prior_scale = 0.05,
-    no CmdStan install needed."""
+    no CmdStan install needed.
+
+    By conftest.recorded_here's rule. **Anywhere**: the point is below the
+    exact path at the same lambda, as the paper says of every one of Prophet's.
+    **Here**: the committed lp__ exactly."""
     import logging
 
     import _common
     import _prophet_bridge as bridge
+    import kkt
     import corpora
 
     logging.getLogger("cmdstanpy").setLevel(logging.ERROR)
@@ -149,10 +146,15 @@ def test_prophets_bundled_binary_reproduces_a_committed_point(rows, prophet_comp
     stan_model, stan_data, params = bridge.capture_stan_model(
         Prophet(**{**_common.PROPHET_KWARGS, "changepoint_prior_scale": 1 / 20.0}),
         corpora.peyton_manning(), sig_figs=18)
-    lp = bridge.stan_log_prob(stan_model, stan_data, params["k"][0], params["m"][0],
+    # at full precision, as the committed point was scored: the bridge's
+    # stan_log_prob returns lp__ as CmdStan prints it, to eight digits
+    lp, _ = kkt.stan_gradient(stan_model, stan_data, params["k"][0], params["m"][0],
                               params["delta"], params["sigma_obs"][0], params["beta"])
-    tolerance = 1e-4 if _recorded_here() else 1.0
-    assert lp == pytest.approx(committed["lp"], abs=tolerance)
+    exact = next(r for r in rows if r["grid"] == "zoom" and r["setting"] == "free"
+                 and r["path"] == "ours_exact" and abs(r["lam"] - 20.0) < 1e-9)
+    assert exact["lp"] - lp > 1e-3
+    if recorded_here(tau_path.PATH.with_suffix(".meta.json")):
+        assert lp == pytest.approx(committed["lp"], abs=1e-6)
 
 
 def test_the_figure_redraws_identically(rows, tmp_path):

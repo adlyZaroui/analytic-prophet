@@ -18,12 +18,13 @@ far that optimum sits from Prophet's (the smoothing bias). Checked here:
 """
 import importlib.util
 import json
-import platform
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+
+from conftest import recorded_here
 
 REPO = Path(__file__).parent.parent
 PAPER = REPO / "paper"
@@ -121,14 +122,6 @@ def test_the_paper_quotes_the_drop_per_length_not_a_blanket_claim():
     assert "orders of magnitude" not in section
 
 
-def _recorded_here():
-    from importlib.metadata import version
-    meta = json.loads(RESULTS.with_suffix(".meta.json").read_text())
-    return (meta["platform"].split("-")[0] == platform.platform().split("-")[0]
-            and meta["machine"] == platform.machine()
-            and meta["versions"]["prophet"] == version("prophet"))
-
-
 def test_the_code_reproduces_a_committed_cell(rows, prophet_comparison):
     runner = _module("stan_runner")
     try:
@@ -139,11 +132,16 @@ def test_the_code_reproduces_a_committed_cell(rows, prophet_comparison):
     committed = next(r for r in rows if r["observations"] == 300
                      and np.isclose(r["epsilon"], epsilon, rtol=1e-12))
     fresh = smoothing.measure(300, epsilons=(epsilon,))[0]
-    for key in ("lp_smooth_A", "lp_smooth_B", "lp_l1_B", "lp_l1_L1"):
-        if _recorded_here():
+    # By conftest.recorded_here's rule. B (the smoothed problem's optimum) and
+    # L1 (Prophet's l1 optimum) are optima, compared anywhere; A, where Stan's
+    # L-BFGS stopped on the smoothed program, only here -- anywhere else it is
+    # held to not beating the optimum of the problem it was given.
+    for key in ("lp_smooth_B", "lp_l1_B", "lp_l1_L1"):
+        assert fresh[key] == pytest.approx(committed[key], abs=1e-3), key
+    assert fresh["lp_smooth_A"] <= fresh["lp_smooth_B"] + 1e-6
+    if recorded_here(RESULTS.with_suffix(".meta.json")):
+        for key in ("lp_smooth_A", "lp_smooth_B", "lp_l1_B", "lp_l1_L1"):
             assert fresh[key] == pytest.approx(committed[key], rel=1e-9, abs=1e-9), key
-        else:
-            assert fresh[key] == pytest.approx(committed[key], abs=1e-3), key
 
 
 def test_the_figure_redraws_identically_and_refuses_what_it_cannot_show(rows, tmp_path):
