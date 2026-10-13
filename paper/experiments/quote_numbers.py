@@ -12,6 +12,7 @@ document fails to compile on it rather than printing a stale value.
 """
 import csv
 import json
+import re
 import statistics
 from collections import defaultdict
 from pathlib import Path
@@ -568,11 +569,30 @@ def strength():
     return out
 
 
+def environment():
+    """#180: the pinned environment the reproducibility section states."""
+    text = (PAPER / "requirements.txt").read_text()
+    pins = dict(re.findall(r"^([\w-]+)==(\S+)$", text, flags=re.M))
+    python = re.search(r"^#\s+python (\S+)$", text, flags=re.M).group(1)
+    cmdstan = re.search(r'^CMDSTAN_VERSION = "([^"]+)"$',
+                        (PAPER / "experiments" / "stan_runner.py").read_text(), flags=re.M).group(1)
+    return {
+        "EnvPython": python,
+        "EnvCmdStan": cmdstan,
+        "EnvProphet": pins["prophet"],
+        "EnvCmdstanpy": pins["cmdstanpy"],
+        "EnvNumpy": pins["numpy"],
+        "EnvPandas": pins["pandas"],
+        "EnvScipy": pins["scipy"],
+        "EnvMatplotlib": pins["matplotlib"],
+    }
+
+
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
     return {**census(), **posterior(), **certificate(), **margin(), **newton(),
             **limitations(), **smoothing(), **stall(), **tau_path(), **multistart(),
-            **flat(), **rounding(), **tolerance(), **strength()}
+            **flat(), **rounding(), **tolerance(), **strength(), **environment()}
 
 
 def render(values):

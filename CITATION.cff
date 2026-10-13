@@ -12,8 +12,8 @@ abstract: >-
   length measured, because Prophet's optimizer stops short on the
   non-differentiable L1 term that its changepoint prior puts in the
   posterior. Ships with a four-tier evaluation suite: a correctness gate,
-  parameter recovery on synthetic series, held-out forecast accuracy on
-  36 M4 series, and cost.
+  parameter recovery on synthetic series, held-out forecast accuracy on a
+  frozen census of M4 weekly and daily series, and cost.
 type: software
 authors:
   - family-names: Zaroui

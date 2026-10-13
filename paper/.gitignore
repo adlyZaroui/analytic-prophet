@@ -11,3 +11,7 @@
 *.synctex.gz
 main.pdf
 arxiv.tar.gz
+
+# Written by `make` at every build: the commit the PDF was built from (#180).
+# A file cannot hold the hash of the commit that contains it.
+generated/build.tex

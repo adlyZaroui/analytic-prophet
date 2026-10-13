@@ -58,7 +58,7 @@ def test_every_macro_the_paper_uses_is_generated():
     LaTeX build; this says which, faster and by name."""
     defined = set(_macros(NUMBERS.read_text()))
     sources = [PAPER / "main.tex", *sorted((PAPER / "sections").glob("*.tex"))]
-    generated_style = re.compile(r"\\((?:Census|Rmse|Lp|Kkt|Margin|Newton|Lim|Smooth|Stall|Tau|Multi|Flat|Tol|Strength)\w+)")
+    generated_style = re.compile(r"\\((?:Census|Rmse|Lp|Kkt|Margin|Newton|Lim|Smooth|Stall|Tau|Multi|Flat|Tol|Strength|Env)\w+)")
     used = {name for path in sources
             for name in generated_style.findall(path.read_text())}
 
@@ -98,7 +98,6 @@ TYPED_CONSTANTS = {
     "0.01": "Prophet's plotting threshold; prophet#1280's tau",
     "0.05": "Prophet's default changepoint_prior_scale",
     "80": "Prophet's default interval_width, in percent",
-    "2.37": "the CmdStan version Prophet bundles",
     "1950": "a decade, in related work",
     "2019": "dates in prophet#842's history, recorded in citations.md",
     "04": "2019-04-22", "22": "2019-04-22", "05": "2019-05-21", "21": "2019-05-21",

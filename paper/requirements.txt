@@ -1,0 +1,17 @@
+# The environment every committed result under paper/results/ and
+# evaluation/results/ was produced in (#180). Each result's .meta.json records
+# the versions it ran with, and tests/test_paper_reproducibility.py holds every
+# one of them to this file.
+#
+#   pip install -r paper/requirements.txt && pip install -e .
+#
+# Not on PyPI, and pinned elsewhere:
+#   python 3.14.7
+#   CmdStan 2.37.0, the version Prophet bundles; experiments/stan_runner.py
+#   refuses any other (see README.md for the install command)
+prophet==1.4.0
+cmdstanpy==1.3.0
+numpy==2.5.3
+pandas==3.0.5
+scipy==1.18.1
+matplotlib==3.11.2
