@@ -29,10 +29,12 @@
 % refuses to produce a submission while any remain (see Makefile).
 \newcommand{\pending}[2]{\textcolor{red!70!black}{[\textbf{pending \projectissue{#1}}: #2]}}
 
-% Issues are cited as links to their threads, never as bare numbers: Prophet's
-% tracker for the upstream reports, this project's for its own work.
-\newcommand{\prophetissue}[1]{\href{https://github.com/facebook/prophet/issues/#1}{\##1}}
-\newcommand{\projectissue}[1]{\href{https://github.com/adlyZaroui/analytic-prophet/issues/#1}{\##1}}
+% Issues are cited as links to their threads, never as bare numbers, and the
+% text names the tracker as GitHub's cross-repository references do: prophet#842
+% is an upstream report, analytic-prophet#193 this implementation's own issue.
+% A bare #842 would leave a reader unable to tell the two apart.
+\newcommand{\prophetissue}[1]{\href{https://github.com/facebook/prophet/issues/#1}{prophet\##1}}
+\newcommand{\projectissue}[1]{\href{https://github.com/adlyZaroui/analytic-prophet/issues/#1}{analytic-prophet\##1}}
 
 \theoremstyle{plain}
 \newtheorem{proposition}{Proposition}

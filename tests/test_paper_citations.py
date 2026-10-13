@@ -137,6 +137,18 @@ def test_every_issue_is_cited_as_a_link_not_a_bare_number():
         assert argument.isdigit(), f"\\pending{{{argument}}} does not link to its issue"
 
 
+def test_upstream_and_own_issues_read_differently_in_print():
+    """A reader of the PDF -- printed, or with links hidden -- has to be able to
+    tell Prophet's issues from this implementation's: prophet#842 against
+    analytic-prophet#193, as GitHub writes cross-repository references."""
+    preamble = (PAPER / "main.tex").read_text()
+    upstream = re.search(r"\\newcommand\{\\prophetissue\}\[1\]\{\\href\{[^}]*\}\{([^}]*)\}\}", preamble)
+    own = re.search(r"\\newcommand\{\\projectissue\}\[1\]\{\\href\{[^}]*\}\{([^}]*)\}\}", preamble)
+    assert upstream and own
+    assert upstream.group(1) == r"prophet\##1"
+    assert own.group(1) == r"analytic-prophet\##1"
+
+
 def test_every_upstream_issue_cited_is_recorded_with_its_link():
     record = RECORD.read_text()
     for number in set(re.findall(r"\\prophetissue\{(\d+)\}", _tex())):
