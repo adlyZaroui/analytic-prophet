@@ -117,11 +117,39 @@ conditions under any reading of their rates.
 \subsection{Scatter under convexity}
 \label{sec:evidence:multistart}
 
-\pending{169}{Prophet refitted from many random initialisations with $\sigma$
-held fixed. The objective is then convex and its minimiser unique, so any scatter
-in the solutions is non-convergence, established without reference to this
-implementation. Repeated with $\sigma$ free, where joint convexity fails and
-scatter proves nothing, and reported beside it for that reason.}
+With linear growth and additive seasonality the prediction is linear in
+$(k, m, \delta, \beta)$ by \eqref{eq:trend}, so with $\sigma$ fixed
+\eqref{eq:objective} is a quadratic in those parameters plus the convex
+$\tau^{-1}\lVert\delta\rVert_1$. On the Peyton Manning series at the three lengths of
+\cref{sec:evidence:lp} the design --- trend, changepoint ramps and seasonal columns ---
+has full column rank, so the quadratic is strictly convex and the minimiser is
+unique: a method that converges reaches it from any start, and Prophet's fits from
+different starts can scatter only if Prophet's optimizer does not converge. That
+argument needs no reference implementation.
+
+We fit Prophet's own L-BFGS from \MultiStarts{} random starts at each length, with
+$\sigma$ held at Prophet's own estimate. The starts are seeded: $k$ and $m$ from
+$N(0, 1)$, every $\delta_j$ from Prophet's own $\mathrm{Laplace}(0, \tau)$ prior, every
+$\beta_j$ from $N(0, 1)$. The fits scatter, by \MultiFixedSpreadShort,
+\MultiFixedSpreadMid{} and \MultiFixedSpreadLong{} nats in $\lp$ at the three lengths,
+and their rates differ from the optimum's by a median of \MultiFixedDistanceShort,
+\MultiFixedDistanceMid{} and \MultiFixedDistanceLong. None of the \MultiTotal{} fits
+comes within $10^{-3}$ nats of the optimum: they fall short by \MultiFixedMinShort{} to
+\MultiFixedMaxShort{} nats at $T = 300$, \MultiFixedMinMid{} to \MultiFixedMaxMid{} at
+$T = 1000$ and \MultiFixedMinLong{} to \MultiFixedMaxLong{} at $T = 2905$, and Prophet's
+own default start is no exception, at \MultiFixedDefaultShort, \MultiFixedDefaultMid{}
+and \MultiFixedDefaultLong{} nats. The optimum used to measure the distance is this
+implementation's, certified with a relaxed residual of at most
+$\MultiReferenceResidual$; from \MultiOurs{} of the same starts it reaches it every time,
+to within $\MultiOursWorst$ nats.
+
+With $\sigma$ free the objective is not jointly convex, and scatter there proves nothing
+by itself; it is reported beside the convex case so the two are not confused. The
+picture is the same. Prophet's fits fall short by \MultiFreeMinShort{} to
+\MultiFreeMaxShort{} nats at $T = 300$ and \MultiFreeMinLong{} to \MultiFreeMaxLong{} at
+$T = 2905$, and this implementation again reaches one point from every start. In
+\MultiFallbacks{} of the free-$\sigma$ fits Stan's L-BFGS exited abnormally and Prophet's
+fall-back to Newton finished it.
 
 \subsection{Smoothing the prior inside Stan}
 \label{sec:evidence:surrogate}

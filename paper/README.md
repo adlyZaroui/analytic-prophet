@@ -58,7 +58,10 @@ program, plus the variants the thread lists, writing `results/issue842.csv` and
 `experiments/tau_path.py`: λ = 1/τ swept for Prophet and for the exact path, σ fixed and
 free, with a zoom, a bisection of each path's largest step and prophet#1280's change,
 writing `results/tau_path.csv`, `tau_refine.csv`, `tau_pairs.csv` and
-`figures/tau_path.pdf` in about seven minutes on eight workers.
+`figures/tau_path.pdf` in about seven minutes on eight workers. The multi-start control
+(#169) is `experiments/multistart.py`: Prophet's L-BFGS from 50 seeded random starts at
+three lengths, σ fixed and free, against this implementation's certified optimum, writing
+`results/multistart.csv` in about five minutes.
 
 ## Results not yet measured
 
