@@ -115,6 +115,9 @@ def certificate():
         return max(abs(float(row[column])) for row in detail
                    if row["implementation"] == implementation)
 
+    zeros = sum(1 for row in detail if row["implementation"] == "analytic_prophet"
+                and row["coordinate"].startswith("delta") and float(row["value"]) == 0.0)
+
     return {
         "KktSeries": f"{n:,}",
         "KktOursMedian": f"{statistics.median(ours):.2f}",
@@ -135,6 +138,9 @@ def certificate():
         "KktPeytonProphetStrict": f"{peyton('prophet', 'residual_strict'):.1f}",
         "KktPeytonProphetRelaxed": f"{peyton('prophet', 'residual_relaxed'):.1f}",
         "KktPeytonOurs": f"{peyton('analytic_prophet', 'residual_strict'):.2f}",
+        # #175: the optimum's exact zeros, which Prophet's solutions never have
+        "KktZerosPeyton": f"{zeros:d}",
+        "KktZerosCensusMedian": f"{statistics.median(int(mine['exact_zeros']) for _, mine in pairs):.0f}",
     }
 
 
@@ -437,6 +443,9 @@ def tau_path():
                                         for s in settings)),
         "TauPairLpMax": f"{max(pair(0.01, s, 'prophet', 'lp_change') for s in settings):.2g}",
         "TauPairForecastMax": f"{max(pair(0.01, s, 'prophet', 'yhat_relative') for s in settings) * 100:.2g}",
+        # the change prophet#1280 made: 0.01 against its single-precision value
+        "TauPairFloatGap": _scientific(max(abs(float(r["tau_float32"]) - float(r["tau"]))
+                                           for r in pairs if float(r["tau"]) == 0.01)),
     }
 
 
@@ -475,10 +484,95 @@ def multistart():
     return out
 
 
+def flat():
+    """#175: the negative control, flat growth."""
+    rows = list(csv.DictReader(open(PAPER_RESULTS / "flat.csv")))
+    return {
+        "FlatLengths": _word(len({row["observations"] for row in rows})),
+        "FlatLpGap": _scientific(max(float(row["lp_gap"]) for row in rows)),
+        "FlatParamGap": _scientific(max(max(float(row["m_gap"]), float(row["beta_gap"]))
+                                        for row in rows)),
+    }
+
+
+def rounding():
+    """#175: what CmdStan's eight printed digits do to Prophet's residual."""
+    rows = list(csv.DictReader(open(PAPER_RESULTS / "rounding.csv")))
+    return {
+        "KktRoundingSeries": f"{len(rows)}",
+        "KktRoundingMax": f"{max(float(row['strict_change']) for row in rows):.2g}",
+        "KktRoundingMedian": _scientific(statistics.median(float(row["strict_change"])
+                                                           for row in rows)),
+        "KktRoundingResidualMin": f"{min(float(row['strict_full']) for row in rows):.1f}",
+    }
+
+
+def tolerance():
+    """#175: Prophet's L-BFGS with its stopping tolerances removed."""
+    rows = list(csv.DictReader(open(PAPER_RESULTS / "tolerance.csv")))
+    tags = {300: "Short", 1000: "Mid", 2905: "Long"}
+    out = {}
+    for row in rows:
+        if row["tolerances"] == "four":           # the note's run; docs/, not the paper
+            continue
+        tag = tags[int(row["observations"])] if row["configuration"] == "default" else "Yearly"
+        label = row["tolerances"].capitalize()
+        out[f"Tol{label}Iter{tag}"] = f"{int(row['iterations']):,}"
+        out[f"Tol{label}Short{tag}"] = f"{float(row['shortfall']):.2f}"
+    return out
+
+
+def _ranks(values):
+    """1-based ranks, ties sharing their average, as Spearman's rho needs."""
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        for k in range(i, j + 1):
+            ranks[order[k]] = (i + j) / 2 + 1
+        i = j + 1
+    return ranks
+
+
+def _rank_correlation(x, y):
+    """Spearman's rho: Pearson's correlation of the ranks. statistics.correlation
+    takes method="ranked" only from Python 3.12, and the suite runs from 3.9."""
+    rx, ry = _ranks(x), _ranks(y)
+    mx, my = statistics.fmean(rx), statistics.fmean(ry)
+    covariance = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    return covariance / (sum((a - mx) ** 2 for a in rx) * sum((b - my) ** 2 for b in ry)) ** 0.5
+
+
+def strength():
+    """#175: SciPy's unconstrained L-BFGS against the prior's strength."""
+    rows = list(csv.DictReader(open(PAPER_RESULTS / "strength.csv")))
+    tags = {300: "Short", 1000: "Mid", 2905: "Long"}
+    run = [row for row in rows if row["run"] == "none"]
+    smooth = [row for row in run if int(row["reference_zeros"]) == 0]
+    out = {
+        "StrengthLambdas": f"{len({row['lam'] for row in run})}",
+        "StrengthSmoothMax": _scientific(max(float(row["shortfall"]) for row in smooth)),
+        "StrengthReferenceResidual": _scientific(max(float(row["reference_residual"])
+                                                     for row in rows)),
+        "StrengthCells": f"{len(run)}",
+        "StrengthRankCorrelation": f"{_rank_correlation([int(row['reference_zeros']) for row in run], [float(row['shortfall']) for row in run]):.2f}",
+    }
+    for row in run:
+        if float(row["lam"]) == 20.0:
+            tag = tags[int(row["observations"])]
+            out[f"StrengthDefault{tag}"] = f"{float(row['shortfall']):.2f}"
+            out[f"StrengthDefaultZeros{tag}"] = f"{int(row['reference_zeros'])}"
+    return out
+
+
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
     return {**census(), **posterior(), **certificate(), **margin(), **newton(),
-            **limitations(), **smoothing(), **stall(), **tau_path(), **multistart()}
+            **limitations(), **smoothing(), **stall(), **tau_path(), **multistart(),
+            **flat(), **rounding(), **tolerance(), **strength()}
 
 
 def render(values):

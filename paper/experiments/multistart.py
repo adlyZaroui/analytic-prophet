@@ -80,16 +80,17 @@ def starts(size, n_changepoints, n_beta, count=STARTS):
 
 
 class Problem:
-    def __init__(self, size):
+    def __init__(self, size, **configuration):
         from prophet import Prophet
 
         logging.getLogger("cmdstanpy").setLevel(logging.ERROR)
         logging.getLogger("prophet").setLevel(logging.ERROR)
         warnings.simplefilter("ignore")
         self.size = size
+        self.kwargs = {**harness.PROPHET_KWARGS, **configuration}
         self.df = corpora.peyton_manning(size)
         self.df = self.df.assign(ds=pd.to_datetime(self.df["ds"]))
-        model = Prophet(**harness.PROPHET_KWARGS)
+        model = Prophet(**self.kwargs)
         self.data, self.inits = runner.prophet_inputs(model, self.df, sig_figs=18)
         self.default = {key: np.ravel(value) for key, value in model.params.items()}
         self.sigma = float(self.default["sigma_obs"][0])
@@ -98,7 +99,7 @@ class Problem:
     def ours(self, sigma=None, start=None, exact=False):
         from analytic_prophet import AnalyticProphet
 
-        fitted = AnalyticProphet(**harness.PROPHET_KWARGS)
+        fitted = AnalyticProphet(**self.kwargs)
         fitted.set_changepoints = lambda: setattr(fitted, "changepoints_t", self.changepoints_t.copy())
         kwargs = {"backend": "python"}
         if exact:

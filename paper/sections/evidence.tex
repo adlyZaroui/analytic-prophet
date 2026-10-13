@@ -60,6 +60,20 @@ fitted on each series' full length, the corrected optimum scores higher on
 \KktLpWins{} of the \KktSeries{} series, by a median of \KktLpMedian{} nats and never
 by less than \KktLpMin.
 
+Nor is the margin a matter of Prophet's stopping tolerances. Stan's L-BFGS has five
+tests besides its budget of iterations, and with every one set to machine precision or
+below it runs on until an iteration makes no progress or its line search fails. On the
+full series that takes it from iteration \TolDefaultIterLong{} to
+\TolFiveIterLong{}, and it still ends \TolFiveShortLong{} nats short of the optimum
+(\TolDefaultShortLong{} at the defaults); at $T = 300$ and $1000$ it ends
+\TolFiveShortShort{} and \TolFiveShortMid{} nats short, against \TolDefaultShortShort{}
+and \TolDefaultShortMid. With yearly seasonality alone at $T = 2905$ it runs
+\TolFiveIterYearly{} iterations instead of \TolDefaultIterYearly{} and closes the gap
+from \TolDefaultShortYearly{} to \TolFiveShortYearly{} nats, and no further. These runs
+call Stan directly, because where the line search fails Prophet cannot report the
+result: it treats the failure as an abnormal exit and retries with Newton, passing the
+tolerances on, and cmdstanpy rejects them for Newton, so the fit raises an error.
+
 \subsection{First-order optimality}
 \label{sec:evidence:kkt}
 
@@ -81,8 +95,10 @@ The gradient is Stan's, of Prophet's compiled density, through
 \code{CmdStanModel.log_prob}, so neither implementation grades itself; at the
 reformulation's solution it agrees with this implementation's hand-derived gradient
 to $10^{-7}$. Prophet's point is read at full precision. CmdStan writes the optimum
-with eight significant digits unless asked otherwise, and that rounding alone moves
-the residual by up to about $0.2$.
+with eight significant digits unless asked otherwise, and on \KktRoundingSeries{}
+census series drawn at random that rounding alone moves Prophet's residual by up to
+\KktRoundingMax, against a residual of at least \KktRoundingResidualMin{} on every one of
+them.
 
 Each of the \KktSeries{} series of the census of \cref{sec:consequences} is fitted on
 its full length in Prophet's default configuration. Prophet's residual has a median
@@ -211,6 +227,23 @@ the \SmoothRuns{} runs. What remains there is not the kink, which the smoothed p
 not have, but the point at which Stan's stopping rule declares a smooth problem
 solved.
 
+\paragraph{Outside Stan.}
+The dependence on the kink is not peculiar to Stan's code. We ran SciPy's L-BFGS-B
+\citep{byrd1995limited} with no bounds on the natural parameterisation, from Prophet's
+initialisation and with its tolerances set to zero, at \StrengthLambdas{} values of
+$\lambda = 1/\tau$ from $10^{-6}$ to $100$ at the three lengths. Here $\sigma$ is held at
+Prophet's estimate, so that each problem is a quadratic plus
+$\lambda\lVert\delta\rVert_1$ with a unique minimiser, which an active-set method
+computes exactly; Stan's gradient certifies each with a relaxed residual of at most
+$\StrengthReferenceResidual$. Wherever that minimiser has no rate at zero, L-BFGS
+reaches it to within $\StrengthSmoothMax$ nats. As $\lambda$ grows and more of the
+minimiser's rates sit on the kink, it stops further short: by \StrengthDefaultShort,
+\StrengthDefaultMid{} and \StrengthDefaultLong{} nats at the default $\lambda = 20$,
+where \StrengthDefaultZerosShort, \StrengthDefaultZerosMid{} and
+\StrengthDefaultZerosLong{} of the 25 rates are zero. Across the \StrengthCells{} cells
+the rank correlation between the shortfall and the number of zero rates is
+\StrengthRankCorrelation.
+
 \subsection{The solution path in $\tau$}
 \label{sec:evidence:path}
 
@@ -255,9 +288,10 @@ the exact path.
 
 Under flat growth the likelihood never sees $k$ or $\delta$, so nothing pulls
 against the prior and every changepoint rate goes to zero. Both implementations
-then reach exactly the same point: identical $\lp$ to Stan's full printed
-precision at every length measured, and every one of the 25 rates exactly zero ---
-for Prophet as much as for this implementation.
+then reach the same point: at each of the \FlatLengths{} lengths of
+\cref{sec:evidence:lp} their $\lp$ agree to within $\FlatLpGap$ nats and their
+parameters to within $\FlatParamGap$, and every one of the 25 rates is exactly zero
+--- for Prophet as much as for this implementation.
 
 This establishes that the two implementations fit the same model, so the margin
 under linear growth is optimizer behaviour and not a difference of specification.

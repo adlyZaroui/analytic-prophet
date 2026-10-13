@@ -21,6 +21,13 @@ This caused four separate, independently-discovered failures here:
    `tau` made the mechanism unambiguous — iterations-before-death tracked the L1
    strength exactly: `1/tau = 20` died at 2 iterations, `1/tau = 1e-6` (an effectively
    smooth objective) ran 3528.
+
+   *Historical, and not rerun.* liblbfgs was linked from the system, never kept in this
+   repository, and the backend has since been replaced, so nothing reruns this sweep and
+   the paper does not quote it. [`paper/experiments/strength.py`](../paper/experiments/strength.py)
+   asks the same question of SciPy's L-BFGS-B, with no bounds, on the natural
+   parameterization (#175): wherever the optimum has no rate at zero it reaches it, and
+   it stops further short the more of the optimum's rates sit on the kink.
 2. **scipy's L-BFGS-B** on the natural parameterization stalled with its **objective
    17.8% above the minimum** while reporting `success=True`. Not a tolerance problem:
    with `ftol=0, gtol=0` it still stopped at the same point.
@@ -30,6 +37,11 @@ This caused four separate, independently-discovered failures here:
    **not** a percentage of Stan's `lp__`, where every margin in this file is a fraction
    of a percent. The two are different quantities on different scales and the
    percentages do not compare.
+
+   That run, from #8's setting, was not kept either. In `strength.py`'s setting --
+   `sigma_obs` fixed, Prophet's initialization -- removing SciPy's tolerances does move
+   the endpoint, but not to the optimum: at the default `1/tau = 20` on the full series
+   it ends 11.1 nats short with them and 0.18 without (`paper/results/strength.csv`).
 3. **Stan's L-BFGS**, which is what Prophet runs by default, stops short too — and goes
    on stopping short with its tolerances effectively removed. Developed below.
 4. **Stan's Newton**, which Prophet uses under 100 observations, also lands short, at
@@ -89,17 +101,25 @@ own 730-day threshold for yearly seasonality, so forcing it on there is the conf
 [withdrawn at the end of this file](#one-claim-that-was-withdrawn) rather than a
 measurement of anything.
 
-Prophet does not reach our 7797.2523 even with its stopping rule effectively removed. Run
-with `tol_rel_obj=1` (one machine epsilon), `tol_obj=1e-20`, `tol_grad=1e-20`,
-`tol_param=1e-20`, it runs 1252 iterations, reaches **7796.96** — still 0.29 nats short
+Prophet does not reach our 7797.2523 even with its stopping rule removed. Run with every
+one of Stan's five tolerances at machine precision or below -- `tol_rel_obj=1` and
+`tol_rel_grad=1` (one machine epsilon), `tol_obj=1e-20`, `tol_grad=1e-20`,
+`tol_param=1e-20` -- it runs 1252 iterations, reaches **7796.96** — still 0.30 nats short
 — and then terminates with:
 
 > `Optimization terminated with error: Line search failed to achieve a sufficient decrease, no more progress can be made`
 
 Its own iteration log shows the cause: repeated `LS failed, Hessian reset` entries, and
-`||grad||` sitting between 55 and 90 throughout, never approaching a gradient tolerance.
-That is the same non-smoothness, defeating Stan's line search the way it defeated
-liblbfgs's and scipy's.
+`||grad||` ending at 69, nowhere near a gradient tolerance. That is the same
+non-smoothness, defeating Stan's line search the way it defeated liblbfgs's and scipy's.
+
+All five are needed. This note used to list four, leaving out `tol_rel_grad`, and with
+that one at its default the run stops at iteration 558 with the default's 2.34 nats
+still missing. Prophet itself cannot make the run: the failed line search is an
+abnormal exit, Prophet retries with Newton and passes the tolerances on, and cmdstanpy
+rejects them for Newton. [`paper/experiments/tolerance.py`](../paper/experiments/tolerance.py)
+reruns it through Stan directly, in this configuration and at three lengths of the
+default one (#175); the paper quotes it from there.
 
 **It is not specific to L-BFGS.** Stan also ships a Newton optimizer, which Prophet uses
 on series under 100 observations, and it is genuinely the better of the two *for Prophet*
