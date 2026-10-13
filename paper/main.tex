@@ -27,7 +27,14 @@
 % A result the paper states but has not yet measured.  It renders visibly so
 % that nothing unmeasured can reach a submitted version unnoticed; the build
 % refuses to produce a submission while any remain (see Makefile).
-\newcommand{\pending}[2]{\textcolor{red!70!black}{[\textbf{pending #1}: #2]}}
+\newcommand{\pending}[2]{\textcolor{red!70!black}{[\textbf{pending \projectissue{#1}}: #2]}}
+
+% Issues are cited as links to their threads, never as bare numbers, and the
+% text names the tracker as GitHub's cross-repository references do: prophet#842
+% is an upstream report, analytic-prophet#193 this implementation's own issue.
+% A bare #842 would leave a reader unable to tell the two apart.
+\newcommand{\prophetissue}[1]{\href{https://github.com/facebook/prophet/issues/#1}{prophet\##1}}
+\newcommand{\projectissue}[1]{\href{https://github.com/adlyZaroui/analytic-prophet/issues/#1}{analytic-prophet\##1}}
 
 \theoremstyle{plain}
 \newtheorem{proposition}{Proposition}
@@ -61,7 +68,7 @@ below the optimum at every series length measured, and its changepoint rates
 never reach the exact zeros the optimum has. On every one of \KktSeries{} M4 series,
 Prophet's solution fails the first-order optimality conditions, even when each
 changepoint rate is read in the way most favourable to it.
-\pending{\#169}{the multi-start scatter under convexity}
+\pending{169}{the multi-start scatter under convexity}
 The defect is diagnosable, is consistent with user reports in Prophet's issue
 tracker going back several years, and is removed by an exact reformulation that
 splits each rate into non-negative parts. On a frozen census of \CensusSeries{}

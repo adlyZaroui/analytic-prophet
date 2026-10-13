@@ -40,7 +40,8 @@ def test_no_number_is_typed_into_the_section():
     """Every figure is a macro. The only literals allowed are the ones the
     section names rather than measures: the nominal 80%, Prophet's T = 100
     rule, and the two lengths that bound Tier 0's range."""
-    text = re.sub(r"\\[A-Za-z]+", " ", SECTION.read_text())
+    text = re.sub(r"\\(?:prophet|project)issue\{\d+\}", " ", SECTION.read_text())
+    text = re.sub(r"\\[A-Za-z]+", " ", text)
     literals = set(re.findall(r"(?<![\w.])\d[\d,.]*", text))
     assert literals <= {"80", "100", "300", "2905"}, sorted(literals)
 
