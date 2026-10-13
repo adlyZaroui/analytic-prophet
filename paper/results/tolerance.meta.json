@@ -1,0 +1,51 @@
+{
+ "cells": [
+  [
+   "default",
+   300
+  ],
+  [
+   "default",
+   1000
+  ],
+  [
+   "default",
+   2905
+  ],
+  [
+   "yearly_only",
+   2905
+  ]
+ ],
+ "commit": "5605f48be7856fcf1930fffb6e173a23e2b28d0f",
+ "machine": "arm64",
+ "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+ "processor": "arm",
+ "python": "3.14.7",
+ "recorded": "2026-10-13T03:11:46+00:00",
+ "seed": 20260925,
+ "settings": {
+  "default": {},
+  "five": {
+   "tol_grad": 1e-20,
+   "tol_obj": 1e-20,
+   "tol_param": 1e-20,
+   "tol_rel_grad": 1,
+   "tol_rel_obj": 1
+  },
+  "four": {
+   "tol_grad": 1e-20,
+   "tol_obj": 1e-20,
+   "tol_param": 1e-20,
+   "tol_rel_obj": 1
+  }
+ },
+ "versions": {
+  "analytic-prophet": "0.1.0",
+  "cmdstanpy": "1.3.0",
+  "numpy": "2.5.3",
+  "pandas": "3.0.5",
+  "prophet": "1.4.0",
+  "scipy": "1.18.1"
+ }
+}
