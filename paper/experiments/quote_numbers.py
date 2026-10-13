@@ -440,10 +440,45 @@ def tau_path():
     }
 
 
+def multistart():
+    """#169: Prophet from random starts, sigma fixed (convex) and free."""
+    rows = list(csv.DictReader(open(PAPER_RESULTS / "multistart.csv")))
+    tags = {300: "Short", 1000: "Mid", 2905: "Long"}
+
+    def cells(size, setting, implementation, random_only=True):
+        return [r for r in rows if int(r["observations"]) == size and r["setting"] == setting
+                and r["implementation"] == implementation
+                and not (random_only and r["start"] == "default")]
+
+    out = {}
+    starts = cells(300, "fixed", "prophet")
+    out["MultiStarts"] = f"{len(starts)}"
+    out["MultiTotal"] = f"{sum(len(cells(size, 'fixed', 'prophet')) for size in tags)}"
+    out["MultiOurs"] = _word(len(cells(300, "fixed", "analytic_prophet")))
+    out["MultiOursWorst"] = _scientific(max(abs(float(r["shortfall"])) for r in rows
+                                            if r["implementation"] == "analytic_prophet"))
+    out["MultiReferenceResidual"] = _scientific(max(float(r["residual"]) for r in rows
+                                                    if r["implementation"] == "reference"))
+    out["MultiFallbacks"] = _word(sum(1 for r in rows if r["implementation"] == "prophet"
+                                      and r["algorithm"] == "newton"))
+    for size, tag in tags.items():
+        for setting, label in (("fixed", "Fixed"), ("free", "Free")):
+            shortfall = [float(r["shortfall"]) for r in cells(size, setting, "prophet")]
+            distance = [float(r["delta_distance"]) for r in cells(size, setting, "prophet")]
+            default = float(next(r["shortfall"] for r in cells(size, setting, "prophet", False)
+                                 if r["start"] == "default"))
+            out[f"Multi{label}Min{tag}"] = f"{min(shortfall):.2f}"
+            out[f"Multi{label}Max{tag}"] = f"{max(shortfall):.2f}"
+            out[f"Multi{label}Spread{tag}"] = f"{max(shortfall) - min(shortfall):.2f}"
+            out[f"Multi{label}Distance{tag}"] = f"{statistics.median(distance):.2f}"
+            out[f"Multi{label}Default{tag}"] = f"{default:.2f}"
+    return out
+
+
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
     return {**census(), **posterior(), **certificate(), **margin(), **newton(),
-            **limitations(), **smoothing(), **stall(), **tau_path()}
+            **limitations(), **smoothing(), **stall(), **tau_path(), **multistart()}
 
 
 def render(values):

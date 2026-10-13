@@ -68,7 +68,8 @@ below the optimum at every series length measured, and its changepoint rates
 never reach the exact zeros the optimum has. On every one of \KktSeries{} M4 series,
 Prophet's solution fails the first-order optimality conditions, even when each
 changepoint rate is read in the way most favourable to it.
-\pending{169}{the multi-start scatter under convexity}
+Refitted from \MultiTotal{} random starts with $\sigma$ fixed, where the optimum is
+unique, Prophet reaches it from none.
 The defect is diagnosable, is consistent with user reports in Prophet's issue
 tracker going back several years, and is removed by an exact reformulation that
 splits each rate into non-negative parts. On a frozen census of \CensusSeries{}

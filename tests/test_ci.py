@@ -257,3 +257,26 @@ def test_the_skip_report_names_every_reason(tmp_path):
 @pytest.fixture(scope="module")
 def pyproject_text():
     return (REPO / "pyproject.toml").read_text()
+
+
+def test_every_recording_platform_check_is_conftests():
+    """#186, #169: one definition of "this machine recorded the result", and no
+    tolerance that pretends a stopped optimizer's endpoint is portable.
+
+    Each experiment's test used to carry its own copy, each with its own
+    guess at how far another platform might move Prophet's L-BFGS endpoint:
+    0.5 nats was not enough for #169, where CI's Linux runner moved it a full
+    nat. conftest.recorded_here states the rule they now share -- compare such
+    a point exactly where it was recorded, and elsewhere check the paper's claim
+    about it against the committed optimum -- and this keeps it the only one.
+    """
+    name = "recorded_here"
+    local_copy = re.compile(r"^\s*def _?" + name + r"\(", re.MULTILINE)
+    conditional = re.compile(r"\bif\s+_?" + name + r"\(.*\)\s+else\b")
+    for path in sorted(Path(__file__).parent.glob("*.py")):
+        if path.name == "conftest.py":
+            continue
+        text = path.read_text()
+        assert not local_copy.search(text), f"{path.name} defines its own {name}"
+        assert not conditional.search(text), (
+            f"{path.name} picks a tolerance by platform; see conftest.{name}")
