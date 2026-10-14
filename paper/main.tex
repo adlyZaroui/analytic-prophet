@@ -72,11 +72,12 @@ below the optimum at every series length measured, and its changepoint rates
 never reach the exact zeros the optimum has. On every one of \KktSeries{} M4 series,
 Prophet's solution fails the first-order optimality conditions, even when each
 changepoint rate is read in the way most favourable to it.
-Refitted from \MultiTotal{} random starts with $\sigma$ fixed, where the optimum is
-unique, Prophet reaches it from none.
-The defect is diagnosable, is consistent with user reports in Prophet's issue
-tracker going back several years, and is removed by an exact reformulation that
-splits each rate into non-negative parts. On a frozen census of \CensusSeries{}
+Run from \MultiTotal{} random starts on Prophet's program with $\sigma$ held fixed,
+where the optimum is unique, Stan's L-BFGS with Prophet's settings reaches it from
+none. The defect is diagnosable and is removed by an exact reformulation that splits
+each rate into non-negative parts. Of four long-standing reports in Prophet's issue
+tracker, it accounts for part of one and plausibly underlies a second; it explains
+neither of the others. On a frozen census of \CensusSeries{}
 held-out M4 series, the corrected optimum forecasts better on \RmseWinRate\% of
 them, by a median of \RmseAdvantage\% in RMSE: the optimization defect is real,
 and its cost to forecast accuracy is usually small.
