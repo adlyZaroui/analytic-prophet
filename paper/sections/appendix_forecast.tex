@@ -1,0 +1,44 @@
+\section{The forecast comparison}
+\label{app:forecast}
+
+\paragraph{The census.}
+The corpus is every weekly and daily series of M4 \citep{makridakis2020m4} that the
+protocol below can measure, frozen before anything was measured and identified by the
+digest \texttt{\CensusDigest} of its membership. A series is in it when it has at least
+\CensusMinLength{} observations, a starting date that loads, and at least one
+rolling-origin cutoff. Of M4's \CensusWeeklyMfour{} weekly series, \CensusWeeklyShort{}
+have fewer than \CensusMinLength{} observations, and every other one yields a cutoff,
+which leaves \CensusWeekly. Of its \CensusDailyMfour{} daily series,
+\CensusDailyShort{} have fewer than \CensusMinLength{} observations, and
+\CensusDailyNoCutoff{} more span too little calendar time to yield a cutoff, which
+needs \CensusDailySpan{} days, the initial window and the horizon; that leaves
+\CensusDaily. No series is lost to its starting date. The rule has no sampling step, so
+nothing was selected; but it leans towards long daily series.
+
+\paragraph{The protocol.}
+Each series' cutoffs are computed once, by Prophet's own \code{generate_cutoffs}, with a
+horizon, initial window and period of \CensusWeeklyHorizon, \CensusWeeklyInitial{} and
+\CensusWeeklyPeriod{} weeks for weekly series and \CensusDailyHorizon,
+\CensusDailyInitial{} and \CensusDailyPeriod{} days for daily ones, and handed to both
+implementations. At each cutoff both are fitted on the history up to it, in Prophet's
+default configuration, and forecast the horizon: Prophet through its own
+\code{cross_validation}, this implementation by a fit and a predict. The two share no
+fitted state; each places its changepoints by Prophet's rule, which gives the same
+locations. Both are scored by Prophet's own \code{performance_metrics} with a rolling
+window of one, which pools every forecast point of every cutoff into a single value per
+series: MAE, RMSE, MAPE, sMAPE and the coverage of the nominal 80\% interval, beside
+which the mean width of that interval is recorded. Both sides' uncertainty draws are
+seeded, with \CensusSeed, so a rerun reproduces every number.
+
+\paragraph{The comparison.}
+Differences are paired per series. For the errors and the interval width the
+difference is relative, this implementation's value over Prophet's minus one, so that a
+series' level does not weigh on it; for coverage, a proportion, it is the plain
+difference. Each is summarised by its median across the series, and tested with the test
+that goes with a median, the sign test: exact and two-sided, on the series where this
+implementation's value is lower against those where it is higher, with ties dropped. The
+\LimHolmComparisons{} comparisons are adjusted together by Holm's procedure, and
+\LimHolmSurvivors{} of them survive it (\cref{sec:limitations}), which at this $n$ says
+only that the direction is consistent.
+The medians and the counts carry the result: RMSE is lower on \RmseWins{} of the
+\CensusSeries{} series, by a median of \RmseAdvantage\%.
