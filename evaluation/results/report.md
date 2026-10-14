@@ -27,7 +27,7 @@ Series generated from the model, so there is a true parameter vector to be right
 | raw `‖θ̂ − θ*‖` | 7 / 18 |
 | **identified** `½dᵀH(θ*)d` | **14 / 18** |
 
-Median paired difference -0.265 nats, Wilcoxon p = 0.0034.
+Median paired difference -0.265 nats, sign test p = 0.0309.
 
 The two disagree, and that is the finding. Raw distance is a coin flip because it is dominated by the directions the data does not identify — `k` against `delta`, where being far away costs nothing and means nothing.
 
@@ -43,27 +43,27 @@ The trend's sparsity is reported as Σ|δ| and as the count of **exact** zeros r
 
 The question the README explicitly refuses to answer. Rolling-origin evaluation on cutoffs from `prophet.diagnostics.generate_cutoffs`, scored by `prophet.diagnostics.performance_metrics` — both sides get the same splits and the same scorer.
 
-Differences are paired per series and tested with the **Wilcoxon signed-rank test** (`scipy.stats.wilcoxon`), which is why the summary is a median rather than a mean: forecast errors across series are heavy-tailed, and the worst series here differs by hundreds of percent while most differ by a couple, differ by under 2%.
+Differences are paired per series. Each row's summary is the **median** — forecast errors across series are heavy-tailed, the worst series differing by hundreds of percent while most differ by a couple, so a mean would be one series' story — and its test is the one that goes with a median, the **sign test** (`scipy.stats.binomtest` on the series where ours is lower against those where it is higher, ties dropped).
 
 | metric | median difference | lower on | p | Holm p |
 |---|---|---|---|---|
-| mae ⁑ | -2.3761 | 1894/3008 | 8.7e-48 | 3.5e-47 |
-| rmse ⁑ | -2.6550 | 1929/3008 | 1.2e-51 | 5.9e-51 |
-| mape | -0.0006 | 1807/3008 | 1.4e-29 | 2.9e-29 |
-| smape | -0.0007 | 1838/3008 | 8.8e-30 | 2.6e-29 |
-| coverage | +0.0023 | — | 3.7e-19 | 3.7e-19 |
-| interval_width ⁑ | +2.4724 | — | 5.2e-106 | 3.1e-105 |
-| sum_abs_delta ⁑ | +0.9930 | — | &lt;1e-308 | — |
+| mae | -0.52% | 1894/3008 | 2.7e-46 | 1.1e-45 |
+| rmse | -0.40% | 1929/3008 | 9.2e-55 | 4.6e-54 |
+| mape | -0.43% | 1807/3008 | 1.8e-28 | 3.6e-28 |
+| smape | -0.48% | 1838/3008 | 2.7e-34 | 8.1e-34 |
+| coverage | +0.0023 | — | 3.7e-21 | 3.7e-21 |
+| interval_width | +0.56% | — | 1.0e-127 | 6.2e-127 |
+| sum_abs_delta | +4.06% | — | &lt;1e-308 | — |
 | exact_zeros | +11.0000 | — | &lt;1e-308 | — |
-| l1_penalty ⁑ | +19.8598 | — | &lt;1e-308 | — |
+| l1_penalty | +4.06% | — | &lt;1e-308 | — |
 
 Negative means we are lower. That is better for the four error rows, worse for coverage — which should be near the nominal 0.8 — and neither for the sparsity rows, which are reported because they describe the fits rather than rank them. The count column is left blank where a win is not defined.
 
-**⁑ These rows are in the series' own units**, and the 3008 M4 series differ in level by orders of magnitude. The median of a raw difference across them ranks direction and is *not* a pooled effect size — a unit of MAE means something different on every series. Read magnitude from the scale-free rows: `mape`, `smape` and `coverage`. (MASE, the M4 standard, would be the better answer and needs the tier re-run with a new metric; it is not here.)
+**Every row is scale-free.** The 3008 M4 series differ in level by orders of magnitude, so the error, width and rate-size rows are relative differences, ours / Prophet's − 1, and a series' level does not weigh on them; coverage, a proportion, and the count of exact zeros are plain differences. The sign test counts only directions, so it is scale-free on every row. (MASE, the M4 standard, would be a further error measure and needs the tier re-run with a new metric; it is not here.)
 
-**On testing nine things at once, and why that has stopped being the interesting question.** The comparisons are the six rows above the sparsity readouts and the `Holm p` column adjusts across them, Holm rather than Bonferroni because these metrics are computed on the same forecasts and are far from independent. **All 6 of the 6 survive adjustment**, at p between 3.1e-105 and 3.7e-19.
+**On testing nine things at once, and why that has stopped being the interesting question.** The comparisons are the six rows above the sparsity readouts and the `Holm p` column adjusts across them. Holm rather than Bonferroni because Holm is uniformly at least as powerful; both hold whatever the dependence between the metrics, which are computed on the same forecasts. **All 6 of the 6 survive adjustment**, at p between 6.2e-127 and 3.7e-21.
 
-*That is a fact about n, not about the method.* At 3008 paired series a Wilcoxon test rejects on any consistent direction whatever its size, so significance here distinguishes nothing and is reported only because leaving it out would look like hiding it. **Read the medians and the win rates.** The one number that changed its meaning rather than its precision when the corpus grew is `interval_width`: at 36 series it was indistinguishable (p = 0.47) and declined to claim anything, and across the census our intervals are **wider by a median +2.47** in the series' own units, which is unambiguous and is a loss. Taken with the coverage row it says the two implementations buy slightly different trade-offs on an interval that is badly calibrated in both.
+*That is a fact about n, not about the method.* At 3008 paired series a sign test rejects on any consistent direction whatever its size, so significance here distinguishes nothing and is reported only because leaving it out would look like hiding it. **Read the medians and the win rates.** The one number that changed its meaning rather than its precision when the corpus grew is `interval_width`: at 36 series it was indistinguishable (p = 0.47) and declined to claim anything, and across the census our intervals are **wider by a median +0.56%**, on 2153 of the 3008 series, which is unambiguous and is a loss, if a small one. Taken with the coverage row it says the two implementations buy slightly different trade-offs on an interval that is badly calibrated in both.
 
 The three sparsity readouts are excluded from the family on purpose: they describe the fits rather than ranking them, so they are not comparisons and adjusting over them would be adjusting over something else. Including the three sparsity rows in the family changes none of it — every p there underflows, so Holm over nine rejects the same six.
 
@@ -77,18 +77,18 @@ The pooled row is the first; the rest are the frozen corpus's own strata. Read t
 
 | stratum | metric | median difference | lower on | n |
 |---|---|---|---|---|
-| all | mae | -2.3761 | 1894/3008 | 3008 |
-| all | rmse | -2.6550 | 1929/3008 | 3008 |
-| all | mape | -0.0006 | 1807/3008 | 3008 |
-| all | smape | -0.0007 | 1838/3008 | 3008 |
-| Daily | mae | -2.8360 | 1724/2714 | 2714 |
-| Daily | rmse | -3.2052 | 1759/2714 | 2714 |
-| Daily | mape | -0.0007 | 1636/2714 | 2714 |
-| Daily | smape | -0.0008 | 1679/2714 | 2714 |
-| Weekly | mae | -0.4379 | 170/294 | 294 |
-| Weekly | rmse | -0.3516 | 170/294 | 294 |
-| Weekly | mape | -0.0002 | 171/294 | 294 |
-| Weekly | smape | -0.0001 | 159/294 | 294 |
+| all | mae | -0.52% | 1894/3008 | 3008 |
+| all | rmse | -0.40% | 1929/3008 | 3008 |
+| all | mape | -0.43% | 1807/3008 | 3008 |
+| all | smape | -0.48% | 1838/3008 | 3008 |
+| Daily | mae | -0.59% | 1724/2714 | 2714 |
+| Daily | rmse | -0.46% | 1759/2714 | 2714 |
+| Daily | mape | -0.51% | 1636/2714 | 2714 |
+| Daily | smape | -0.59% | 1679/2714 | 2714 |
+| Weekly | mae | -0.20% | 170/294 | 294 |
+| Weekly | rmse | -0.11% | 170/294 | 294 |
+| Weekly | mape | -0.19% | 171/294 | 294 |
+| Weekly | smape | -0.12% | 159/294 | 294 |
 
 ### The finding that is not about us
 
@@ -199,8 +199,8 @@ Read these with the figure rather than on their own. Every implementation is *sl
 
 ## How this was measured
 
-- seed `20260925`, commit `4b95de6ecd89`
+- seed `20260925`, commit `f8ce45821746`
 - python 3.14.7 on macOS-26.5.2-arm64-arm-64bit-Mach-O
-- analytic-prophet 0.1.0, cmdstanpy 1.3.0, numpy 2.5.3, pandas 3.0.5, prophet 1.4.0, scipy 1.18.1
+- cmdstanpy 1.3.0, numpy 2.5.3, pandas 3.0.5, prophet 1.4.0, scipy 1.18.1
 
 Each tier writes `results/<tier>.csv` sorted, so rerunning an unchanged tier produces an unchanged file and a rerun is a reviewable diff rather than a number to be trusted.

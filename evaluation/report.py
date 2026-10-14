@@ -184,7 +184,7 @@ def tier1_section(rows, figures):
     import metrics
     summary = metrics.paired_summary([a - b for a, b in ident])
     lines.append(f"Median paired difference {summary['median']:+.3f} nats, "
-                 f"Wilcoxon p = {summary['p_value']:.4f}.")
+                 f"sign test p = {summary['p_value']:.4f}.")
     lines += ["", "The two disagree, and that is the finding. Raw distance is a "
               "coin flip because it is dominated by the directions the data "
               "does not identify — `k` against `delta`, where being far away "
@@ -317,8 +317,8 @@ def _p(value):
     if value >= 1e-4:
         return f"{value:.4f}"
     if value <= 0.0:
-        # Wilcoxon on three thousand pairs underflows to exactly zero for the
-        # sparsity rows. Printing `0.0e+00` reads as a bug rather than as a
+        # The sign test on three thousand pairs underflows to exactly zero for
+        # the sparsity rows. Printing `0.0e+00` reads as a bug rather than as a
         # number below the smallest double.
         return "&lt;1e-308"
     return f"{value:.1e}"
@@ -327,11 +327,11 @@ def _p(value):
 def holm(p_values):
     """Holm-Bonferroni adjusted p-values.
 
-    Holm rather than Bonferroni because these metrics are computed on the same
-    forecasts and are heavily correlated, and plain Bonferroni assumes an
-    independence nobody believes -- it is valid but needlessly blunt. Holm is
-    valid under *arbitrary* dependence and uniformly more powerful, so there is
-    no case for the cruder one.
+    Holm rather than Bonferroni because Holm is uniformly at least as
+    powerful, and nothing else separates them: both control the family-wise
+    error rate under *arbitrary* dependence, which these metrics have, being
+    computed on the same forecasts. (This used to say Bonferroni assumes
+    independence. It does not; #200.)
 
     Step-down: sort ascending, scale the i-th by (m - i), and keep the running
     maximum so the sequence cannot decrease.
@@ -342,6 +342,15 @@ def holm(p_values):
         running = max(running, min(1.0, (count - index) * value))
         adjusted[name] = running
     return adjusted
+
+
+def _difference(metric, median):
+    """A paired median as the table prints it: a percentage for a metric read
+    relative to Prophet's (`metrics.RELATIVE`, #200), else a plain difference."""
+    import metrics
+    if metric in metrics.RELATIVE:
+        return f"{median * 100:+.2f}%"
+    return f"{median:+.4f}"
 
 
 def _paired_rows(rows, stratum="all"):
@@ -434,7 +443,7 @@ def _stratum_table(rows, manifest_strata):
             if f"{metric}_n" not in summary:
                 continue
             lines.append(
-                f"| {stratum} | {metric} | {summary[f'{metric}_median']:+.4f} |"
+                f"| {stratum} | {metric} | {_difference(metric, summary[f'{metric}_median'])} |"
                 f" {summary[f'{metric}_wins']:.0f}/{summary[f'{metric}_n']:.0f} |"
                 f" {summary[f'{metric}_n']:.0f} |")
     return lines + [""]
@@ -447,12 +456,13 @@ def tier2_section(rows, figures):
              "evaluation on cutoffs from `prophet.diagnostics.generate_cutoffs`, "
              "scored by `prophet.diagnostics.performance_metrics` — both sides get "
              "the same splits and the same scorer.", "",
-             "Differences are paired per series and tested with the **Wilcoxon "
-             "signed-rank test** (`scipy.stats.wilcoxon`), which is why the summary "
-             "is a median rather than a mean: forecast errors across series are "
-             "heavy-tailed, and the worst series here differs by hundreds of "
-             "percent while most differ by a couple, "
-             "differ by under 2%.", "",
+             "Differences are paired per series. Each row's summary is the "
+             "**median** — forecast errors across series are heavy-tailed, the "
+             "worst series differing by hundreds of percent while most differ by "
+             "a couple, so a mean would be one series' story — and its test is "
+             "the one that goes with a median, the **sign test** "
+             "(`scipy.stats.binomtest` on the series where ours is lower against "
+             "those where it is higher, ties dropped).", "",
              "| metric | median difference | lower on | p | Holm p |",
              "|---|---|---|---|---|"]
     # Metrics where lower is simply better. For coverage it is not -- higher is
@@ -460,13 +470,6 @@ def tier2_section(rows, figures):
     # direction is good or bad, so a "wins" column would read as a scoreboard
     # for quantities that are not a contest.
     SCORED = {"mae", "rmse", "mape", "smape"}
-    # Raw-unit rows: medians of differences across series whose levels differ by
-    # orders of magnitude. They rank direction; they are not a pooled effect
-    # size, because a unit of MAE means something different on every series
-    # (#124). The scale-free rows beside them are what magnitude should be read
-    # from.
-    RAW_UNITS = {"mae", "rmse", "interval_width", "sum_abs_delta", "l1_penalty"}
-
     adjusted = holm({metric: paired[f"{metric}_p_value"]
                      for metric in TIER2_COMPARISONS
                      if f"{metric}_p_value" in paired})
@@ -477,10 +480,9 @@ def tier2_section(rows, figures):
             continue
         count = (f"{paired[f'{metric}_wins']:.0f}/{paired[f'{metric}_n']:.0f}"
                  if metric in SCORED else "—")
-        label = f"{metric} ⁑" if metric in RAW_UNITS else metric
         holm_cell = (_p(adjusted[metric]) if metric in adjusted else "—")
-        lines.append(f"| {label} | {paired[f'{metric}_median']:+.4f} | {count} | "
-                     f"{_p(paired[f'{metric}_p_value'])} | {holm_cell} |")
+        lines.append(f"| {metric} | {_difference(metric, paired[f'{metric}_median'])} |"
+                     f" {count} | {_p(paired[f'{metric}_p_value'])} | {holm_cell} |")
     _n = int(paired.get("rmse_n", 0))
     survivors = [m for m in TIER2_COMPARISONS if adjusted.get(m, 1.0) < 0.05]
     widest = paired.get("interval_width_median", 0.0)
@@ -489,32 +491,35 @@ def tier2_section(rows, figures):
               " and neither for the sparsity rows, which are reported because they"
               " describe the fits rather than rank them. The count column is left"
               " blank where a win is not defined.", "",
-              f"**⁑ These rows are in the series' own units**, and the {_n} M4 series"
-              " differ in level by orders of magnitude. The median of a raw"
-              " difference across them ranks direction and is *not* a pooled effect"
-              " size — a unit of MAE means something different on every series. Read"
-              " magnitude from the scale-free rows: `mape`, `smape` and `coverage`."
-              " (MASE, the M4 standard, would be the better answer and needs the"
-              " tier re-run with a new metric; it is not here.)", "",
+              f"**Every row is scale-free.** The {_n} M4 series differ in level by"
+              " orders of magnitude, so the error, width and rate-size rows are"
+              " relative differences, ours / Prophet's − 1, and a series' level"
+              " does not weigh on them; coverage, a proportion, and the count of"
+              " exact zeros are plain differences. The sign test counts only"
+              " directions, so it is scale-free on every row. (MASE, the M4"
+              " standard, would be a further error measure and needs the tier"
+              " re-run with a new metric; it is not here.)", "",
               "**On testing nine things at once, and why that has stopped being"
               " the interesting question.** The comparisons are the six rows above"
-              " the sparsity readouts and the `Holm p` column adjusts across them,"
-              " Holm rather than Bonferroni because these metrics are computed on"
-              " the same forecasts and are far from independent."
+              " the sparsity readouts and the `Holm p` column adjusts across them."
+              " Holm rather than Bonferroni because Holm is uniformly at least as"
+              " powerful; both hold whatever the dependence between the metrics,"
+              " which are computed on the same forecasts."
               f" **All {len(survivors)} of the {len(TIER2_COMPARISONS)} survive"
               f" adjustment**" + (
                   f", at p between {_p(min(adjusted.values()))} and"
                   f" {_p(max(adjusted.values()))}." if adjusted else "."), "",
               f"*That is a fact about n, not about the method.* At {_n} paired"
-              " series a Wilcoxon test rejects on any consistent direction"
+              " series a sign test rejects on any consistent direction"
               " whatever its size, so significance here distinguishes nothing and"
               " is reported only because leaving it out would look like hiding it."
               " **Read the medians and the win rates.** The one number that"
               " changed its meaning rather than its precision when the corpus grew"
               " is `interval_width`: at 36 series it was indistinguishable"
               " (p = 0.47) and declined to claim anything, and across the census"
-              f" our intervals are **wider by a median {widest:+.2f}** in the"
-              " series' own units, which is unambiguous and is a loss. Taken with"
+              f" our intervals are **wider by a median {widest * 100:+.2f}%**, on"
+              f" {paired.get('interval_width_losses', 0):.0f} of the {_n} series,"
+              " which is unambiguous and is a loss, if a small one. Taken with"
               " the coverage row it says the two implementations buy slightly"
               " different trade-offs on an interval that is badly calibrated in"
               " both.", "",
@@ -723,7 +728,7 @@ def _accuracy_plot(rows):
         if n is not None:
             caption += f"   n = {int(n)}"
         if p_value is not None:
-            caption += f"   p = {p_value:.4f}"
+            caption += f"   sign test p = {_p(p_value)}"
         if outside:
             caption += f"\n{outside} series beyond \u00b1{limit:.0f}%, drawn at the edge"
         panel.set_title(f"{metric.upper()}   {caption}", fontsize=9, loc="left")

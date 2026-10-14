@@ -10,6 +10,13 @@ as a limitation.
 
 None of it changed a number. All of it changed what a reader can conclude
 from them, which is the same thing as changing the claim.
+
+#200 then changed the numbers, because the test was wrong for them: the
+signed-rank test ranked differences in each series' own units, so the
+high-level series decided it, and the median beside it was not its estimate.
+The errors and widths are relative differences now, the test is the sign test
+that goes with a median, and every row is scale-free -- so the raw-unit marker
+these tests used to require is gone.
 """
 import csv
 import re
@@ -37,9 +44,10 @@ def paired():
 
 def test_the_test_is_named_where_its_p_values_are(report):
     """Tier 1 named it; Tier 2 printed nine p-values and left the reader to
-    infer the test from the word "median"."""
-    assert "Wilcoxon" in report
-    assert "scipy.stats.wilcoxon" in report
+    infer the test from the word "median". It is the sign test since #200."""
+    assert "sign test" in report
+    assert "scipy.stats.binomtest" in report
+    assert "Wilcoxon" not in report.replace("p = 0.47", "")
 
 
 def test_the_adjusted_p_values_are_holm_and_correct(paired):
@@ -104,17 +112,23 @@ def test_the_sparsity_rows_are_excluded_from_the_family_and_it_says_so(report):
 
 # -- units -----------------------------------------------------------------
 
-def test_the_raw_unit_rows_are_marked(report):
-    """`mae = -1.9142` is a median across series whose levels differ by orders
-    of magnitude. It ranks direction; it is not an effect size."""
-    assert "⁑" in report, "the raw-unit rows carry no marker"
-    assert "in the series' own units" in report
-    assert "not* a pooled effect size" in report or "not a pooled effect size" in report
+def test_every_row_is_scale_free(report):
+    """`mae = -1.9142` used to be a median across series whose levels differ by
+    orders of magnitude. Since #200 the errors and widths are relative
+    differences, so no row needs the raw-unit marker it carried."""
+    assert "**Every row is scale-free.**" in report
+    assert "ours / Prophet's − 1" in report
+    assert "⁑" not in report
 
 
-def test_the_reader_is_pointed_at_the_scale_free_rows(report):
-    assert "mape" in report and "smape" in report
-    assert "Read magnitude from the scale-free rows" in report
+def test_the_reason_for_holm_is_the_right_one(report, readme):
+    """Bonferroni does not assume independence; Holm is chosen because it is
+    uniformly at least as powerful, and both hold under any dependence."""
+    source = (REPO / "evaluation" / "report.py").read_text()
+    for text in (report, readme):
+        assert "far from independent" not in text
+        assert "uniformly at least as powerful" in text
+    assert "assumes an independence" not in source
 
 
 # -- the two coverage numbers ----------------------------------------------
@@ -219,9 +233,11 @@ def readme_table():
         if len(cells) != 5 or cells[0] in ("", "---"):
             continue
         label = cells[0].replace("⁑", "").replace("*", "").strip()
+        median = cells[1].replace("−", "-").replace("*", "")
         try:
-            rows[label] = (float(cells[1].replace("−", "-").replace("*", "")),
-                           cells[2], float(cells[3]), float(cells[4]))
+            # a relative row is printed as a percentage (#200)
+            value = float(median.rstrip("%")) / 100 if median.endswith("%") else float(median)
+            rows[label] = (value, cells[2], float(cells[3]), float(cells[4]))
         except ValueError:
             continue
     return rows
@@ -232,8 +248,9 @@ README_TO_METRIC = {"MAE": "mae", "RMSE": "rmse", "MAPE": "mape", "sMAPE": "smap
 
 
 def test_the_readme_names_the_test_and_the_adjustment(readme):
-    assert "Wilcoxon signed-rank" in readme
-    assert "scipy.stats.wilcoxon" in readme
+    assert "sign test" in readme
+    assert "scipy.stats.binomtest" in readme
+    assert "Wilcoxon" not in readme
     assert "Holm" in readme, "the adjustment is claimed but not named"
 
 
@@ -246,7 +263,9 @@ def test_every_number_in_the_readme_table_is_the_committed_one(readme_table, pai
 
     for label, metric in README_TO_METRIC.items():
         median, _wins, raw, adj = readme_table[label]
-        assert median == pytest.approx(paired[f"{metric}_median"], abs=5e-4), label
+        # relative rows are quoted to two places of a percentage
+        tolerance = 5e-5 if metric in ("mae", "rmse", "mape", "smape", "interval_width") else 5e-4
+        assert median == pytest.approx(paired[f"{metric}_median"], abs=tolerance), label
         assert raw == pytest.approx(paired[f"{metric}_p_value"], abs=5e-5), label
         assert adj == pytest.approx(adjusted[metric], abs=5e-5), (
             f"{label}: README says Holm {adj}, the results give {adjusted[metric]:.4f}")
@@ -268,12 +287,20 @@ def test_the_readme_quotes_the_win_counts_it_can_check(readme_table, paired):
             f"the results say {wins}/{n}")
 
 
-def test_the_readme_marks_its_raw_unit_rows(readme):
-    """MAE, RMSE and interval width are in the series' own units, and the 36
-    series differ in level by orders of magnitude."""
-    assert readme.count("⁑") >= 4, "the raw-unit marker and its footnote"
-    assert "in the series' own units" in readme
-    assert "not* pooled effect sizes" in readme or "not pooled effect sizes" in readme
+def test_the_readme_says_its_error_rows_are_relative(readme):
+    """MAE, RMSE and interval width were in the series' own units, and the
+    series differ in level by orders of magnitude; since #200 they are relative
+    differences, and the README says so instead of marking them."""
+    assert "ours / Prophet's − 1" in readme
+    assert "⁑" not in readme
+    assert "own units rather than in anything poolable" not in readme
+
+
+def test_the_readme_does_not_call_the_wider_intervals_indistinguishable(readme, paired):
+    """Left over from the 36-series version, three lines above a table whose
+    width row has the smallest p-value in it."""
+    assert "statistically indistinguishable width" not in readme
+    assert f"wider by a median {paired['interval_width_median'] * 100:.2f}%" in readme
 
 
 def test_the_readme_reconciles_its_two_coverage_figures(readme):
@@ -371,3 +398,49 @@ def test_every_place_quoting_the_rmse_advantage_agrees_with_the_results(readme):
         "expected -- the lede and the showcase paragraph")
     assert _plain(readme).count(str(wins)) >= 1, (
         f"the README does not state the win count ({wins} of {len(relative)})")
+
+
+# -- the summary is the code's, and recomputing it keeps what was measured (#200)
+
+def test_the_committed_summary_is_what_the_code_computes(tmp_path):
+    """`evaluation/resummarise.py` rebuilds the paired rows from the per-series
+    ones without refitting. Run on a copy, it must leave every measured row as
+    written and reproduce the committed summary -- so a change to how
+    differences are summarised cannot leave the file quoting the old one.
+
+    To the last bit only where the summary was computed (conftest.recorded_here):
+    medians and binomial tails are arithmetic, but another numpy or scipy -- the
+    CI matrix installs a different pair per Python -- may round their last digit
+    differently. Elsewhere, to 1e-9."""
+    import csv
+    import json
+    import shutil
+
+    from conftest import recorded_here
+    from tiers import tier2
+
+    for name in ("tier2_accuracy.csv", "tier2_accuracy.meta.json"):
+        shutil.copy(TIER2.parent / name, tmp_path / name)
+    tier2.resummarise(tmp_path)
+
+    def split(path):
+        with open(path, newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        return ([row for row in rows if row["series"] != "paired"],
+                {(row["configuration"], row["metric"]): row["value"]
+                 for row in rows if row["series"] == "paired"})
+
+    measured, summary = split(tmp_path / "tier2_accuracy.csv")
+    committed_measured, committed_summary = split(TIER2)
+    assert measured == committed_measured, "a measured row was rewritten"
+    assert summary.keys() == committed_summary.keys()
+    for key, value in committed_summary.items():
+        assert float(summary[key]) == pytest.approx(float(value), rel=1e-9), key
+
+    meta = json.loads((tmp_path / "tier2_accuracy.meta.json").read_text())
+    committed = json.loads((TIER2.parent / "tier2_accuracy.meta.json").read_text())
+    assert {key: meta[key] for key in committed if key != "summary_recomputed"} == \
+        {key: committed[key] for key in committed if key != "summary_recomputed"}, (
+        "recomputing the summary rewrote the run's own metadata")
+    if recorded_here(TIER2.with_suffix(".meta.json")):
+        assert (tmp_path / "tier2_accuracy.csv").read_bytes() == TIER2.read_bytes()

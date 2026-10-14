@@ -100,26 +100,60 @@ def curvature_spectrum(model, theta, design=None):
     return np.sort(np.linalg.eigvalsh(0.5 * (hessian + hessian.T)))[::-1]
 
 
+# Per-series differences are taken relative to Prophet's value wherever a
+# series' level would otherwise weigh on them (#200). The errors and the
+# interval width are in each series' own units, and the M4 series differ in
+# level by orders of magnitude; MAPE, sMAPE and the size of the rates are read
+# the same way so that every row of a table means one thing. Coverage, a
+# proportion, and the count of exact zeros are compared as plain differences.
+RELATIVE = frozenset({"mae", "rmse", "mape", "smape", "interval_width",
+                      "sum_abs_delta", "l1_penalty"})
+
+
+def paired_difference(metric, ours, theirs):
+    """One series' difference: `ours / theirs - 1` for a relative metric, else
+    `ours - theirs`. nan where a relative difference is undefined, which
+    paired_summary drops rather than counts."""
+    if metric in RELATIVE:
+        return ours / theirs - 1.0 if theirs != 0 else float("nan")
+    return ours - theirs
+
+
 def paired_summary(differences):
-    """Median, IQR and a signed-rank p-value for paired per-series differences.
+    """Median, IQR and a sign test for paired per-series differences.
 
     A mean across series is the wrong summary here: forecast errors are
     heavy-tailed and one series dominates it. Paired, because both
     implementations see the same series and the same splits, so the pairing
     removes the series-to-series variation that would otherwise drown the
     effect being measured.
+
+    **The sign test, because the summary is a median** (#200). It asks only
+    whether ours is lower more often than higher -- the count the reports print
+    as "lower on" -- so it needs no assumption about the shape of the
+    differences, and no few series of large level can carry it. The
+    signed-rank test this used before ranked |d| across series, which for
+    differences in each series' own units let the high-level series decide;
+    and its estimate is the Hodges-Lehmann pseudo-median, not the median
+    printed beside it. Exact (`scipy.stats.binomtest`), two-sided, ties
+    dropped.
     """
     values = np.asarray([d for d in differences if np.isfinite(d)], dtype=float)
+    wins, losses = int(np.sum(values < 0)), int(np.sum(values > 0))
     summary = {
         "n": int(values.size),
         "median": float(np.median(values)) if values.size else float("nan"),
         "iqr_low": float(np.percentile(values, 25)) if values.size else float("nan"),
         "iqr_high": float(np.percentile(values, 75)) if values.size else float("nan"),
-        "wins": int(np.sum(values < 0)),
-        "losses": int(np.sum(values > 0)),
+        "wins": wins,
+        "losses": losses,
+        "ties": int(np.sum(values == 0)),
         "p_value": float("nan"),
     }
-    if values.size >= 6 and np.any(values != 0):
-        from scipy.stats import wilcoxon
-        summary["p_value"] = float(wilcoxon(values).pvalue)
+    # Six untied pairs is the fewest for which a two-sided sign test can fall
+    # below 0.05 (2 / 2**6 = 0.031); below that, nan rather than a number that
+    # reads like evidence.
+    if wins + losses >= 6:
+        from scipy.stats import binomtest
+        summary["p_value"] = float(binomtest(wins, wins + losses, 0.5).pvalue)
     return summary

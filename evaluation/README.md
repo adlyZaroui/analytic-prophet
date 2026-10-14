@@ -10,7 +10,12 @@ python evaluation/run.py            # every registered tier
 python evaluation/run.py --tiers 0 3
 python evaluation/run.py --list
 python evaluation/run.py --tiers 2 --workers 10     # the census, in parallel
+python evaluation/resummarise.py    # Tier 2's paired summary again, from its committed rows
 ```
+
+`resummarise.py` rebuilds Tier 2's paired summary -- medians, counts and the sign
+test -- from the per-series rows already committed, with the code a full run uses,
+so a change to how differences are summarised needs no 5.6-hour refit (#200).
 
 ## The corpus is pre-registered
 
@@ -126,6 +131,7 @@ code usually live there.
 | `synthetic.py` | generators that run the model forward, with the parameters that made each series |
 | `run.py` | the runner, tier registry and the gate |
 | `report.py` | tables and figures, from the committed results and nothing else |
+| `resummarise.py` | Tier 2's paired summary, rebuilt from its committed per-series rows |
 | `tiers/` | one module per tier |
 | `results/` | the committed CSVs, their metadata, the report and its figures |
 

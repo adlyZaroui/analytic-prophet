@@ -7,6 +7,11 @@
  "recorded": "2026-10-09T02:27:35+00:00",
  "seconds": 21217.073,
  "seed": 20260925,
+ "summary_recomputed": {
+  "commit": "f8ce45821746dac947d5553d941d2e8ff493474b",
+  "reason": "paired summary rebuilt from the committed per-series rows: sign test, relative differences for metrics.RELATIVE (#200)",
+  "recorded": "2026-10-14T00:59:24+00:00"
+ },
  "tier": 2,
  "versions": {
   "analytic-prophet": "0.1.0",

@@ -198,20 +198,55 @@ def test_the_spectrum_covers_every_parameter(fitted):
     assert np.all(np.diff(spectrum) <= 0), "returned largest first"
 
 
-def test_paired_summary_reports_median_iqr_and_a_signed_rank_test():
+def test_paired_summary_reports_median_iqr_and_the_sign_test():
     """A mean is the wrong summary for forecast errors -- heavy-tailed, and one
-    series dominates it."""
-    summary = metrics.paired_summary([-1.0, -2.0, -0.5, -3.0, -1.5, 0.2, -0.8])
+    series dominates it -- and the test that goes with a median is the sign
+    test (#200): wins against losses, ties dropped."""
+    from scipy.stats import binomtest
 
-    assert summary["n"] == 7
-    assert summary["median"] == pytest.approx(-1.0)
-    assert summary["wins"] == 6 and summary["losses"] == 1
-    assert 0.0 < summary["p_value"] < 0.05
+    values = [-1.0, -2.0, -0.5, -3.0, -1.5, 0.2, -0.8, 0.0]
+    summary = metrics.paired_summary(values)
+
+    assert summary["n"] == 8
+    assert summary["median"] == pytest.approx(np.median(values))
+    assert summary["wins"] == 6 and summary["losses"] == 1 and summary["ties"] == 1
+    assert summary["p_value"] == pytest.approx(binomtest(6, 7, 0.5).pvalue)
 
 
 def test_paired_summary_withholds_a_p_value_it_cannot_support():
-    """Six pairs is the fewest a signed-rank test can distinguish from chance;
-    below that it reports nan rather than a number that reads like evidence."""
-    assert np.isnan(metrics.paired_summary([-1.0, -2.0, -0.5])["p_value"])
+    """Six untied pairs is the fewest for which a two-sided sign test can fall
+    below 0.05; below that it reports nan rather than a number that reads like
+    evidence. Ties do not count towards the six."""
+    assert np.isnan(metrics.paired_summary([-1.0, -2.0, -0.5, -0.1, 0.3])["p_value"])
+    assert np.isnan(metrics.paired_summary([-1.0, -2.0, 0.0, 0.0, 0.0, 0.0, 0.0])["p_value"])
     assert np.isnan(metrics.paired_summary([])["p_value"])
     assert metrics.paired_summary([])["n"] == 0
+
+
+def test_no_few_series_of_large_level_can_carry_the_verdict():
+    """#200's defect, as a fixture. Sixteen series at level 1 where ours is 1%
+    lower, four at level 1e6 where ours is 0.1% higher. Ours is lower on sixteen
+    of twenty. The signed-rank test on raw differences ranks the four large
+    series' +1000 above all sixteen and finds nothing; the summary now used
+    finds what the counts say."""
+    from scipy.stats import wilcoxon
+
+    ours = [0.99] * 16 + [1.001e6] * 4
+    theirs = [1.0] * 16 + [1e6] * 4
+    raw = [a - b for a, b in zip(ours, theirs)]
+    relative = [metrics.paired_difference("rmse", a, b) for a, b in zip(ours, theirs)]
+
+    assert wilcoxon(raw).pvalue > 0.2          # the old verdict: nothing there
+    summary = metrics.paired_summary(relative)
+    assert summary["p_value"] < 0.02           # sixteen of twenty, whatever the levels
+    assert summary["median"] == pytest.approx(-0.01)
+
+
+def test_errors_and_widths_are_relative_and_proportions_are_plain():
+    assert metrics.paired_difference("rmse", 0.9, 1.0) == pytest.approx(-0.1)
+    assert metrics.paired_difference("interval_width", 105.0, 100.0) == pytest.approx(0.05)
+    assert metrics.paired_difference("coverage", 0.36, 0.34) == pytest.approx(0.02)
+    assert metrics.paired_difference("exact_zeros", 12.0, 0.0) == 12.0
+    assert np.isnan(metrics.paired_difference("mae", 1.0, 0.0))
+    assert {"mae", "rmse", "mape", "smape", "interval_width"} <= metrics.RELATIVE
+    assert not {"coverage", "exact_zeros"} & metrics.RELATIVE

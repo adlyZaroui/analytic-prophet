@@ -154,7 +154,8 @@ def test_the_intervals_are_reproducible_across_cutoffs(weekly_series,
 def test_paired_differences_are_taken_per_series():
     """Negative means we win, since every metric but coverage is an error. A
     mean across series would measure the worst series rather than the method,
-    which is why the summary is a median with an IQR."""
+    which is why the summary is a median with an IQR. RMSE is a relative
+    difference since #200: -0.5, -0.25 and +0.8 here, whose median is -0.25."""
     from harness import Measurement
 
     rows = []
@@ -165,7 +166,7 @@ def test_paired_differences_are_taken_per_series():
     summary = {m.metric: m.value for m in tier2._paired(rows)}
 
     assert summary["rmse_n"] == 3
-    assert summary["rmse_median"] == pytest.approx(-1.0)
+    assert summary["rmse_median"] == pytest.approx(-0.25)
     assert summary["rmse_wins"] == 2 and summary["rmse_losses"] == 1
 
 
