@@ -45,11 +45,39 @@ def census():
     relative = [(v["analytic_prophet"] - v["prophet"]) / v["prophet"]
                 for v in rmse.values()]
     wins = sum(1 for d in relative if d < 0)
+
+    # #206: the census rule, what it excludes, and the protocol -- from the
+    # frozen manifest and from m4_calendar.csv, which counts the exclusions with
+    # the census's own code
+    calendar = {row["frequency"]: row
+                for row in csv.DictReader(open(PAPER_RESULTS / "m4_calendar.csv"))}
+    windows = {}
+    for frequency, unit in (("Weekly", "W"), ("Daily", "D")):
+        values = [text.split() for text in manifest["horizons"][frequency]]
+        assert {u for _, u in values} == {unit}, (frequency, values)
+        windows[frequency] = [int(n) for n, _ in values]     # horizon, initial, period
+    window_macros = {f"Census{frequency}{name}": f"{value}"
+                     for frequency, values in windows.items()
+                     for name, value in zip(("Horizon", "Initial", "Period"), values)}
+
+    def count(frequency, column):
+        return f"{int(calendar[frequency][column]):,}"
+
     return {
         "CensusSeries": f"{len(rmse):,}",
         "CensusWeekly": f"{manifest['counts']['Weekly']:,}",
         "CensusDaily": f"{manifest['counts']['Daily']:,}",
         "CensusDigest": manifest["digest"][:12],
+        "CensusMinLength": f"{manifest['min_length']}",
+        "CensusSeed": f"{manifest['fit_seed']}",
+        "CensusWeeklyMfour": count("Weekly", "m4_series"),
+        "CensusDailyMfour": count("Daily", "m4_series"),
+        "CensusWeeklyShort": count("Weekly", "below_min_length"),
+        "CensusDailyShort": count("Daily", "below_min_length"),
+        "CensusDailyNoCutoff": count("Daily", "without_cutoff"),
+        # a daily series needs the initial window and the horizon to yield a cutoff
+        "CensusDailySpan": f"{windows['Daily'][1] + windows['Daily'][0]}",
+        **window_macros,
         "RmseAdvantage": f"{-statistics.median(relative) * 100:.2f}",
         "RmseWins": f"{wins:,}",
         "RmseWinRate": f"{wins / len(relative) * 100:.0f}",

@@ -12,6 +12,15 @@ two-digit years, and pandas resolves them with a window that moves with the
 current year. Both implementations see the same dates, so the comparison is
 unaffected, but the dates themselves are not evidence of anything.
 
+For the two frequencies the census covers, it also records what the census rule
+excludes, and why (#206): the series below the length floor, those whose
+starting date does not load, and those too short in calendar time to yield one
+rolling-origin cutoff. Each is counted with the census's own code --
+`corpora._m4_rows` applies the first two filters and `corpora.census_eligible`
+the third -- by subtraction at each stage, so the counts cannot describe a rule
+other than the one that ran. The cutoff stage runs `generate_cutoffs` on every
+loaded series and takes a few minutes.
+
     python paper/experiments/m4_calendar.py     # needs the M4 cache
 
 Writes `paper/results/m4_calendar.csv`.
@@ -33,7 +42,22 @@ import corpora                                      # noqa: E402
 RESULTS = PAPER / "results" / "m4_calendar.csv"
 FIELDS = ["frequency", "m4_series", "census_series", "metadata_columns",
           "distinct_starts", "modal_start", "modal_count", "starts_after_run_year",
-          "run_year"]
+          "run_year", "below_min_length", "no_start_date", "without_cutoff"]
+
+
+def exclusions(frequency):
+    """(below_min_length, no_start_date, without_cutoff) under the census rule."""
+    import pandas as pd
+
+    stem, _, _ = corpora.M4_FREQUENCIES[frequency]
+    frame = pd.read_csv(corpora.m4_cache() / f"{stem}-train.csv")
+    lengths = frame.iloc[:, 1:].notna().sum(axis=1)
+    long_enough = int((lengths >= corpora.CENSUS_MIN_LENGTH).sum())
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        loaded = sum(1 for _ in corpora._m4_rows(frequency))
+        eligible = len(corpora.census_eligible(frequency))
+    return len(frame) - long_enough, long_enough - loaded, loaded - eligible
 
 
 def collect():
@@ -61,6 +85,9 @@ def collect():
             "starts_after_run_year": int((parsed.dt.year > run_year).sum()),
             "run_year": run_year,
         })
+        if frequency in corpora.CENSUS_HORIZONS:
+            rows[-1].update(zip(("below_min_length", "no_start_date", "without_cutoff"),
+                                exclusions(frequency)))
     return sorted(rows, key=lambda row: row["frequency"])
 
 
