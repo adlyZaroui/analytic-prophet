@@ -72,6 +72,32 @@ satisfying the strong Wolfe conditions", with `c1 = 1e-4` and `c2 = 0.9` in
 `bfgs.hpp`. Stan's Hessian for Newton (§4.6) is `grad_hess_log_prob.hpp`: a
 four-point finite difference of the gradient with `epsilon = 1e-3`.
 
+**`carpenter2017lasso`** — Bob Carpenter, comment of 14 February 2017 on "Lasso regression
+etc in Stan", posted by Andrew Gelman the same day on *Statistical Modeling, Causal
+Inference, and Social Science*. Cited in §1 for what Stan's own community knew. Read in
+full, the post and all 13 comments. The live page refuses automated readers, so it was read
+from the Internet Archive's snapshots
+(`web.archive.org/web/20201125221139/https://statmodeling.stat.columbia.edu/2017/02/14/lasso-regression-etc-stan/`,
+and those of 2019-06-24 and 2019-12-05, which carry the same comment).
+
+- The post relays Ben Goodrich's answer to "Someone on the users list" who "asked about
+  lasso regression in Stan". Carpenter's comment opens: "I'll also paste in an edited
+  version of my reply on the users list". That is why the paper calls it a reply on the
+  Stan users' list.
+- "Stan provides penalized maximum likelihood. Unlike specialized lasso software such as
+  truncated gradient descent, straight-up optimization is unlikely to find estimates of
+  exactly zero for parameters—it will only get there from rounding below 10e-300 or so."
+- "The absolute value in the L1 penalty (same as in Laplace prior) is bad news in that it
+  means the posterior isn't continuously differentiable. Stan's samplers and optimizers can
+  run into problems when the parameter jumps across that non-differentiable point."
+- Not cited, but part of the thread: Goodrich replies that "In rstanarm, we write the
+  Laplace (and "lasso") prior as a scale mixture of normals, so there is no lack of
+  differentiability". That is a remedy for sampling, and it adds a latent scale per
+  coefficient, so it changes the problem a mode is taken of.
+
+The source sets apostrophes and quotation marks typographically; they are straight here
+and in the paper.
+
 ## Smooth and nonsmooth optimization
 
 **`nocedal2006numerical`** — Nocedal & Wright, *Numerical Optimization*, 2nd ed.,
@@ -153,6 +179,62 @@ Process.* 1(4):586–597, 2007.
 - "the LARS modification calculates all possible Lasso estimates for a given
   problem"; the text refers to "the piecewise linear Lasso path".
 
+## Smooth reparametrisations of the ℓ1 term (§8)
+
+Cited in §8 together with `paper/experiments/inside_stan.py` (#202), which runs two of
+them in Prophet's own Stan program, on Stan's own L-BFGS. The sources say the
+reparametrised problem has the same minimisers. They do not say that a given solver
+finds them, and the paper cites them for the first and measures the second.
+
+**`hoff2017lasso`** — Hoff, *Comput. Stat. Data Anal.* 115:186–198, 2017. Metadata
+checked against Crossref. Read in full in the arXiv version (arXiv:1611.00040v2,
+19 May 2017).
+
+- The parametrisation: "reparametrize the model so that β= u◦v, where "◦" is the
+  Hadamard (element-wise) product", with objective g(u,v) = h(u◦v) + λ(u⊤u + v⊤v)/2.
+- Lemma 1, for any h: "infβf(β) = infu,vg(u,v)", and "if (û,v̂) is a local minimum of
+  g, then β̂ = û◦v̂ is a local minimum of f". For the lasso: "In other words, lasso
+  estimates can be obtained from local minimizers of g."
+- The stationary point at the origin: "the point (0,0) ∈ Rp×Rp is a stationary point of g
+  but is not a local minimum". Prophet starts every rate at zero, so #202's runs must
+  choose a starting value for a zero rate; the paper says so.
+
+**`kolb2026smoothing`** — Kolb, Müller, Bischl & Rügamer, *Machine Learning*
+115(4):87, 2026 (CC BY 4.0). Metadata and abstract checked against Crossref. Read in
+full in the arXiv version (arXiv:2307.03571v4, 8 Apr 2026), whose abstract is the
+published one. An earlier arXiv version worded the abstract differently. The paper
+quotes the published wording.
+
+- Abstract: "We prove that the surrogate objective is equivalent in the sense of identical
+  global and local minima, thereby avoiding the introduction of spurious solutions."
+  Theorem 1 states it for the parametrisation and surrogate penalty used here (their
+  HPP: β = u⊙v with ‖u‖² + ‖v‖², a surrogate for 2‖β‖₁).
+- §7, on critical points: "such a matching property does not necessarily hold for
+  critical points of the surrogate", and ξ = 0 is one "irrespective of the gradient".
+- §7, on what a gradient method reaches: "the iterates can only asymptotically approach
+  theoretically zero values in a finite number of steps." They call this benign. In the
+  paper it is the reason no run of #202 produces an exact zero.
+
+**`poon2021smooth`** — Poon & Peyré, *Advances in Neural Information Processing
+Systems* 34:1543–1555, 2021. Pages and volume checked against the proceedings' own
+BibTeX. NeurIPS assigns no DOI, so the entry carries the arXiv record's DOI. Read in
+full in the arXiv version (arXiv:2106.01429v2, 30 Sep 2022).
+
+- Abstract: "Despite being non-convex, we show that there are no spurious minima and that
+  saddle points are "ridable", so that there always exists a descent direction. We thus
+  advocate for the use of a BFGS quasi-Newton solver".
+- These results are for their *bilevel* form. One factor is eliminated by solving its
+  inner least-squares problem, and Theorem 3 is for a squared loss. The plain (u, v)
+  problem on L-BFGS is one of the solvers they benchmark against ("Non-cvx-LBFGS"). The
+  paper cites them for the landscape of a reparametrised lasso, not for Stan's L-BFGS on
+  Prophet's model.
+
+**Considered and not cited: Ziyin & Wang (ICML 2023)**, "spred". It applies the same
+Hadamard device to train sparse neural networks by stochastic gradient descent. Kolb et
+al. review it with the rest of that literature. It adds nothing about the
+lasso's minimisers that the three entries above do not, and nothing about quasi-Newton
+methods.
+
 ## The M4 data (§7, and the census throughout)
 
 **`makridakis2020m4`** — Makridakis, Spiliotis & Assimakopoulos, *Int. J. Forecast.*
@@ -222,3 +304,21 @@ by searching every comment, so §6's "none of them mentions it" stands.
   since it starts getting log probabilities of NaN, and then it automatically retries with
   Newton which also runs into NaNs and throws the B[1] error". The paper had attributed
   that to #1032 itself; it now says where it comes from.
+
+## Verified for #208 and #212, not yet cited: Prophet's 2023 plan
+
+**`duong2023prophet`** (no bibliography entry until a section cites it) — Cuong Duong,
+"facebook/prophet in 2023 and beyond", Medium, 26 February 2023, linked from Prophet's
+README as its "2023 Update" (`github.com/facebook/prophet`, README, read 2026-10-14).
+Read in full from the Internet Archive's snapshot
+(`web.archive.org/web/20230317232722/https://medium.com/@cuongduong_35162/facebook-prophet-in-2023-and-beyond-c5086151c138`),
+because Medium refuses automated readers. The canonical URL is
+`https://medium.com/@cuongduong_35162/facebook-prophet-in-2023-and-beyond-c5086151c138`.
+
+- The sentence #208 and #212 rest on, in full: "There have been ideas for further
+  enhancements to the model, but at this moment we do not plan to make any more changes to
+  the underlying Stan model."
+- The TL;DR says it more softly: "We do not plan to make large changes to the underlying
+  model." A citation must not turn "at this moment" into a permanent policy.
+- The post goes on to say: "Instead, we'll focus on ironing out the kinks in existing
+  functionality".
