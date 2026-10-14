@@ -248,7 +248,8 @@ def limitations():
     return {
         "LimCoverageOurs": f"{statistics.fmean(coverage['analytic_prophet']):.3f}",
         "LimCoverageProphet": f"{statistics.fmean(coverage['prophet']):.3f}",
-        "LimWidthMedian": f"{paired['interval_width_median']:.2f}",
+        # a relative difference since #200: ours / Prophet's - 1, in percent
+        "LimWidthMedian": f"{paired['interval_width_median'] * 100:.2f}",
         "LimWidthWider": f"{paired['interval_width_losses']:,.0f}",
         "LimWorstCensus": f"{max(relative) * 100:.0f}",
         "LimBestCensus": f"{-min(relative) * 100:.1f}",

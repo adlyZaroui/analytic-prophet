@@ -176,19 +176,21 @@ def test_paired_differences_do_not_depend_on_arrival_order():
     import random
     from tiers import tier2
 
+    # coverage: a plain difference, so each series' value is its own (#200 made
+    # the error metrics relative, which would make these all equal)
     rows = []
     for index in range(12):
-        rows.append(_fake(f"m4_weekly_W{index}", "mae", "analytic_prophet", index))
-        rows.append(_fake(f"m4_weekly_W{index}", "mae", "prophet", index * 2))
+        rows.append(_fake(f"m4_weekly_W{index}", "coverage", "analytic_prophet", index))
+        rows.append(_fake(f"m4_weekly_W{index}", "coverage", "prophet", index * 2))
 
-    forward = tier2._differences(rows, "mae")
+    forward = tier2._differences(rows, "coverage")
     shuffled = rows[:]
     random.Random(0).shuffle(shuffled)
 
-    assert tier2._differences(shuffled, "mae") == forward
+    assert tier2._differences(shuffled, "coverage") == forward
     assert forward == sorted(forward, key=lambda _: 0), "order must be series order"
     # and the series order is the sorted one, not the insertion one
-    assert tier2._differences(rows, "mae") == [
+    assert tier2._differences(rows, "coverage") == [
         -index for index in sorted(range(12), key=lambda i: f"m4_weekly_W{i}")]
 
 
@@ -202,7 +204,7 @@ def test_the_paired_summary_ignores_the_corpus_bookkeeping_rows():
             _fake("corpus", "mae", "both", 999.0),
             _fake("paired", "mae", "difference", 888.0)]
 
-    assert tier2._differences(rows, "mae") == [-1.0]
+    assert tier2._differences(rows, "mae") == [-0.5]     # 1.0 / 2.0 - 1: relative (#200)
 
 
 def test_a_checkpoint_round_trips(tmp_path):

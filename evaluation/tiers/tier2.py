@@ -310,7 +310,9 @@ METRICS = ("mae", "rmse", "mape", "smape", "coverage", "interval_width",
 
 
 def _differences(measurements, metric, keep=None):
-    """Per-series `ours - theirs` for one metric, in series order.
+    """Per-series differences for one metric, in series order: `ours / theirs - 1`
+    where the metric is read relative to Prophet's, `ours - theirs` otherwise
+    (`metrics.RELATIVE`, #200).
 
     **Sorted by series name, which is not cosmetic.** Under a process pool the
     completion order is whatever the scheduler did, and an unsorted list would
@@ -322,7 +324,8 @@ def _differences(measurements, metric, keep=None):
         if m.metric == metric and m.series not in ("paired", "corpus"):
             if keep is None or keep(m.series):
                 by_series.setdefault(m.series, {})[m.implementation] = m.value
-    return [by_series[name]["analytic_prophet"] - by_series[name]["prophet"]
+    return [metrics.paired_difference(metric, by_series[name]["analytic_prophet"],
+                                      by_series[name]["prophet"])
             for name in sorted(by_series)
             if len(by_series[name]) == 2]
 
@@ -334,7 +337,8 @@ def _summarise(measurements, label, keep=None):
         if len(differences) < 2:
             continue
         summary = metrics.paired_summary(differences)
-        for field in ("n", "median", "iqr_low", "iqr_high", "wins", "losses", "p_value"):
+        for field in ("n", "median", "iqr_low", "iqr_high", "wins", "losses", "ties",
+                      "p_value"):
             summaries.append(Measurement(2, "paired", label, "difference",
                                          f"{metric}_{field}", summary[field]))
     return summaries
@@ -363,6 +367,51 @@ def _paired_by_frequency(measurements, manifest):
         rows += _summarise(measurements, frequency,
                            keep=lambda name, prefix=prefix: name.startswith(prefix))
     return rows
+
+
+def resummarise(results_dir=harness.RESULTS, manifest=None):
+    """Recompute the paired summary from the per-series rows already committed.
+
+    The census took 5.6 hours to fit; the summary is arithmetic on what it
+    measured, so a change to how differences are summarised or tested (#200)
+    needs no refit. Every per-series and corpus row is kept as written, text for
+    text; the `paired` rows are rebuilt by the same `_summarise` a run uses, and
+    the run's metadata gains a note of when and by what the summary was redone.
+    """
+    import csv
+
+    from harness import FIELDS, Measurement
+
+    results_dir = Path(results_dir)
+    path = results_dir / "tier2_accuracy.csv"
+    with open(path, newline="") as handle:
+        kept = [row for row in csv.DictReader(handle) if row["series"] != "paired"]
+    measurements = [Measurement(int(row["tier"]), row["series"], row["configuration"],
+                                row["implementation"], row["metric"], float(row["value"]),
+                                row["unit"], int(row["horizon"]) if row["horizon"] else None)
+                    for row in kept if row["series"] != "corpus"]
+    if manifest is None:
+        manifest = json.loads((harness.EVALUATION / "corpus" / "m4_census_v1.json").read_text())
+    summaries = [m.row() for m in _paired(measurements) + _paired_by_frequency(measurements,
+                                                                              manifest)]
+    rows = sorted(kept + summaries,
+                  key=lambda r: (int(r["tier"]), r["series"], r["configuration"],
+                                 r["implementation"], r["metric"], str(r["horizon"])))
+    with open(path, "w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    meta_path = path.with_suffix(".meta.json")
+    meta = json.loads(meta_path.read_text())
+    meta["summary_recomputed"] = {
+        "recorded": harness.run_metadata()["recorded"],
+        "commit": harness.run_metadata()["commit"],
+        "reason": "paired summary rebuilt from the committed per-series rows: sign test, "
+                  "relative differences for metrics.RELATIVE (#200)",
+    }
+    meta_path.write_text(json.dumps(meta, indent=1, sort_keys=True) + "\n")
+    return path
 
 
 harness.register(2, "accuracy", collect)

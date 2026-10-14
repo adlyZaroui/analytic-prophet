@@ -25,8 +25,8 @@
         about a third, for both. That shared failure is larger than anything
         separating the two.
   \item \textbf{Our intervals are wider.} Across the census they are wider than
-        Prophet's by a median of \LimWidthMedian{} in the series' own units, and
-        wider on \LimWidthWider{} of the \CensusSeries{} series --- a loss.
+        Prophet's by a median of \LimWidthMedian\%, and wider on \LimWidthWider{} of
+        the \CensusSeries{} series --- a small loss, but a consistent one.
   \item \textbf{The distribution has long tails both ways, and ours is the longer.}
         The median RMSE advantage is \RmseAdvantage\%, but on the worst series for
         this implementation its RMSE is \LimWorstCensus\% above Prophet's; on its
@@ -52,8 +52,8 @@
         \cref{sec:consequences} it stops at a saddle point \StallOursShort{} nats
         below the optimum its L-BFGS reaches, where Stan's Newton does not. The fix
         is tracked as \projectissue{193}.
-  \item \textbf{Significance is uninformative at this $n$.} All
-        \LimHolmSurvivors{} of the \LimHolmComparisons{} comparisons survive Holm
+  \item \textbf{Significance is uninformative at this $n$.} Under the sign test,
+        all \LimHolmSurvivors{} of the \LimHolmComparisons{} comparisons survive Holm
         adjustment, at $p$ between $\LimHolmMin$ and $\LimHolmMax$, which
         establishes only that the direction is consistent.
 \end{itemize}

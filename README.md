@@ -190,40 +190,38 @@ in every configuration measured is the direction.
 Prophet's own `generate_cutoffs` and scored by its own `performance_metrics`, so neither
 the splits nor the definitions are ours:
 
-Differences are paired per series and tested with the **Wilcoxon signed-rank test**
-(`scipy.stats.wilcoxon`), which is why each row is a median rather than a mean: forecast
-errors across series are heavy-tailed, and one series here differs by about 35% while
-most differ by under 2%.
+Differences are paired per series. Each row is a median — forecast errors across series
+are heavy-tailed, and one series here differs by more than 300% while seven in ten differ
+by under 2% — and is tested with the test that goes with a median, the **sign test**
+(`scipy.stats.binomtest` on the series where ours is lower against those where it is
+higher, ties dropped). The error and width rows are **relative** differences, ours /
+Prophet's − 1, so a series' level does not weigh on them; coverage, a proportion, is a
+plain difference.
 
 | | median difference | lower on | p | Holm p |
 |---|---|---|---|---|
-| MAE ⁑ | −2.3761 | 1894/3008 | 8.7e-48 | 3.5e-47 |
-| RMSE ⁑ | −2.6550 | 1929/3008 | 1.2e-51 | 5.9e-51 |
-| MAPE | −0.0006 | 1807/3008 | 1.4e-29 | 2.9e-29 |
-| sMAPE | −0.0007 | 1838/3008 | 8.8e-30 | 2.6e-29 |
-| coverage | **+0.0023** | — | 3.7e-19 | 3.7e-19 |
-| interval width ⁑ | +2.4724 | — | 5.2e-106 | 3.1e-105 |
+| MAE | −0.52% | 1894/3008 | 2.7e-46 | 1.1e-45 |
+| RMSE | −0.40% | 1929/3008 | 9.2e-55 | 4.6e-54 |
+| MAPE | −0.43% | 1807/3008 | 1.8e-28 | 3.6e-28 |
+| sMAPE | −0.48% | 1838/3008 | 2.7e-34 | 8.1e-34 |
+| coverage | **+0.0023** | — | 3.7e-21 | 3.7e-21 |
+| interval width | +0.56% | — | 1.0e-127 | 6.2e-127 |
 
-More accurate points, and **higher** coverage at statistically indistinguishable width —
-negative is better for the error rows, positive for coverage, and the count column is
-blank where a win is not defined.
+More accurate points and **higher** coverage, with **wider** intervals — negative is better
+for the error rows, positive for coverage, and the count column is blank where a win is
+not defined.
 
-**⁑ These rows are in the series' own units**, and the 3,008 M4 series differ in level by
-orders of magnitude, so their medians rank direction and are *not* pooled effect sizes —
-a unit of MAE means something different on every series. Read magnitude from the
-scale-free rows, `MAPE`, `sMAPE` and `coverage`, or from the counts. (MASE, the M4
-standard, would be the better answer and needs the tier re-run with a new metric.)
-
-**`Holm p` adjusts across all six comparisons**, Holm rather than Bonferroni because these
-metrics are computed on the same forecasts and are far from independent. **All six survive
-— and that is a fact about n, not about the method.** At 3,008 paired series a Wilcoxon
-test rejects on any consistent direction whatever its size, so read the medians and the win
-rates. The p-values are here because omitting them would look like hiding them.
+**`Holm p` adjusts across all six comparisons**, Holm rather than Bonferroni because it is
+uniformly at least as powerful; both hold whatever the dependence between the metrics,
+which are computed on the same forecasts. **All six survive — and that is a fact about n,
+not about the method.** At 3,008 paired series a sign test rejects on any consistent
+direction whatever its size, so read the medians and the win rates. The p-values are here
+because omitting them would look like hiding them.
 
 One of these changed its meaning rather than its precision when the corpus grew: at 36
 series **interval width** was indistinguishable and declined to claim anything, and across
-the census our intervals are **wider by a median 2.47** in the series' own units. That is
-unambiguous and it is a loss.
+the census our intervals are **wider by a median 0.56%**, on 2,153 of the 3,008 series.
+That is unambiguous and it is a loss, if a small one.
 
 *The coverage row and the calibration figures below are different quantities.* This table
 reports **+0.0023**, the median of the per-series *differences*; mean coverage is 0.345
@@ -318,8 +316,7 @@ results and a generated report. One command regenerates everything.
   quarterly, yearly and hourly are absent, and the showcase figure ranks within the
   **658** of them where a Prophet-shaped model fits at all. All six comparisons survive
   Holm adjustment, which at this n says only that the direction is consistent: read the
-  medians and the win rates instead, and note that three of the six rows are in the
-  series' own units rather than in anything poolable.
+  medians and the win rates instead.
 - **The intervals are not well calibrated — in either implementation.** On the M4 corpus
   the nominal 80% interval contains about a third of the points it claims four fifths of
   — mean coverage **0.341** for Prophet and **0.345** for this implementation. That is a property of the model on long
