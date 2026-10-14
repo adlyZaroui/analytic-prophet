@@ -36,7 +36,12 @@ forecast a year past the end of the series.
     python paper/experiments/tau_path.py
 
 Writes `paper/results/tau_path.csv`, `tau_refine.csv`, `tau_pairs.csv`, the
-`.meta.json`, and `paper/figures/tau_path.pdf`.
+`.meta.json`, `paper/figures/tau_path.pdf`, and the README's version of its
+forecast panels, `paper/figures/tau_path_readme.png` (#211).
+
+    python paper/experiments/tau_path.py --draw
+
+redraws both figures from the committed CSV, with no refit.
 """
 import argparse
 import csv
@@ -66,6 +71,7 @@ PATH = RESULTS / "tau_path.csv"
 REFINE = RESULTS / "tau_refine.csv"
 PAIRS = RESULTS / "tau_pairs.csv"
 FIGURE = PAPER / "figures" / "tau_path.pdf"
+README_FIGURE = PAPER / "figures" / "tau_path_readme.png"
 
 GLOBAL = tuple(float(v) for v in np.geomspace(2.0, 200.0, 201))
 ZOOM = tuple(float(v) for v in np.linspace(19.5, 20.5, 41))
@@ -325,6 +331,52 @@ def draw(rows, out=FIGURE):
     return out
 
 
+def draw_readme(rows, out=README_FIGURE):
+    """The paper figure's right-hand panels, for a reader who has not read the
+    paper (#211): the forecast a year past the data as `changepoint_prior_scale`
+    moves near its default, refitted by Prophet at each value and solved
+    exactly. The x-axis is the setting a user types, tau, not lambda = 1/tau.
+
+    Deterministic: drawn from the committed CSV, with no timestamp written.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    colours = {"prophet": "#c44e52", "ours_exact": "#4c72b0"}
+    labels = {"prophet": "Prophet, refitted at each value",
+              "ours_exact": "the exact optimum (analytic-prophet)"}
+    titles = {"fixed": "$\\sigma$ held fixed: a convex problem, one optimum at each value",
+              "free": "$\\sigma$ estimated, as Prophet fits it"}
+    figure, axes = plt.subplots(1, 2, figsize=(9.5, 3.4), sharey=True)
+    drawn = [x["yhat_h"] for x in rows if x["grid"] == "zoom" and x["path"] in colours]
+    span = max(drawn) - min(drawn)
+    # room below the data for the legend, which would otherwise cover points
+    axes[0].set_ylim(min(drawn) - 0.35 * span, max(drawn) + 0.05 * span)
+    for axis, setting in zip(axes, ("fixed", "free")):
+        for path in ("prophet", "ours_exact"):
+            cells = sorted((x for x in rows if x["grid"] == "zoom" and x["setting"] == setting
+                            and x["path"] == path), key=lambda x: x["tau"])
+            axis.plot([x["tau"] for x in cells], [x["yhat_h"] for x in cells],
+                      color=colours[path], linewidth=1.1 if path == "prophet" else 1.8,
+                      marker="." if path == "prophet" else None, markersize=4,
+                      label=labels[path])
+        axis.axvline(0.05, color="0.6", linestyle=":", linewidth=1.0)
+        axis.set_title(titles[setting], fontsize=9, loc="left")
+        axis.set_xlabel("changepoint_prior_scale (Prophet's default: 0.05)", fontsize=8)
+        axis.tick_params(labelsize=8)
+    axes[0].set_ylabel(f"forecast {HORIZON_DAYS} days past the data\n(log daily views)",
+                       fontsize=8)
+    axes[0].legend(fontsize=8, loc="lower left", frameon=False)
+    figure.suptitle("Peyton Manning: the same model, refitted as one setting moves a "
+                    "little around its default", fontsize=10, x=0.01, ha="left")
+    figure.tight_layout()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(out, dpi=140, metadata={"Software": None})
+    plt.close(figure)
+    return out
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -332,7 +384,8 @@ def main(argv=None):
     parser.add_argument("--draw", action="store_true")
     args = parser.parse_args(argv)
     if args.draw:
-        print(f"wrote {draw(read(PATH)).relative_to(REPO)}")
+        rows = read(PATH)
+        print(f"wrote {draw(rows).relative_to(REPO)}, {draw_readme(rows).relative_to(REPO)}")
         return
 
     runner.cmdstan_path()
@@ -383,7 +436,8 @@ def main(argv=None):
         handle.write("\n")
     print(f"wrote {PATH.relative_to(REPO)} ({len(rows)} rows), {REFINE.relative_to(REPO)}, "
           f"{PAIRS.relative_to(REPO)}")
-    print(f"wrote {draw(read(PATH)).relative_to(REPO)}")
+    rows = read(PATH)
+    print(f"wrote {draw(rows).relative_to(REPO)}, {draw_readme(rows).relative_to(REPO)}")
 
 
 if __name__ == "__main__":

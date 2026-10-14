@@ -70,7 +70,7 @@ check:
 
 arxiv: check pdf
 	rm -f arxiv.tar.gz
-	tar czf arxiv.tar.gz main.tex main.bbl references.bib sections generated figures
+	tar czf arxiv.tar.gz main.tex main.bbl references.bib sections generated figures/*.pdf
 	@echo "wrote arxiv.tar.gz"
 
 clean:
