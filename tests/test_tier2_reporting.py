@@ -405,20 +405,42 @@ def test_every_place_quoting_the_rmse_advantage_agrees_with_the_results(readme):
 def test_the_committed_summary_is_what_the_code_computes(tmp_path):
     """`evaluation/resummarise.py` rebuilds the paired rows from the per-series
     ones without refitting. Run on a copy, it must leave every measured row as
-    written and reproduce the committed summary exactly -- so a change to how
-    differences are summarised cannot leave the file quoting the old one."""
+    written and reproduce the committed summary -- so a change to how
+    differences are summarised cannot leave the file quoting the old one.
+
+    To the last bit only where the summary was computed (conftest.recorded_here):
+    medians and binomial tails are arithmetic, but another numpy or scipy -- the
+    CI matrix installs a different pair per Python -- may round their last digit
+    differently. Elsewhere, to 1e-9."""
+    import csv
     import json
     import shutil
 
+    from conftest import recorded_here
     from tiers import tier2
 
     for name in ("tier2_accuracy.csv", "tier2_accuracy.meta.json"):
         shutil.copy(TIER2.parent / name, tmp_path / name)
     tier2.resummarise(tmp_path)
 
-    assert (tmp_path / "tier2_accuracy.csv").read_bytes() == TIER2.read_bytes()
+    def split(path):
+        with open(path, newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        return ([row for row in rows if row["series"] != "paired"],
+                {(row["configuration"], row["metric"]): row["value"]
+                 for row in rows if row["series"] == "paired"})
+
+    measured, summary = split(tmp_path / "tier2_accuracy.csv")
+    committed_measured, committed_summary = split(TIER2)
+    assert measured == committed_measured, "a measured row was rewritten"
+    assert summary.keys() == committed_summary.keys()
+    for key, value in committed_summary.items():
+        assert float(summary[key]) == pytest.approx(float(value), rel=1e-9), key
+
     meta = json.loads((tmp_path / "tier2_accuracy.meta.json").read_text())
     committed = json.loads((TIER2.parent / "tier2_accuracy.meta.json").read_text())
     assert {key: meta[key] for key in committed if key != "summary_recomputed"} == \
         {key: committed[key] for key in committed if key != "summary_recomputed"}, (
         "recomputing the summary rewrote the run's own metadata")
+    if recorded_here(TIER2.with_suffix(".meta.json")):
+        assert (tmp_path / "tier2_accuracy.csv").read_bytes() == TIER2.read_bytes()
