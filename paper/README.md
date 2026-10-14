@@ -1,14 +1,15 @@
-# Prophet does not solve the problem it specifies
+# Prophet's MAP estimate is not the posterior mode
 
 A preprint for **arXiv stat.CO**: a numerical-software case study with a
 mechanism, controls and a fix.
 
 > Prophet specifies a posterior whose optimum sits on a non-differentiable set,
 > delegates optimization to solvers designed for smooth objectives, and
-> consequently does not solve the problem it specifies. This is diagnosable and
-> removable by an exact reformulation; of four long-standing reports in the issue
-> tracker it accounts for part of one and plausibly underlies a second; and its
-> consequences for the optimum and for predictive performance are discussed here.
+> consequently returns, as its MAP estimate, a point that is not the posterior
+> mode. This is diagnosable and removable by an exact reformulation; of four
+> long-standing reports in the issue tracker it accounts for part of one and
+> plausibly underlies a second; and its consequences for the optimum and for
+> predictive performance are discussed here.
 
 The forecast-accuracy results corroborate that the gap matters a little in
 practice; they are not the thesis.

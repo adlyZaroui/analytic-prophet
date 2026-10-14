@@ -184,6 +184,11 @@ OVERCLAIMS = ("consistent with user reports", "user-visible consequences reporte
 SUMMARY = (PAPER / "main.tex", PAPER / "sections" / "introduction.tex", PAPER / "README.md")
 
 
+def _summary(page):
+    """A summary page as prose: Markdown's blockquote markers are not words."""
+    return _normalise(re.sub(r"(?m)^>\s?", "", page.read_text()))
+
+
 def _abstract():
     text = (PAPER / "main.tex").read_text()
     return text[text.index(r"\begin{abstract}"):text.index(r"\end{abstract}")]
@@ -196,7 +201,7 @@ def test_the_summary_claims_no_more_than_the_sections_show(phrase):
     the abstract said Prophet reached the optimum from none of the starts, when
     Prophet itself cannot hold sigma fixed."""
     for page in SUMMARY:
-        assert phrase not in _normalise(page.read_text()), f"{page.name}: {phrase!r}"
+        assert phrase not in _summary(page), f"{page.name}: {phrase!r}"
 
 
 def test_the_summary_counts_the_reports_section_6_reads():
@@ -206,7 +211,7 @@ def test_the_summary_counts_the_reports_section_6_reads():
     consequences = (PAPER / "sections" / "consequences.tex").read_text()
     assert len(set(re.findall(r"\\prophetissue\{(\d+)\}", consequences))) == 4
     for page in SUMMARY:
-        text = _normalise(page.read_text())
+        text = _summary(page)
         assert "four long-standing" in text, page.name
         assert "part of one" in text and "plausibly underlies" in text, page.name
 
@@ -225,3 +230,30 @@ def test_flat_growth_is_described_as_section_4_6_describes_it():
     assert "fit the same model" in introduction
     evidence = _normalise((PAPER / "sections" / "evidence.tex").read_text())
     assert "does \\emph{not} isolate the kink" in evidence
+
+
+# -- the title (#210) -----------------------------------------------------
+
+TITLE = ("Prophet's MAP Estimate Is Not the Posterior Mode: A Non-Differentiable "
+         "Changepoint Prior, Smooth Optimizers, and an Exact Reformulation")
+
+
+def test_the_title_is_the_one_chosen_and_the_readme_carries_it():
+    """The old title read as an accusation the text disclaims ("Nothing about
+    this arrangement is an error"). The author chose this one."""
+    main = (PAPER / "main.tex").read_text()
+    title = re.search(r"\\title\{(.*?)\}\n", main, flags=re.S).group(1)
+    assert " ".join(title.replace("\\\\", " ").split()) == TITLE
+    heading = (PAPER / "README.md").read_text().splitlines()[0]
+    assert heading == "# " + TITLE.split(":")[0].replace("Is Not the Posterior Mode",
+                                                          "is not the posterior mode") \
+        .replace("MAP Estimate", "MAP estimate")
+
+
+def test_the_old_thesis_sentence_is_gone_with_the_old_title():
+    for page in (*SOURCES, PAPER / "README.md"):
+        text = _summary(page)
+        assert "does not solve the problem it specifies" not in text, page.name
+        assert "does not solve its objective" not in text, page.name
+    for page in SUMMARY:
+        assert "is not the posterior mode" in _summary(page), page.name
