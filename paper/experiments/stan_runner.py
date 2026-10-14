@@ -1,8 +1,8 @@
 """Fit modified copies of Prophet's own Stan program, the way Prophet does (#183).
 
-Three experiments need Prophet's program changed rather than called: the
-smooth-surrogate control (#168) and the fixed-sigma halves of the multi-start
-(#169) and the tau path (#171). Stan cannot hold a parameter fixed at run time
+Four experiments need Prophet's program changed rather than called: the
+smooth-surrogate control (#168), the fixed-sigma halves of the multi-start
+(#169) and the tau path (#171), and the fix restated inside Stan (#202). Stan cannot hold a parameter fixed at run time
 -- it has to move into the `data` block, which is a different program -- so all
 three go through here rather than each compiling Stan its own way.
 
@@ -15,6 +15,14 @@ documentation:
     smooth               |delta| replaced by sqrt(delta^2 + epsilon^2) - epsilon,
                          epsilon passed as data
     fixed_sigma_smooth   both
+    hadamard             delta = delta_u .* delta_v, the Laplace prior replaced
+                         by (|delta_u|^2 + |delta_v|^2) / (2 tau): smooth,
+                         unconstrained, the same minimisers in delta (#202)
+    split                delta = delta_pos - delta_neg, both <lower=0>, the
+                         prior linear in them: the paper's reformulation, as
+                         Stan has to state it (#202)
+    fixed_sigma_hadamard, fixed_sigma_split
+                         each with sigma_obs as data
 
 The smoothed penalty is shifted by epsilon so it is zero at zero and never
 exceeds |delta|; it tends to the original's lp__ as epsilon -> 0, which is what
@@ -49,9 +57,16 @@ VARIANTS = {
     "fixed_sigma": "prophet_fixed_sigma.stan",
     "smooth": "prophet_smooth.stan",
     "fixed_sigma_smooth": "prophet_fixed_sigma_smooth.stan",
+    "hadamard": "prophet_hadamard.stan",
+    "split": "prophet_split.stan",
+    "fixed_sigma_hadamard": "prophet_fixed_sigma_hadamard.stan",
+    "fixed_sigma_split": "prophet_fixed_sigma_split.stan",
 }
-FIXES_SIGMA = {"fixed_sigma", "fixed_sigma_smooth"}
+FIXES_SIGMA = {"fixed_sigma", "fixed_sigma_smooth", "fixed_sigma_hadamard",
+               "fixed_sigma_split"}
 SMOOTHS = {"smooth", "fixed_sigma_smooth"}
+HADAMARDS = {"hadamard", "fixed_sigma_hadamard"}
+SPLITS = {"split", "fixed_sigma_split"}
 
 # CmdStanPyBackend.fit, restated rather than imported: it is a method that
 # also calls the model, and the constants are what has to match.
@@ -169,9 +184,51 @@ def prophet_inputs(prophet_model, df, **fit_kwargs):
     return captured["data"], captured["inits"]
 
 
+def hadamard_factors(delta, tau=None):
+    """(delta_u, delta_v) with delta_u * delta_v = delta and |delta_u| = |delta_v|.
+
+    That balanced factorisation is where the Hadamard penalty equals |delta| /
+    tau, so the variant's density there is Prophet's; a rate at zero factors as
+    (0, 0). Given `tau`, a rate at exactly zero gets (sqrt(tau), 0) instead,
+    which is what a *starting point* needs: (0, 0) is a stationary point of the
+    factorised objective, and Prophet starts every rate there, so a start at
+    (0, 0) could never move. (sqrt(tau), 0) keeps the rate at zero and the
+    gradient in delta_v non-zero -- at a cost of 0.5 nats per such rate in the
+    penalty, which is why it is for starting points only (#202).
+    """
+    delta = np.asarray(delta, dtype=float)
+    root = np.sqrt(np.abs(delta))
+    u, v = np.sign(delta) * root, root
+    if tau is not None:
+        u = np.where(delta == 0, np.sqrt(tau), u)
+        v = np.where(delta == 0, 0.0, v)
+    return u, v
+
+
+def split_parts(delta, floor):
+    """(delta_pos, delta_neg) with difference delta, both raised by `floor`.
+
+    Stan declares them `<lower=0>` and optimizes their logarithms, so neither can
+    start at zero; raising both by the same amount leaves delta unchanged. How
+    high matters: the gradient through the logarithm shrinks with the part, and
+    a floor of tau / 50 leaves Stan's L-BFGS far further short than a floor of
+    tau, the prior's own scale, which is the default `inputs_for` uses
+    (`paper/experiments/inside_stan.py` measures both, #202).
+    """
+    delta = np.asarray(delta, dtype=float)
+    return np.maximum(delta, 0.0) + floor, np.maximum(-delta, 0.0) + floor
+
+
 def inputs_for(variant, data, inits, sigma_obs=None, epsilon=None):
-    """Prophet's (data, inits), adjusted for what `variant` moves into data."""
+    """Prophet's (data, inits), adjusted for what `variant` moves into data, and
+    with delta translated into the variant's own parameters."""
     data, inits = dict(data), dict(inits)
+    if "delta" in inits and variant in HADAMARDS:
+        u, v = hadamard_factors(inits.pop("delta"), float(data["tau"]))
+        inits["delta_u"], inits["delta_v"] = u.tolist(), v.tolist()
+    elif "delta" in inits and variant in SPLITS:
+        positive, negative = split_parts(inits.pop("delta"), float(data["tau"]))  # floor tau
+        inits["delta_pos"], inits["delta_neg"] = positive.tolist(), negative.tolist()
     if variant in FIXES_SIGMA:
         if sigma_obs is None or not sigma_obs > 0:
             raise ValueError(f"{variant} holds sigma_obs fixed, so it needs a positive sigma_obs")
@@ -223,6 +280,9 @@ def fit(variant, data, inits, sigma_obs=None, epsilon=None, newton_fallback=True
                            else values["sigma_obs"]),
         "lp__": float(values["lp__"]),
     }
+    for name in ("delta_u", "delta_v", "delta_pos", "delta_neg"):
+        if f"{name}[1]" in values:
+            params[name] = np.array([values[f"{name}[{j + 1}]"] for j in range(int(data["S"]))])
     return params, result
 
 
@@ -237,6 +297,19 @@ def log_prob(variant, data, params, sigma_obs=None, epsilon=None):
     point = {"k": float(params["k"]), "m": float(params["m"]),
              "delta": [float(v) for v in params["delta"]],
              "beta": [float(v) for v in params["beta"]]}
+    if variant in HADAMARDS:
+        # the factors given, or the balanced ones, where the density is Prophet's
+        u, v = ((params["delta_u"], params["delta_v"]) if "delta_u" in params
+                else hadamard_factors(point["delta"]))
+        del point["delta"]
+        point["delta_u"], point["delta_v"] = [float(x) for x in u], [float(x) for x in v]
+    elif variant in SPLITS:
+        positive, negative = ((params["delta_pos"], params["delta_neg"])
+                              if "delta_pos" in params
+                              else split_parts(point["delta"], float(data["tau"])))  # floor tau
+        del point["delta"]
+        point["delta_pos"] = [float(x) for x in positive]
+        point["delta_neg"] = [float(x) for x in negative]
     if variant not in FIXES_SIGMA:
         point["sigma_obs"] = float(params["sigma_obs"])
     frame = model(variant).log_prob(params=point, data=data, jacobian=False,

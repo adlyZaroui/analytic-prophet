@@ -596,11 +596,40 @@ def environment():
     }
 
 
+def inside_stan():
+    """#202: the fix restated inside Stan, on Stan's own L-BFGS."""
+    rows = [row for row in csv.DictReader(open(PAPER_RESULTS / "inside_stan.csv"))
+            if row["variant"] != "reference"]
+    tau = 0.05
+
+    def shortfalls(variant, start=None, scale=None, size=None, setting=None):
+        return [float(row["shortfall"]) for row in rows if row["variant"] == variant
+                and (start is None or (row["start"] == "default") == (start == "default"))
+                and (scale is None or abs(float(row["scale"]) - scale) < 1e-12)
+                and (size is None or int(row["observations"]) == size)
+                and (setting is None or row["setting"] == setting)]
+
+    hadamard_start = shortfalls("hadamard", start="default")
+    split_start = shortfalls("split", start="default", scale=tau)
+    return {
+        "InsideRuns": f"{len(rows)}",
+        "InsideBest": _scientific(min(float(row["shortfall"]) for row in rows)),
+        "InsideHadamardStartMin": _scientific(min(hadamard_start)),
+        "InsideHadamardStartMax": f"{max(hadamard_start):.2g}",
+        "InsideHadamardRandomMedianLong": f"{statistics.median(shortfalls('hadamard', start='random', size=2905, setting='fixed')):.0f}",
+        "InsideHadamardRandomMax": f"{max(shortfalls('hadamard', start='random')):.0f}",
+        "InsideSplitStartMin": f"{min(split_start):.2g}",
+        "InsideSplitStartMax": f"{max(split_start):.2g}",
+        "InsideSplitFloorWorst": f"{max(shortfalls('split', start='default')):.0f}",
+    }
+
+
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
     return {**census(), **posterior(), **certificate(), **margin(), **newton(),
             **limitations(), **smoothing(), **stall(), **tau_path(), **multistart(),
-            **flat(), **rounding(), **tolerance(), **strength(), **environment()}
+            **flat(), **rounding(), **tolerance(), **strength(), **environment(),
+            **inside_stan()}
 
 
 def render(values):

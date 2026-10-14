@@ -104,6 +104,12 @@ workers; needs the M4 cache). No number is typed into a section unless
 `tests/test_paper_numbers.py` lists it as a constant, such as Prophet's defaults or the
 lengths measured.
 
+The fix restated inside Stan (#202) is `experiments/inside_stan.py`: Hoff's Hadamard
+parametrisation and the split declared `<lower=0>`, each fitted by Stan's own L-BFGS
+with Prophet's settings, from Prophet's start and #169's seeded starts, at three lengths
+with σ fixed and free, writing `results/inside_stan.csv` in about two minutes (needs
+CmdStan 2.37.0, below).
+
 ## Results not yet measured
 
 A `\pending{#issue}{…}` marker renders in red where the paper states something
@@ -129,10 +135,10 @@ figures/              generated figures
 
 ## Modified copies of Prophet's Stan program
 
-Three experiments change Prophet's program rather than call it: the
-smooth-surrogate control (#168) and the fixed-σ halves of the multi-start (#169)
-and the τ path (#171). Stan cannot hold a parameter fixed at run time, so each
-needs a different program. They live in `stan/`, beside Prophet's own
+Four experiments change Prophet's program rather than call it: the
+smooth-surrogate control (#168), the fixed-σ halves of the multi-start (#169)
+and the τ path (#171), and the fix restated inside Stan (#202). Stan cannot hold a
+parameter fixed at run time, so each needs a different program. They live in `stan/`, beside Prophet's own
 `prophet.stan` copied verbatim, so that each diff is its documentation:
 
 | program | the change |
@@ -140,6 +146,9 @@ needs a different program. They live in `stan/`, beside Prophet's own
 | `prophet_fixed_sigma.stan` | `sigma_obs` moved from `parameters` to `data` |
 | `prophet_smooth.stan` | `\|δ\|` replaced by `√(δ² + ε²) − ε`, with `ε` as data |
 | `prophet_fixed_sigma_smooth.stan` | both |
+| `prophet_hadamard.stan` | `δ = u ⊙ v`, and `\|δ\|/τ` replaced by `(‖u‖² + ‖v‖²)/(2τ)`: smooth, the same minimisers (#202) |
+| `prophet_split.stan` | `δ = δ⁺ − δ⁻`, both `<lower=0>`, the prior linear in them: the paper's fix as Stan has to state it (#202) |
+| `prophet_fixed_sigma_hadamard.stan`, `prophet_fixed_sigma_split.stan` | each with `sigma_obs` as data |
 
 `experiments/stan_runner.py` compiles them and fits them the way
 `CmdStanPyBackend.fit` does — the data and starting point captured from a real

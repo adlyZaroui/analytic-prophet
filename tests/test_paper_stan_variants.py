@@ -1,8 +1,8 @@
 """
 Issue #183: modified copies of Prophet's own Stan program, and one runner.
 
-#168, #169 and #171 change Prophet's program rather than call it, and each is
-only evidence if the change is the *only* difference. Three things make that
+#168, #169, #171 and #202 change Prophet's program rather than call it, and
+each is only evidence if the change is the *only* difference. Three things make that
 true rather than assumed, and each is checked here:
 
   * **each variant is the diff it claims to be** -- read off the files, with
@@ -93,6 +93,59 @@ def test_fixed_sigma_smooth_is_exactly_both():
     removed, added = _changes("fixed_sigma_smooth")
     assert sorted(removed) == sorted([SIGMA_DECLARATION, L1_PRIOR])
     assert sorted(added) == sorted([SIGMA_DECLARATION, EPSILON_DECLARATION, SMOOTH_PRIOR])
+
+
+DELTA_DECLARATION = "vector[S] delta;          // Trend rate adjustments"
+HADAMARD = ["vector[S] delta_u;        // Trend rate adjustments, delta = delta_u .* delta_v",
+            "vector[S] delta_v;", "vector[S] delta = delta_u .* delta_v;",
+            "target += -(dot_self(delta_u) + dot_self(delta_v)) / (2 * tau);"]
+SPLIT = ["vector<lower=0>[S] delta_pos;  // Trend rate adjustments, delta = delta_pos - delta_neg",
+         "vector<lower=0>[S] delta_neg;", "vector[S] delta = delta_pos - delta_neg;",
+         "target += -sum(delta_pos + delta_neg) / tau;"]
+
+
+@pytest.mark.parametrize("variant, added", [("hadamard", HADAMARD), ("split", SPLIT)])
+def test_the_inside_stan_variants_replace_delta_and_its_prior_and_nothing_else(variant, added):
+    """#202: delta becomes two parameters, rebuilt as a transformed parameter so
+    the rest of the program -- the trend, the likelihood -- reads it unchanged,
+    and the Laplace prior becomes its smooth equal in those parameters."""
+    removed, now = _changes(variant)
+    assert sorted(removed) == sorted([DELTA_DECLARATION, L1_PRIOR])
+    assert sorted(now) == sorted(added)
+
+
+@pytest.mark.parametrize("variant, added", [("fixed_sigma_hadamard", HADAMARD),
+                                            ("fixed_sigma_split", SPLIT)])
+def test_their_fixed_sigma_versions_are_exactly_both(variant, added):
+    removed, now = _changes(variant)
+    assert sorted(removed) == sorted([SIGMA_DECLARATION, DELTA_DECLARATION, L1_PRIOR])
+    assert sorted(now) == sorted([SIGMA_DECLARATION] + added)
+
+
+def test_the_runner_translates_a_start_into_each_variants_parameters():
+    """A rate at zero cannot start at (0, 0) in the Hadamard program -- a
+    stationary point -- nor on the split's bound; every other rate starts where
+    its delta is."""
+    data, start = {"T": 10, "tau": 0.05}, [0.0, 0.04, -0.09]
+    _, hadamard = runner.inputs_for("hadamard", data, {"k": 0.1, "delta": start})
+    u, v = np.array(hadamard["delta_u"]), np.array(hadamard["delta_v"])
+    assert "delta" not in hadamard
+    np.testing.assert_allclose(u * v, start, atol=1e-15)
+    assert u[0] == pytest.approx(np.sqrt(0.05)) and v[0] == 0.0
+    np.testing.assert_allclose(np.abs(u[1:]), np.abs(v[1:]))
+
+    _, split = runner.inputs_for("split", data, {"k": 0.1, "delta": start})
+    positive, negative = np.array(split["delta_pos"]), np.array(split["delta_neg"])
+    np.testing.assert_allclose(positive - negative, start, atol=1e-15)
+    assert np.all(positive > 0) and np.all(negative > 0)
+
+
+def test_the_balanced_factorisation_puts_a_zero_rate_at_zero():
+    """Scoring needs the factors at which the penalty is |delta| / tau: for a
+    zero rate that is (0, 0), not the starting point's (c, 0)."""
+    u, v = runner.hadamard_factors([0.0, 0.04, -0.09])
+    assert u[0] == 0.0 and v[0] == 0.0
+    np.testing.assert_allclose((u ** 2 + v ** 2) / 2, [0.0, 0.04, 0.09])
 
 
 @pytest.mark.parametrize("variant, kwargs, message", [
@@ -270,10 +323,38 @@ def test_the_smoothed_prior_tends_to_the_original_from_above(reference):
     assert gaps[-1] < len(point["delta"]) * 1e-12 / data["tau"] * 10
 
 
+def test_the_hadamard_program_is_prophets_density_at_the_balanced_factorisation(reference):
+    """#202: the same minimisers, because at |delta_u| = |delta_v| the penalty is
+    |delta| / tau exactly -- and any other factorisation of the same delta
+    costs more."""
+    data, _, point = reference
+    lp_original, _ = runner.log_prob("original", data, point)
+    lp_balanced, _ = runner.log_prob("hadamard", data, point)
+    assert lp_balanced == pytest.approx(lp_original, rel=1e-12, abs=1e-12)
+    u, v = runner.hadamard_factors(point["delta"])
+    lp_unbalanced, _ = runner.log_prob("hadamard", data, dict(point, delta_u=2 * u,
+                                                              delta_v=v / 2))
+    assert lp_unbalanced < lp_balanced
+
+
+def test_the_split_program_is_prophets_density_less_its_floor(reference):
+    """Both parts raised by the same floor leave delta unchanged and cost the
+    prior 2 floor / tau per rate -- nothing else differs."""
+    data, _, point = reference
+    lp_original, _ = runner.log_prob("original", data, point)
+    lp_split, _ = runner.log_prob("split", data, point)
+    rates, tau = len(point["delta"]), float(data["tau"])
+    assert lp_split - lp_original == pytest.approx(-2 * tau / tau * rates, rel=1e-10)
+
+
 @pytest.mark.parametrize("variant, kwargs", [
     ("fixed_sigma", {"sigma_obs": "theirs"}),
     ("smooth", {"epsilon": 1e-3}),
     ("fixed_sigma_smooth", {"sigma_obs": "theirs", "epsilon": 1e-3}),
+    ("hadamard", {}),
+    ("split", {}),
+    ("fixed_sigma_hadamard", {"sigma_obs": "theirs"}),
+    ("fixed_sigma_split", {"sigma_obs": "theirs"}),
 ])
 def test_every_variant_fits_from_prophets_own_start(reference, variant, kwargs):
     data, inits, theirs = reference
