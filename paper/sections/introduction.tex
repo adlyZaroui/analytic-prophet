@@ -42,8 +42,14 @@ That L-BFGS is ill-suited to an $\ell_1$-penalised objective is well known:
 \citet{andrew2007scalable} open by noting that it ``cannot be used for an
 L1-regularized loss due to its non-differentiability whenever some parameter is
 zero'', and methods built for the $\ell_1$ term exist because of it
-(\cref{sec:related}). We did not discover that phenomenon and do not present it
-as new. The contribution is narrower and, we
+(\cref{sec:related}). It was known in Stan's own community too. In a reply to a
+question about the lasso on the Stan users' list, \citet{carpenter2017lasso} wrote
+that with the $\ell_1$ penalty of a Laplace prior ``the posterior isn't continuously
+differentiable''. Stan's samplers and optimizers, he added, ``can run into problems
+when the parameter jumps across that non-differentiable point'', and ``straight-up
+optimization is unlikely to find estimates of exactly zero for parameters''. We did
+not discover that phenomenon and do not present it as new. The contribution is
+narrower and, we
 think, more useful for being stated precisely:
 \begin{enumerate}
   \item the diagnosis of the phenomenon in a specific, heavily deployed system;

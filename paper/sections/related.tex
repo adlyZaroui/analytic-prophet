@@ -41,6 +41,40 @@ here. What \cref{sec:reformulation} adds is the statement of exactness for
 Prophet's full posterior, including its non-convex configurations, and for the
 local minimisers and first-order points that a solver can actually deliver.
 
+\paragraph{Smooth reparametrisations, run inside Stan.}
+The split is not the only exact way to remove the kink. \citet{hoff2017lasso} writes
+each coefficient as a product, $\delta = u \odot v$, with the penalty
+$\lambda(\|u\|^2 + \|v\|^2)/2$ in place of $\lambda\|\delta\|_1$. The objective becomes
+smooth and unconstrained, and every local minimum in $(u, v)$ gives a local minimum in
+$\delta$. \citet{kolb2026smoothing} prove the converse too: the two problems are
+``equivalent in the sense of identical global and local minima''.
+\citet{poon2021smooth} eliminate one factor by solving for it. For least-squares
+problems they show that what remains has no spurious minima and only saddle points
+that are ``ridable'', and they advocate BFGS. These are statements about the problem.
+Whether a given solver finds its minimisers is a separate question, and for Prophet it
+can be measured. We restated both reparametrisations in Prophet's own Stan program and
+ran them on Stan's L-BFGS with Prophet's settings
+(\code{paper/experiments/inside_stan.py}). In \InsideRuns{} runs, neither reaches the
+optimum: the closest stops $\InsideBest$ nats short. No run sets a single rate exactly
+to zero. \citet{kolb2026smoothing} say as much of gradient methods on the product form,
+which have no proximal step: ``the iterates can only asymptotically approach
+theoretically zero values''.
+
+Each also needs a choice Prophet does not make. Prophet starts every rate at zero.
+Setting both factors to zero gives a stationary point that is not a minimum
+\citep{hoff2017lasso}, so a zero rate has to start elsewhere. From Prophet's start, the
+product form then ends between $\InsideHadamardStartMin$ and \InsideHadamardStartMax{}
+nats short, depending on that choice. From random starts it falls further short than
+Prophet's own L-BFGS from the same starts, in median, at every length and setting; on
+the full Peyton Manning series with $\sigma$ fixed it stops a median of
+\InsideHadamardRandomMedianLong{} nats short of the optimum. Stan can state the split only by declaring both parts non-negative, and it
+optimises such parameters through their logarithms, so a zero is approached and never
+reached. Both parts of a zero rate must also start above zero. Started at $\tau$, the
+split ends \InsideSplitStartMin--\InsideSplitStartMax{} nats short; at the other starting
+values tried, up to \InsideSplitFloorWorst. An exact reformulation is therefore not
+enough on its own. The one in \cref{sec:reformulation} reaches exact zeros because it is
+solved by a method that keeps the bounds itself.
+
 \paragraph{The lasso and its solution path.}
 With $\sigma$ fixed, linear growth and additive seasonality, Prophet's MAP problem
 is a least-squares problem with Gaussian penalties on $k$, $m$ and $\beta$ and an
@@ -54,5 +88,5 @@ standard against which a sequence of Prophet fits across $\tau$ can be read
 None of the methods above is ours, and neither is the observation that L-BFGS is a
 poor fit for an $\ell_1$ term. The contribution is the four items listed in
 \cref{sec:introduction}: a diagnosis in a specific, widely deployed system, the
-controls that isolate it, an exact fix stated for that system's full model, and the
-attribution of its user reports.
+controls that isolate it, an exact fix stated for that system's full model, and a
+reading of its long-standing user reports against the mechanism.
