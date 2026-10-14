@@ -170,6 +170,104 @@ def test_the_licences_are_shipped(pyproject):
         "is what MPL-2.0 turns on")
 
 
+# -- Prophet's licence (#199) ----------------------------------------------
+
+PROPHET_COPYRIGHT = "Copyright (c) Facebook, Inc. and its affiliates."
+
+
+def _collector():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "collect_licences", REPO / "tools" / "collect_licences.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_prophets_licence_is_committed_as_prophet_ships_it():
+    """The Python here ports Prophet's and paper/stan/ copies its program, and
+    MIT's one condition is that the notice travels with substantial portions."""
+    text = (REPO / "LICENSE-PROPHET").read_text()
+    assert text.startswith("MIT License") and PROPHET_COPYRIGHT in text
+    assert "shall be included in all\ncopies or substantial portions of the Software." in text
+    try:
+        from importlib.metadata import PackageNotFoundError, distribution
+        shipped = distribution("prophet")
+    except PackageNotFoundError:
+        pytest.skip("prophet is not installed; the text is checked, not compared")
+    licence = next((f for f in (shipped.files or []) if str(f).endswith("licenses/LICENSE")),
+                   None)
+    if licence is None:
+        pytest.skip("this prophet build does not ship its licence file")
+    assert text == Path(shipped.locate_file(licence)).read_text()
+
+
+def test_prophets_licence_reaches_every_distribution(pyproject, release):
+    """Three routes: the sdist (MANIFEST.in), every wheel's metadata
+    (setuptools' default licence globs, which a `license = {file = ...}` table
+    leaves in force), and the release wheels' licences/ directory."""
+    import fnmatch
+
+    assert "include LICENSE-PROPHET" in (REPO / "MANIFEST.in").read_text().splitlines()
+
+    project = pyproject["project"]
+    explicit = (project.get("license-files")
+                or pyproject["tool"]["setuptools"].get("license-files"))
+    if explicit:
+        assert "LICENSE-PROPHET" in explicit, "license-files leaves Prophet's out"
+    else:
+        assert set(project["license"]) == {"file"}, (
+            "a licence that is not a file reference may change which files "
+            "setuptools picks up by default")
+        assert fnmatch.fnmatch("LICENSE-PROPHET", "LICEN[CS]E*")
+
+    shell = " ".join(step.get("run", "") for step in release["jobs"]["verify"]["steps"])
+    for wanted in ('"licences/LICENSE.prophet"', '"LICENSE-PROPHET"'):
+        assert wanted in shell, f"the release does not check the wheels for {wanted}"
+
+
+def test_the_collector_ships_prophets_licence_and_names_what_derives_from_it(
+        tmp_path, monkeypatch):
+    collector = _collector()
+    headers = tmp_path / "headers"
+    (headers / "eigen").mkdir(parents=True)
+    (headers / "eigen" / "COPYING.MPL2").write_text("MPL-2.0 text")
+    (headers / "lbfgspp").mkdir()
+    (headers / "lbfgspp" / "LICENSE.md").write_text("MIT text")
+    monkeypatch.setenv("AP_HEADERS", str(headers))
+    monkeypatch.setattr(collector, "DESTINATION", tmp_path / "licences")
+
+    assert collector.main() == 0
+    shipped = tmp_path / "licences"
+    assert (shipped / "LICENSE.prophet").read_text() == (REPO / "LICENSE-PROPHET").read_text()
+    notice = " ".join((shipped / "NOTICE").read_text().split())
+    assert "Prophet" in notice and PROPHET_COPYRIGHT.replace("Copyright (c) ", "") in notice
+    for name in collector.DERIVED_FROM_PROPHET:
+        assert f"analytic_prophet/{name}" in notice
+
+
+def test_the_notice_names_every_module_that_ports_prophet():
+    """`[fc]` marks a decision copied from Prophet; a module that gains one and
+    is not named would ship derived code under no notice. "[fc] nothing" is the
+    one use that says the opposite -- Prophet has no counterpart -- and a module
+    whose only markers read that way derives nothing."""
+    marked = {path.name for path in (REPO / "analytic_prophet").glob("*.py")
+              if any("[fc]" in line and "[fc] nothing" not in line
+                     for line in path.read_text().splitlines())}
+    assert marked == set(_collector().DERIVED_FROM_PROPHET)
+
+
+def test_the_readmes_say_where_prophets_licence_is():
+    readme = (REPO / "README.md").read_text()
+    licence = readme[readme.index("## Licence"):]
+    assert "LICENSE-PROPHET" in licence and "Prophet" in licence
+    assert "LICENSE-PROPHET" in (REPO / "paper" / "README.md").read_text()
+    for program in sorted((REPO / "paper" / "stan").glob("*.stan")):
+        header = program.read_text().splitlines()[:5]
+        assert any("LICENSE file in the root directory" in line for line in header), (
+            f"{program.name} lost Meta's header; it is kept verbatim")
+
+
 def test_the_build_is_run_before_anything_is_compiled(cibuildwheel):
     before = cibuildwheel["before-all"]
     assert "fetch_headers.sh" in before

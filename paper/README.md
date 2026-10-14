@@ -162,6 +162,11 @@ the unmodified program compiled here reproduces Prophet's binary — the same
 optimum, `lp__` and gradient — and that each variant changes the density by
 exactly what its diff says. Those tests skip without CmdStan.
 
+Every program here keeps Meta's header, which licenses it under "the MIT license
+found in the LICENSE file in the root directory of this source tree". In this
+repository that licence is [`LICENSE-PROPHET`](../LICENSE-PROPHET); the root
+`LICENSE` is this project's own (#199).
+
 Every experiment for the paper lives under `experiments/`. The one exception is
 the evaluation corpus (#164), which also serves the general evaluation of this
 implementation and stays in `evaluation/`.
