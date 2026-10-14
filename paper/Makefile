@@ -49,6 +49,7 @@ experiments:
 	$(PYTHON) experiments/overhead.py
 	$(PYTHON) experiments/m4_calendar.py
 	$(PYTHON) experiments/smoothing.py
+	$(PYTHON) experiments/inside_stan.py
 	$(PYTHON) experiments/issue842.py
 	$(PYTHON) experiments/tau_path.py
 	$(PYTHON) experiments/multistart.py
