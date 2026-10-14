@@ -19,6 +19,12 @@ Nothing said so, and a reader computing the relative margin off the README's
 table found it falling 54x across the range with no acknowledgement. Both pages
 now state it, and neither claims a mechanism for the size.
 
+#203 then removed the relative margin itself. lp__ is defined only up to an
+additive constant -- Stan's `~` drops normalising constants, and Prophet fits
+y / max|y| -- so the same margin was 0.0045%, 0.0068% or 0.061% of it depending
+on which constants were kept. Both pages now give the margin per observation,
+which no constant moves, and nothing may quote a share of lp__ again.
+
 These tests recompute what the README quotes from `tier0_agreement.csv`. The
 doc's yearly-only figures are not in a committed tier, so they are checked for
 internal consistency only -- the grid has to agree with the single table above
@@ -60,7 +66,7 @@ def margins():
 
 
 def _readme_rows():
-    """The README's Tier 0 table, as `{T: (prophet, ours, margin, percent)}`."""
+    """The README's Tier 0 table, as `{T: (prophet, ours, margin, per observation)}`."""
     rows = {}
     for line in README.read_text().splitlines():
         cells = [c.strip().replace("*", "").replace("−", "-")
@@ -69,7 +75,7 @@ def _readme_rows():
             continue
         try:
             rows[int(cells[0])] = (float(cells[1]), float(cells[2]),
-                                   float(cells[3]), float(cells[4].rstrip("%")))
+                                   float(cells[3]), float(cells[4]))
         except ValueError:
             continue
     return rows
@@ -81,28 +87,29 @@ def test_the_readme_margins_are_the_committed_ones(margins):
         f"the README's Tier 0 table covers {sorted(table)}, the results "
         f"{sorted(margins)}")
 
-    for size, (prophet, ours, margin, percent) in table.items():
+    for size, (prophet, ours, margin, per_observation) in table.items():
         theirs, mine = margins[size]
         assert prophet == pytest.approx(theirs, abs=5e-4), size
         assert ours == pytest.approx(mine, abs=5e-4), size
         assert margin == pytest.approx(mine - theirs, abs=5e-4), (
             f"T={size}: README says the margin is {margin}, the results give "
             f"{mine - theirs:.4f}")
-        assert percent == pytest.approx((mine - theirs) / theirs * 100, rel=5e-3), (
-            f"T={size}: README says {percent}% of lp__, the results give "
-            f"{(mine - theirs) / theirs * 100:.4f}%")
+        # quoted to two significant figures
+        assert per_observation == pytest.approx((mine - theirs) / size, rel=5e-2), (
+            f"T={size}: README says {per_observation} nats per observation, the "
+            f"results give {(mine - theirs) / size:.2g}")
 
 
-def test_the_relative_decline_the_readme_claims_is_the_measured_one(readme, margins):
-    relative = {size: (ours - theirs) / theirs
-                for size, (theirs, ours) in margins.items()}
-    shortest, longest = min(relative), max(relative)
-    factor = relative[shortest] / relative[longest]
+def test_the_decline_per_observation_the_readme_claims_is_the_measured_one(readme, margins):
+    per_observation = {size: (ours - theirs) / size
+                       for size, (theirs, ours) in margins.items()}
+    shortest, longest = min(per_observation), max(per_observation)
+    factor = per_observation[shortest] / per_observation[longest]
 
     quoted = re.search(r"factor of (\d+) across this range", readme)
     assert quoted, "the README no longer states the decline factor"
-    assert int(quoted.group(1)) == pytest.approx(factor, abs=1.0), (
-        f"README says a factor of {quoted.group(1)}; the results give {factor:.0f}")
+    assert int(quoted.group(1)) == round(factor), (
+        f"README says a factor of {quoted.group(1)}; the results give {factor:.1f}")
 
 
 def test_the_readme_says_the_absolute_margin_is_not_monotone(readme, margins):
@@ -136,3 +143,22 @@ def test_neither_page_claims_a_mechanism_for_the_size(readme, doc):
     what the data supports: the two configurations move opposite ways."""
     assert "No mechanism for the size is claimed" in readme
     assert "No mechanism for the *size* of the margin is claimed here" in doc
+
+
+# Affirmative forms only: the pages that explain why no share is given say so in
+# other words ("never quoted as a share", "not given as a share").
+SHARE_OF_LP = ("as % of", "% of lp", "% of `lp", "share of the posterior",
+               "as a share of prophet", "fraction of `lp__`", "relative margin",
+               "relative_margin_percent")
+
+
+def test_no_page_quotes_a_share_of_lp():
+    """#203: lp__ is defined only up to an additive constant, so a margin as a
+    share of it is not a quantity."""
+    pages = [README, DOC, REPO / "paper" / "README.md",
+             REPO / "evaluation" / "results" / "report.md",
+             *sorted((REPO / "paper" / "sections").glob("*.tex")), REPO / "paper" / "main.tex"]
+    for page in pages:
+        text = " ".join(page.read_text().split()).lower()
+        for phrase in SHARE_OF_LP:
+            assert phrase not in text, f"{page.name} quotes {phrase!r}"

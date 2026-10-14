@@ -34,9 +34,9 @@ This caused four separate, independently-discovered failures here:
 
    *That 17.8% is of the objective being minimized* — the negative log posterior of the
    normalized series, `y / max|y|`, which is what both backends here optimize. It is
-   **not** a percentage of Stan's `lp__`, where every margin in this file is a fraction
-   of a percent. The two are different quantities on different scales and the
-   percentages do not compare.
+   **not** a percentage of Stan's `lp__`, which is defined only up to an additive constant
+   and so has no percentages to take. The two are different quantities on different
+   scales and do not compare.
 
    That run, from #8's setting, was not kept either. In `strength.py`'s setting --
    `sigma_obs` fixed, Prophet's initialization -- removing SciPy's tolerances does move
@@ -89,10 +89,11 @@ differs:
 | 2905 | **+0.36** | **+2.34** |
 
 Neither column is monotone in `T`, and they do not agree on the ordering: at `T = 1000`
-the wider model shows the larger margin, at `T = 2905` the narrower one does. As a
-fraction of `lp__` the default column does fall steadily — 0.244% at `T = 300`, 0.0967%
-at `T = 1000`, 0.0045% at `T = 2905`, a factor of 54 across the range — but that is one
-slice of two and the other moves the other way. **No mechanism for the *size* of the
+the wider model shows the larger margin, at `T = 2905` the narrower one does. Per
+observation the default column does fall steadily — 0.0066, 0.0028 and 0.00012 nats at
+`T = 300`, 1000 and 2905, a factor of 53 — but only because the margin stands still while
+`T` grows. No share of `lp__` is quoted: Stan defines `lp__` only up to an additive
+constant, so the share would depend on constants nobody chose (#203). **No mechanism for the *size* of the
 margin is claimed here.** What these five cells support is its *direction*, which holds in
 every one of them.
 

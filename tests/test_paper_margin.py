@@ -168,3 +168,11 @@ def test_a_non_positive_margin_is_refused_rather_than_dropped(rows, tmp_path):
     broken[0]["margin"] = -0.01
     with pytest.raises(ValueError, match="non-positive"):
         margin.draw(broken, tmp_path / "c.pdf")
+
+
+def test_the_margin_per_observation_is_the_margin_over_t(rows):
+    """#203: the figure's right panel. lp__ is defined only up to an additive
+    constant, so the margin is normalised by the series, never by lp__."""
+    assert "relative_margin_percent" not in margin.FIELDS
+    for row in rows:
+        assert row["margin_per_observation"] == row["margin"] / row["observations"], row

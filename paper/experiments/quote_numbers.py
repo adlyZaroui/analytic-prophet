@@ -63,15 +63,23 @@ def posterior():
         if row["metric"] == "lp__" and row["series"].startswith("peyton"):
             size = int(row["series"].split("[:")[1].rstrip("]"))
             by[size][row["implementation"]] = float(row["value"])
-    out = {}
+    import math
+
+    # lp__ is defined only up to an additive constant -- Stan's `~` drops
+    # normalising constants, and Prophet fits y / max|y| -- so the margin is
+    # never quoted as a share of it (#203). Per observation, and as a ratio of
+    # posterior densities, it is free of every such constant.
+    out, per_observation = {}, {}
     for size, cell in sorted(by.items()):
         margin = cell["analytic_prophet"] - cell["prophet"]
         tag = {300: "Short", 1000: "Mid", 2905: "Long"}.get(size)
         if tag:
+            per_observation[tag] = margin / size
             out[f"LpMargin{tag}"] = f"{margin:+.3f}"
-            out[f"LpPercent{tag}"] = f"{margin / cell['prophet'] * 100:.4f}"
-    if {"LpPercentShort", "LpPercentLong"} <= out.keys():
-        out["LpDecline"] = (f"{float(out['LpPercentShort']) / float(out['LpPercentLong']):.0f}")
+            out[f"LpPerObs{tag}"] = f"{margin / size:.2g}"
+            out[f"LpDensity{tag}"] = f"{100 * math.exp(-margin):.0f}"
+    if {"Short", "Long"} <= per_observation.keys():
+        out["LpPerObsDecline"] = f"{per_observation['Short'] / per_observation['Long']:.0f}"
     return out
 
 
