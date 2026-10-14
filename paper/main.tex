@@ -1,4 +1,4 @@
-% Prophet does not solve the problem it specifies.
+% Prophet's MAP estimate is not the posterior mode.
 % Preprint, intended for arXiv stat.CO.  Build with `make` in this directory.
 \documentclass[11pt]{article}
 
@@ -48,9 +48,9 @@
 \newcommand{\T}{\ensuremath{T}}
 \newcommand{\lp}{\ensuremath{\mathrm{lp}}}
 
-\title{Prophet Does Not Solve the Problem It Specifies:\\
-       A Non-Differentiable Posterior, Smooth Optimizers,\\
-       and an Exact Fix}
+\title{Prophet's MAP Estimate Is Not the Posterior Mode:\\
+       A Non-Differentiable Changepoint Prior, Smooth Optimizers,\\
+       and an Exact Reformulation}
 \author{Adly Zaroui\\[2pt]
   {\small Independent researcher}\\[1pt]
   {\small\href{mailto:mohamed-adly.zaroui@outlook.com}%
@@ -66,10 +66,10 @@ a~posteriori estimation. The posterior it specifies places a Laplace prior on
 the trend's changepoint rates, which makes the objective non-differentiable
 exactly where its optimum tends to lie, at rates of zero. Prophet delegates the
 optimization to Stan's L-BFGS and Newton methods, which are methods for smooth
-objectives. We show that, as a consequence, Prophet does not solve the
-problem it specifies: under Prophet's own posterior density its solutions score
-below the optimum at every series length measured, and its changepoint rates
-never reach the exact zeros the optimum has. On every one of \KktSeries{} M4 series,
+objectives. We show that, as a consequence, the MAP estimate Prophet returns is not
+the posterior mode: under Prophet's own posterior density it scores below the
+optimum at every series length measured, and its changepoint rates never reach the
+exact zeros the optimum has. On every one of \KktSeries{} M4 series,
 Prophet's solution fails the first-order optimality conditions, even when each
 changepoint rate is read in the way most favourable to it.
 Run from \MultiTotal{} random starts on Prophet's program with $\sigma$ held fixed,

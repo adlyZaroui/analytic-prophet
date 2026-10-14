@@ -31,7 +31,7 @@ interface between the two reports that it has not.
 \paragraph{What this paper claims.}
 Prophet specifies a posterior whose optimum sits on a non-differentiable set,
 delegates its optimization to solvers designed for smooth objectives, and
-consequently does not solve the problem it specifies. This is diagnosable and
+consequently returns, as its MAP estimate, a point that is not the posterior mode. This is diagnosable and
 removable by an exact reformulation, and it accounts for part of one long-standing
 report in Prophet's issue tracker and plausibly underlies another
 (\cref{sec:consequences}); we report its consequences for the optimum and for
