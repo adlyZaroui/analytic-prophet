@@ -66,7 +66,10 @@ The paper's own experiments, as opposed to the evaluation suite's, commit their
 output to `results/` and are read from there: the first-order certificate (#170)
 is `experiments/kkt.py`, writing `results/kkt_census.csv` and
 `results/kkt_peyton_manning.csv`. It is resumable and parallel, and took 37 minutes
-on eight workers. The margin against series length (#173) is
+on eight workers. Its instrument is checked against this implementation by
+`experiments/agreement.py` (#201): Stan's `lp__` and gradient against this
+implementation's objective and gradient at 21 points, writing `results/agreement.csv`
+in under half a minute. The margin against series length (#173) is
 `experiments/margin.py`, writing `results/margin.csv` and
 `figures/margin_vs_length.pdf` in about three minutes; `--draw` redraws the figure
 from the committed CSV without refitting. The natural-vs-split Newton control (#174) is

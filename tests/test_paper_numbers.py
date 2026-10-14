@@ -105,7 +105,6 @@ TYPED_CONSTANTS = {
     "10^{-3}": "a threshold chosen for the text; Stan's Newton step",
     "10^{-4}": "a point of the smoothing grid",
     "10^{-6}": "the smallest lambda of the strength grid",
-    "10^{-7}": "the agreement tests/test_paper_kkt.py asserts between two gradients",
     "2\\times10^{-3}": "twice Stan's Newton step",
 }
 

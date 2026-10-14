@@ -118,6 +118,7 @@ def certificate():
 
     zeros = sum(1 for row in detail if row["implementation"] == "analytic_prophet"
                 and row["coordinate"].startswith("delta") and float(row["value"]) == 0.0)
+    agreement = list(csv.DictReader(open(PAPER_RESULTS / "agreement.csv")))
 
     return {
         "KktSeries": f"{n:,}",
@@ -142,6 +143,13 @@ def certificate():
         # #175: the optimum's exact zeros, which Prophet's solutions never have
         "KktZerosPeyton": f"{zeros:d}",
         "KktZerosCensusMedian": f"{statistics.median(int(mine['exact_zeros']) for _, mine in pairs):.0f}",
+        # #201: the instrument against this implementation, at full precision
+        "KktStanPoints": f"{len(agreement)}",
+        "KktStanObjectiveRelative": _scientific(max(float(r["offset_relative"]) for r in agreement)),
+        "KktStanGradientRelative": _scientific(max(float(r["gradient_max_relative"])
+                                                   for r in agreement)),
+        "KktStanGradientSolution": _scientific(max(float(r["gradient_max_abs"]) for r in agreement
+                                                   if r["point"] == "analytic_prophet")),
     }
 
 

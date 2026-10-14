@@ -44,6 +44,7 @@ evaluation:
 experiments:
 	$(PYTHON) experiments/kkt.py
 	$(PYTHON) experiments/kkt.py --detail
+	$(PYTHON) experiments/agreement.py
 	$(PYTHON) experiments/margin.py
 	$(PYTHON) experiments/newton.py
 	$(PYTHON) experiments/overhead.py
