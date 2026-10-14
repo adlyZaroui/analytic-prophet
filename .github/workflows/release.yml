@@ -188,8 +188,12 @@ jobs:
           assert wheels, "no wheels to check"
           for wheel in wheels:                      # every one, not whichever sorted first
               names = zipfile.ZipFile(wheel).namelist()
+              # LICENSE-PROPHET reaches the metadata through setuptools'
+              # default licence globs; where in .dist-info depends on the
+              # setuptools version, so only the name is required (#199).
               for wanted in ("licences/LICENSE.eigen", "licences/LICENSE.lbfgspp",
-                             "licences/NOTICE"):
+                             "licences/LICENSE.prophet", "licences/NOTICE",
+                             "LICENSE-PROPHET"):
                   assert any(n.endswith(wanted) for n in names), \
                       f"{wanted} is missing from {wheel}"
               assert any(n.endswith((".so", ".dylib")) for n in names), \

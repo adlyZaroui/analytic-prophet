@@ -5,6 +5,7 @@
 # is an sdist nobody can check (#97). Windows has no wheel by decision, so the
 # sdist is the supported route there and needs them.
 include LICENSE
+include LICENSE-PROPHET
 include README.md
 include CONTRIBUTING.md
 include SECURITY.md

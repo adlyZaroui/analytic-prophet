@@ -399,4 +399,11 @@ not import, how to run the suite and the benchmarks, and what CI makes strict.
 
 ## Licence
 
-See [LICENSE](https://github.com/adlyZaroui/analytic-prophet/blob/main/LICENSE).
+MIT — see [LICENSE](https://github.com/adlyZaroui/analytic-prophet/blob/main/LICENSE).
+
+Parts of this project are derived from [Prophet](https://github.com/facebook/prophet),
+which is also MIT-licensed, copyright Facebook, Inc. and its affiliates; its licence is
+[LICENSE-PROPHET](https://github.com/adlyZaroui/analytic-prophet/blob/main/LICENSE-PROPHET).
+That covers the Python ported from Prophet's (marked `[fc]` where it follows it), the
+copy of Prophet's Stan program and its modified versions in `paper/stan/`, and the
+Peyton Manning series in `tests/data/`. The wheels carry both licences.
