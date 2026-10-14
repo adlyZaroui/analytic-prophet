@@ -63,7 +63,10 @@ forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].tail()
 **What this shows, and what it does not.** Three M4 series, forecast past a cutoff
 neither model saw. Each coloured line is continuous through the cutoff: to its left the
 model's fit to data it was shown, to its right its forecast. The actual values over the
-horizon are drawn in black, and the bands are the nominal 80% intervals.
+horizon are drawn in black, and the bands are the nominal 80% intervals. Each horizontal
+axis counts time from the series' first observation rather than showing dates: M4's
+recorded starting dates are partly placeholders, and their two-digit years put some weekly
+series in the future.
 
 They are **chosen by rule, not by eye.** Of Tier 2's 3,008 series, the ranking is taken over
 the **658 where a Prophet-shaped model fits at all** — both implementations within 10%

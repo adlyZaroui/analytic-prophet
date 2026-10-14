@@ -88,7 +88,11 @@ program, plus the variants the thread lists, writing `results/issue842.csv` and
 `experiments/tau_path.py`: λ = 1/τ swept for Prophet and for the exact path, σ fixed and
 free, with a zoom, a bisection of each path's largest step and prophet#1280's change,
 writing `results/tau_path.csv`, `tau_refine.csv`, `tau_pairs.csv` and
-`figures/tau_path.pdf` in about seven minutes on eight workers. The multi-start control
+`figures/tau_path.pdf` in about seven minutes on eight workers, and with them
+`figures/tau_path_readme.png`, the forecast panels drawn for the repository's README
+(#211); `--draw` redraws both figures from the committed CSV without refitting. The
+README figure is not part of the paper, and `make arxiv` packs only `figures/*.pdf`.
+The multi-start control
 (#169) is `experiments/multistart.py`: Prophet's L-BFGS from 50 seeded random starts at
 three lengths, σ fixed and free, against this implementation's certified optimum, writing
 `results/multistart.csv` in about five minutes.

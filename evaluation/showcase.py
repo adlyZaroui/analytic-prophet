@@ -21,6 +21,13 @@ Everything drawn is held out. For each series the last cross-validation
 cutoff is taken, both implementations are fitted on the history up to it, and
 both forecast the horizon beyond it with the actual values drawn on top.
 
+**Time is drawn from each series' first observation, not as dates (#211).**
+M4's recorded starting dates are not evidence of anything: many daily series
+share one placeholder start, and two-digit years put some weekly series in the
+future, so the middle panel used to run from 2087 to 2094 and looked like a
+bug. The fits still see the parsed dates, exactly as Tier 2's did; only the
+axis changes, and the output is still byte-identical between runs.
+
 Run it with `python evaluation/showcase.py`. It needs the M4 corpus (cached
 by evaluation/corpora.py) and prophet.
 """
@@ -228,6 +235,24 @@ def panel_data(series, cross_validated_advantage, lib_path, tail=None):
     return chosen
 
 
+# The unit each frequency's axis counts in, from the series' first observation.
+ELAPSED_UNITS = {"Weekly": ("weeks", pd.Timedelta(days=7)),
+                 "Daily": ("days", pd.Timedelta(days=1))}
+
+
+def elapsed_axis(series, history):
+    """`(to_elapsed, label)` for one panel: a function from timestamps to time
+    since the series' first observation, in the series' own unit, and the axis
+    label that says so."""
+    name, unit = ELAPSED_UNITS[_frequency_of(series)]
+    origin = pd.Timestamp(history["ds"].min())
+
+    def to_elapsed(ds):
+        return (pd.to_datetime(ds) - origin) / unit
+
+    return to_elapsed, f"{name} since the series' first observation"
+
+
 def draw(panels, out_path=FIGURE, tail=None):
     """Three stacked panels, one per selected series.
 
@@ -245,10 +270,11 @@ def draw(panels, out_path=FIGURE, tail=None):
 
     for axis, ((label, _rule, advantage, series, _o, _t), data) in zip(axes, panels):
         shown, future = data["shown_history"], data["future"]
+        x, xlabel = elapsed_axis(series, data["history"])
 
-        axis.plot(shown["ds"], shown["y"], color="0.45", linewidth=0.9,
+        axis.plot(x(shown["ds"]), shown["y"], color="0.45", linewidth=0.9,
                   label="observed (training)")
-        axis.plot(future["ds"], future["y"], color="0.1", linewidth=1.7,
+        axis.plot(x(future["ds"]), future["y"], color="0.1", linewidth=1.7,
                   label="actual (held out)")
 
         # One continuous line per model across the whole drawn span: fitted
@@ -258,18 +284,19 @@ def draw(panels, out_path=FIGURE, tail=None):
         for curve, colour, name in (
                 (data["theirs"], theirs_colour, "Prophet"),
                 (data["ours"], ours_colour, "analytic-prophet")):
-            axis.fill_between(curve["ds"], curve["yhat_lower"],
+            axis.fill_between(x(curve["ds"]), curve["yhat_lower"],
                               curve["yhat_upper"], color=colour, alpha=0.09,
                               linewidth=0)
-            axis.plot(curve["ds"], curve["yhat"], color=colour,
+            axis.plot(x(curve["ds"]), curve["yhat"], color=colour,
                       linewidth=1.5, label=name)
 
-        axis.axvline(data["cutoff"], color="0.4", linestyle=":", linewidth=1.3)
+        axis.axvline(x(data["cutoff"]), color="0.4", linestyle=":", linewidth=1.3)
         axis.set_title(
             f"{series} — {label}: {advantage:+.1%} RMSE cross-validated, "
             f"{data['advantage']:+.1%} in this window "
             f"(ours {data['our_rmse']:.0f}, Prophet {data['their_rmse']:.0f})",
             fontsize=9, loc="left")
+        axis.set_xlabel(xlabel, fontsize=8)
         axis.tick_params(labelsize=8)
         axis.margins(x=0.01)
 
