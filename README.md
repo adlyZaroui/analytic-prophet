@@ -292,8 +292,10 @@ ignored**, so `fit(df, analytic=False)` says that `analytic` is the Python backe
 rather than quietly running the compiled one.
 
 **Verified against Stan's own density.** The objective is checked to *be* Prophet's, not
-to resemble it: `CmdStanModel.log_prob` evaluated at our parameters must differ from ours
-by a constant, and it does to 1e-12.
+to resemble it: `CmdStanModel.log_prob` evaluated at our parameters equals minus our
+objective, with no constant between them, to about 1e-13 relative at every one of 21
+points measured, and the two gradients agree to about 1e-9 relative
+(`paper/experiments/agreement.py`).
 → [verification](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/model.md#verification-the-objective-is-stans-objective)
 
 **A reproducible evaluation suite.** Four tiers — a correctness gate, parameter recovery

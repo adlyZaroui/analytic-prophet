@@ -162,31 +162,26 @@ values, so Stan's `init_r · N(0,1)` default is never reached: `k`, `m` from
 ## Verification: the objective is Stan's objective
 
 The strongest check in the project. `cmdstanpy` exposes `CmdStanModel.log_prob`, which
-evaluates **Stan's own log density** at arbitrary parameter values. Scoring our
-closed-form posterior against it at six points — both optima and four random draws
-spanning 1e5 to 1e6 in magnitude — the two sum to zero every time, to the eight
-significant figures Stan reports:
+evaluates **Stan's own log density**, and its gradient, at arbitrary parameter values.
+[`paper/experiments/agreement.py`](../paper/experiments/agreement.py) scores this
+implementation's closed-form posterior against it at full precision (`sig_figs=18`), on
+Peyton Manning at T = 300, 1000 and 2905: at both implementations' solutions, and at five
+seeded random points per length where no coordinate of the gradient is near zero — 21
+points in all (#201).
 
-```
-point 0: ours=  194997.205423  stan= -194997.210000  sum=-4.6e-03
-point 1: ours=  282630.300634  stan= -282630.300000  sum=+6.3e-04
-point 2: ours=  783639.264098  stan= -783639.260000  sum=+4.1e-03
-point 3: ours= 1769879.589294  stan=-1769879.600000  sum=-1.1e-02
-```
+- **The objective is Stan's, with no constant between them.** Stan's sampling statements
+  drop exactly the constants this objective omits, so `lp__ + F` is zero up to rounding:
+  at most 1.4e-13 relative, at every point.
+- **The gradient is Stan's.** On Stan's unconstrained scale — `sigma_obs` is declared
+  `<lower=0>`, so its component is `sigma · d lp__ / d sigma` — the two agree to 7.5e-10
+  relative at every point, and to 1.4e-8 in absolute terms at this implementation's
+  solutions, where rates sit exactly at zero and both sides take sign(0) = 0.
 
-Relative agreement ~1e-8, which is Stan's output precision. Not equal up to a dropped
-constant — **identical**. The hand-derived posterior reproduces what Stan's autodiff
-computes.
-
-Comparing raw parameters does *not* work, and this trips people up:
-
-- Prophet builds its Fourier features from days since the **1970 epoch**; this
-  implementation uses days since the **series start**. Same function, rotated
-  `(cos, sin)` basis. `beta` coefficients differ, including in sign. Transferring the
-  seasonality vector between the two bases by least squares leaves a residual of 1e-14,
-  confirming they span the same space.
-- Changepoints sit at different locations (see [Known differences](deviations.md#known-differences-from-prophet)),
-  so `delta` is not comparable element-wise either.
+Raw parameters compare directly. The changepoints are Prophet's own
+([#15](https://github.com/adlyZaroui/analytic-prophet/issues/15)), and the Fourier
+features are built on Prophet's clock, days since the 1970 epoch, so the two design
+matrices agree to floating-point rounding; `paper/results/kkt_census.csv` records the gap
+on every series of the census.
 
 The gradient is separately checked against finite differences, and the C++ and Python
 gradients against each other to ~1e-16 relative.

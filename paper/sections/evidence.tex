@@ -97,7 +97,7 @@ away from zero proves it is not optimal, with $\sigma$ free or not.
 The gradient is Stan's, of Prophet's compiled density, through
 \code{CmdStanModel.log_prob}, so neither implementation grades itself; at the
 reformulation's solution it agrees with this implementation's hand-derived gradient
-to $10^{-7}$. Prophet's point is read at full precision. CmdStan writes the optimum
+to $\KktStanGradientSolution$. Prophet's point is read at full precision. CmdStan writes the optimum
 with eight significant digits unless asked otherwise, and on \KktRoundingSeries{}
 census series drawn at random that rounding alone moves Prophet's residual by up to
 \KktRoundingMax, against a residual of at least \KktRoundingResidualMin{} on every one of
