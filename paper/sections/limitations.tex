@@ -2,13 +2,12 @@
 \label{sec:limitations}
 
 \begin{itemize}
-  \item \textbf{The gap shrinks with series length, relative to the posterior.}
-        As a share of Prophet's $\lp$ the margin falls by a factor of
-        \LpDecline{} between $T = 300$ and $T = 2905$. The margin itself does not
-        fall: wherever Prophet runs L-BFGS it moves between \MarginLbfgsMin{} and
-        \MarginLbfgsMax{} nats with no trend in $T$ (\cref{fig:margin}), while
-        $\lp$ grows with every observation. On long series the difference in the
-        objective is a small part of it.
+  \item \textbf{Per observation, the gap shrinks with series length.} The
+        margin itself does not fall: wherever Prophet runs L-BFGS it moves between
+        \MarginLbfgsMin{} and \MarginLbfgsMax{} nats with no trend in $T$
+        (\cref{fig:margin}). Spread over the series, it falls by a factor of
+        \LpPerObsDecline{} between $T = 300$ and $T = 2905$, to \LpPerObsLong{} nats
+        per observation.
   \item \textbf{M4 barely exercises what Prophet is built for.} M4 records a
         domain for each series and no location, so there are no holidays to
         specify, and its starting dates were withheld from participants during

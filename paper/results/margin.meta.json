@@ -1,5 +1,8 @@
 {
  "commit": "52f2a9543edd88a2ce1c7fb7d9798c278ae4ac16",
+ "derived": {
+  "margin_per_observation": "margin / observations, computed from this file's own columns in place of relative_margin_percent, without refitting (#203)"
+ },
  "grid": [
   20,
   30,

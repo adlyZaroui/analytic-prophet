@@ -253,11 +253,11 @@ def test_the_stall_figure_names_its_quantity_wherever_it_is_quoted():
     """[#147] "17.8% above the optimum" appeared in the README and in
     docs/non-smooth-objective.md with no unit.
 
-    It cannot be `lp__`: the posterior margins quoted on those same pages run
-    from 0.0045% to 0.2442%, so a reader who assumes one scale is out by three
-    orders of magnitude, in the direction that makes the surrounding claims
-    look inconsistent. The quantity is the objective -- the negative log
-    posterior of `y / max|y|`, which is what this module measures.
+    It cannot be `lp__`, which Stan defines only up to an additive constant, so
+    a percentage of it is no quantity at all (#203) -- and a reader who assumes
+    it is reads the surrounding claims on the wrong scale. The quantity is the
+    objective -- the negative log posterior of `y / max|y|`, which is what this
+    module measures.
     """
     from pathlib import Path
 

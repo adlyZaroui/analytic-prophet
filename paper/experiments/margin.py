@@ -76,7 +76,7 @@ GRID = sorted({20, 30, 40, 50, 60, 70, 80, 90, 95, 99, 100, 101, 105, 110, 120,
 
 FIELDS = ["configuration", "observations", "days", "seasonalities", "columns",
           "changepoints", "prophet_algorithm", "ours_algorithm",
-          "lp_prophet", "lp_ours", "margin", "relative_margin_percent",
+          "lp_prophet", "lp_ours", "margin", "margin_per_observation",
           "sigma_obs_prophet", "sigma_obs_ours", "design_gap"]
 
 
@@ -157,7 +157,9 @@ def measure(cell, lib_path):
         "lp_prophet": lp_prophet,
         "lp_ours": lp_ours,
         "margin": margin,
-        "relative_margin_percent": margin / abs(lp_prophet) * 100,
+        # lp__ is defined only up to an additive constant, so the margin is
+        # normalised by the series rather than by lp__ (#203)
+        "margin_per_observation": margin / size,
         "sigma_obs_prophet": float(theirs["sigma_obs"][0]),
         "sigma_obs_ours": float(ours.sigma_obs),
         "design_gap": design_gap,
@@ -183,14 +185,14 @@ def read(path=RESULTS):
     for row in rows:
         for key in ("observations", "days", "columns", "changepoints"):
             row[key] = int(row[key])
-        for key in ("lp_prophet", "lp_ours", "margin", "relative_margin_percent",
+        for key in ("lp_prophet", "lp_ours", "margin", "margin_per_observation",
                     "sigma_obs_prophet", "sigma_obs_ours", "design_gap"):
             row[key] = float(row[key])
     return rows
 
 
 def draw(rows, out=FIGURE):
-    """Absolute and relative margin against T, both configurations.
+    """The margin, and the margin per observation, against T, both configurations.
 
     Log axes on both: T spans two orders of magnitude and the margin three,
     and on linear axes everything below T = 300 is a smudge at the origin. A
@@ -210,7 +212,7 @@ def draw(rows, out=FIGURE):
     matplotlib.rcParams.update({"font.size": 8, "pdf.fonttype": 42})
     figure, axes = plt.subplots(1, 2, figsize=(7.2, 3.0))
     panels = (("margin", "lp$\\_\\_$ margin, ours $-$ Prophet's (nats)"),
-              ("relative_margin_percent", "relative margin (% of Prophet's lp$\\_\\_$)"))
+              ("margin_per_observation", "margin per observation (nats)"))
     for axis, (column, label) in zip(axes, panels):
         for configuration, (colour, marker, name) in style.items():
             cells_ = [row for row in rows if row["configuration"] == configuration]
