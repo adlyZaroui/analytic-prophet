@@ -174,3 +174,54 @@ def test_no_upstream_report_is_put_down_to_the_kink_beyond_the_experiments():
     stalls = _paragraph(text, "Stalls")
     assert r"\cref{sec:evidence:surrogate}" in stalls
     assert (PAPER / "results" / "issue842.csv").exists()
+
+
+# The summary -- abstract, introduction, paper/README.md -- used to claim more
+# than the sections show (#205). Each phrase below said so; none may return.
+OVERCLAIMS = ("consistent with user reports", "user-visible consequences reported",
+              "attribution of long-standing user reports",
+              "the non-smooth directions are removed", "prophet reaches it from none")
+SUMMARY = (PAPER / "main.tex", PAPER / "sections" / "introduction.tex", PAPER / "README.md")
+
+
+def _abstract():
+    text = (PAPER / "main.tex").read_text()
+    return text[text.index(r"\begin{abstract}"):text.index(r"\end{abstract}")]
+
+
+@pytest.mark.parametrize("phrase", OVERCLAIMS)
+def test_the_summary_claims_no_more_than_the_sections_show(phrase):
+    """Contribution 4 read the reports as attributions; contribution 2 said flat
+    growth removes the non-smooth directions, which section 4.6 says it does not;
+    the abstract said Prophet reached the optimum from none of the starts, when
+    Prophet itself cannot hold sigma fixed."""
+    for page in SUMMARY:
+        assert phrase not in _normalise(page.read_text()), f"{page.name}: {phrase!r}"
+
+
+def test_the_summary_counts_the_reports_section_6_reads():
+    """Four reports, read in section 6: it accounts for part of one (prophet#842),
+    plausibly underlies a second (prophet#1280), and explains neither of the
+    others (prophet#1422, prophet#1032)."""
+    consequences = (PAPER / "sections" / "consequences.tex").read_text()
+    assert len(set(re.findall(r"\\prophetissue\{(\d+)\}", consequences))) == 4
+    for page in SUMMARY:
+        text = _normalise(page.read_text())
+        assert "four long-standing" in text, page.name
+        assert "part of one" in text and "plausibly underlies" in text, page.name
+
+
+def test_the_abstract_says_what_ran_the_random_starts():
+    """Prophet cannot hold sigma fixed. What ran was Stan's L-BFGS, with Prophet's
+    settings, on Prophet's program with sigma moved to data (#183)."""
+    sentences = re.split(r"(?<=[.!?])\s", _normalise(_abstract()))
+    sentence = next(s for s in sentences if r"\multitotal" in s)
+    assert "stan's l-bfgs" in sentence and "prophet's settings" in sentence
+    assert "held fixed" in sentence and "prophet's program" in sentence
+
+
+def test_flat_growth_is_described_as_section_4_6_describes_it():
+    introduction = _normalise((PAPER / "sections" / "introduction.tex").read_text())
+    assert "fit the same model" in introduction
+    evidence = _normalise((PAPER / "sections" / "evidence.tex").read_text())
+    assert "does \\emph{not} isolate the kink" in evidence

@@ -31,10 +31,11 @@ interface between the two reports that it has not.
 \paragraph{What this paper claims.}
 Prophet specifies a posterior whose optimum sits on a non-differentiable set,
 delegates its optimization to solvers designed for smooth objectives, and
-consequently does not solve the problem it specifies. This is diagnosable, has
-user-visible consequences reported in Prophet's issue tracker for several years,
-and is removable by an exact reformulation; we report its consequences for the
-optimum and for predictive performance.
+consequently does not solve the problem it specifies. This is diagnosable and
+removable by an exact reformulation, and it accounts for part of one long-standing
+report in Prophet's issue tracker and plausibly underlies another
+(\cref{sec:consequences}); we report its consequences for the optimum and for
+predictive performance.
 
 \paragraph{What it does not claim.}
 That L-BFGS is ill-suited to an $\ell_1$-penalised objective is well known:
@@ -47,12 +48,14 @@ think, more useful for being stated precisely:
 \begin{enumerate}
   \item the diagnosis of the phenomenon in a specific, heavily deployed system;
   \item controls that isolate the mechanism rather than merely exhibit a gap ---
-        smoothing the prior inside Prophet's own Stan model, running one
-        second-order method on two parameterisations, and a negative control in
-        which the non-smooth directions are removed;
+        smoothing the prior inside Prophet's own Stan model, and running one
+        second-order method on two parameterisations --- and a negative control
+        under flat growth, which shows that the two implementations fit the same
+        model;
   \item an exact fix; and
-  \item the attribution of long-standing user reports to it, each cited for what
-        it shows rather than for what would be convenient.
+  \item a reading of four long-standing user reports against the mechanism, each
+        cited for what its thread shows: it accounts for part of one, plausibly
+        underlies a second, and explains neither of the others.
 \end{enumerate}
 
 \paragraph{The size of it.}

@@ -5,10 +5,10 @@ mechanism, controls and a fix.
 
 > Prophet specifies a posterior whose optimum sits on a non-differentiable set,
 > delegates optimization to solvers designed for smooth objectives, and
-> consequently does not solve the problem it specifies. This is diagnosable, has
-> user-visible consequences reported in the issue tracker for years, is removable
-> by an exact reformulation, and the consequences on the optimum and predictive
-> performance are discussed here.
+> consequently does not solve the problem it specifies. This is diagnosable and
+> removable by an exact reformulation; of four long-standing reports in the issue
+> tracker it accounts for part of one and plausibly underlies a second; and its
+> consequences for the optimum and for predictive performance are discussed here.
 
 The forecast-accuracy results corroborate that the gap matters a little in
 practice; they are not the thesis.
