@@ -407,8 +407,8 @@ def stall():
         "StallStarts": f"{sum(count for _, count in optima)}",
         "StallOptima": _word(len(optima)),
         "StallBestReach": f"{optima[0][1]}",
-        "StallOursShort": f"{value('ours default', 'shortfall'):.2f}",
-        "StallOursEigen": f"{value('ours default', 'min_eigenvalue'):.2f}",
+        # #193: the saddles this implementation's default Newton path stepped off
+        "StallOursEscapes": _word(int(points["ours default"]["saddle_escapes"])),
         "StallVariants": _word(len(lbfgs)),
         "StallVariantShortMin": f"{min(float(r['shortfall']) for r in lbfgs):.3f}",
         "StallVariantShortMax": f"{max(float(r['shortfall']) for r in lbfgs):.2f}",

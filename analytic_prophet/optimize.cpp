@@ -545,6 +545,14 @@ namespace stan_convergence {
     constexpr int HISTORY_SIZE = 5;                 // history_size
 }
 
+// newton() checks where it stopped for a saddle (#193). The reasons and the
+// measurements behind both numbers are with their twins, SADDLE_TOLERANCE and
+// MAX_SADDLE_ESCAPES in analytic_prophet/optimizer.py.
+namespace newton_saddle {
+    constexpr double TOLERANCE = 1e-6;    // of the largest |eigenvalue|
+    constexpr int MAX_ESCAPES = 10;
+}
+
 
 // The Laplace prior puts |delta|/changepoint_prior_scale in the objective, which is not
 // differentiable at delta = 0 -- and that is where the optimum sits, since the
@@ -675,6 +683,7 @@ struct OptimizeResult {
     int n_iterations;
     int status;
     std::string status_message;
+    int saddle_escapes = 0;   // newton() only (#193)
 };
 
 // Central differences of the *analytic* gradient, symmetrized: accurate to
@@ -779,113 +788,210 @@ OptimizeResult newton(Eigen::VectorXd params,
         objective(local, grad);
     };
 
-    double lambda = 1e-6;
-    int iteration = 0;
-    std::string message = "converged";
-    int status = 0;
-
-    for (; iteration < stan_convergence::MAX_ITERATIONS; ++iteration) {
-        // Projected gradient: a bounded coordinate sitting at its bound and
-        // pushed further into it is already as good as it gets, so it does not
-        // count toward stationarity and is held out of the Newton system.
-        Eigen::VectorXd projected = gradient;
+    // The free coordinates' most negative curvature at `point`, as a
+    // full-length unit direction; empty where there is none (#193). Free is the
+    // active-set rule below: a rate pinned at zero is left out, because the
+    // smooth part can curve downwards along it while the L1 term's kink makes
+    // the point a minimum. Python twin: negative_curvature().
+    auto negative_curvature = [&](const Eigen::VectorXd& point, const Eigen::VectorXd& grad) {
         std::vector<int> free_indices;
         for (int i = 0; i < n; ++i) {
-            const bool pinned = at_lower_bound(i) && z(i) <= 0.0 && gradient(i) > 0.0;
-            if (pinned) {
-                projected(i) = 0.0;
-            } else {
+            const bool pinned = at_lower_bound(i) && point(i) <= 0.0 && grad(i) > 0.0;
+            if (!pinned) {
                 free_indices.push_back(i);
             }
         }
-        if (projected.cwiseAbs().maxCoeff() < stan_convergence::TOL_ABS_GRAD) {
-            break;
-        }
-
-        const Eigen::MatrixXd hessian = finite_difference_hessian(z, smooth);
+        Eigen::VectorXd direction;
         const int free_count = static_cast<int>(free_indices.size());
+        if (free_count == 0) {
+            return direction;
+        }
+        const Eigen::MatrixXd hessian = finite_difference_hessian(point, smooth);
         Eigen::MatrixXd free_hessian(free_count, free_count);
-        Eigen::VectorXd free_gradient(free_count);
         for (int a = 0; a < free_count; ++a) {
-            free_gradient(a) = gradient(free_indices[a]);
             for (int b = 0; b < free_count; ++b) {
                 free_hessian(a, b) = hessian(free_indices[a], free_indices[b]);
             }
         }
+        const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(free_hessian);
+        const Eigen::VectorXd& values = solver.eigenvalues();   // ascending
+        if (values(0) >= -newton_saddle::TOLERANCE * values.cwiseAbs().maxCoeff()) {
+            return direction;
+        }
+        direction = Eigen::VectorXd::Zero(n);
+        for (int a = 0; a < free_count; ++a) {
+            direction(free_indices[a]) = solver.eigenvectors()(a, 0);
+        }
+        return direction;
+    };
 
-        double trial_value = value;
-        Eigen::VectorXd trial_point = z, trial_gradient(n);
-        bool improved = false;
+    // One step along +/-`direction` from z: halving from unit length until
+    // either sign lowers the objective, then the lower of the two -- the
+    // eigenvector's sign is arbitrary. Python twin: leave_saddle().
+    auto leave_saddle = [&](const Eigen::VectorXd& from, double from_value,
+                            const Eigen::VectorXd& direction, Eigen::VectorXd& point_out,
+                            double& value_out, Eigen::VectorXd& gradient_out) {
         double alpha = 1.0;
-        for (int attempt = 0; attempt < 40 && !improved; ++attempt) {
-            Eigen::MatrixXd damped = free_hessian;
-            damped.diagonal().array() += lambda;
-            const Eigen::VectorXd free_step = damped.ldlt().solve(-free_gradient);
-
-            Eigen::VectorXd step = Eigen::VectorXd::Zero(n);
-            for (int a = 0; a < free_count; ++a) {
-                step(free_indices[a]) = free_step(a);
+        Eigen::VectorXd trial(n), trial_gradient(n);
+        for (int attempt = 0; attempt < 40; ++attempt) {
+            bool found = false;
+            for (const double sign : {1.0, -1.0}) {
+                trial = from + sign * alpha * direction;
+                for (int i = 0; i < n; ++i) {
+                    if (at_lower_bound(i)) {
+                        trial(i) = std::max(trial(i), 0.0);
+                    }
+                }
+                const double trial_value = objective(trial, trial_gradient);
+                if (std::isfinite(trial_value) && trial_value < from_value &&
+                    (!found || trial_value < value_out)) {
+                    found = true;
+                    point_out = trial;
+                    value_out = trial_value;
+                    gradient_out = trial_gradient;
+                }
             }
-            if (step.allFinite()) {
-                alpha = 1.0;
-                for (int backtrack = 0; backtrack < 30; ++backtrack) {
-                    trial_point = z + alpha * step;
-                    for (int i = 0; i < n; ++i) {
-                        if (at_lower_bound(i)) {
-                            trial_point(i) = std::max(trial_point(i), 0.0);
+            if (found) {
+                return true;
+            }
+            alpha *= 0.5;
+        }
+        return false;
+    };
+
+    double lambda = 1e-6;
+    int iteration = 0;
+    std::string message = "converged";
+    int status = 0;
+    int escapes = 0;
+
+    while (true) {
+        for (; iteration < stan_convergence::MAX_ITERATIONS; ++iteration) {
+            // Projected gradient: a bounded coordinate sitting at its bound and
+            // pushed further into it is already as good as it gets, so it does not
+            // count toward stationarity and is held out of the Newton system.
+            Eigen::VectorXd projected = gradient;
+            std::vector<int> free_indices;
+            for (int i = 0; i < n; ++i) {
+                const bool pinned = at_lower_bound(i) && z(i) <= 0.0 && gradient(i) > 0.0;
+                if (pinned) {
+                    projected(i) = 0.0;
+                } else {
+                    free_indices.push_back(i);
+                }
+            }
+            if (projected.cwiseAbs().maxCoeff() < stan_convergence::TOL_ABS_GRAD) {
+                break;
+            }
+
+            const Eigen::MatrixXd hessian = finite_difference_hessian(z, smooth);
+            const int free_count = static_cast<int>(free_indices.size());
+            Eigen::MatrixXd free_hessian(free_count, free_count);
+            Eigen::VectorXd free_gradient(free_count);
+            for (int a = 0; a < free_count; ++a) {
+                free_gradient(a) = gradient(free_indices[a]);
+                for (int b = 0; b < free_count; ++b) {
+                    free_hessian(a, b) = hessian(free_indices[a], free_indices[b]);
+                }
+            }
+
+            double trial_value = value;
+            Eigen::VectorXd trial_point = z, trial_gradient(n);
+            bool improved = false;
+            double alpha = 1.0;
+            for (int attempt = 0; attempt < 40 && !improved; ++attempt) {
+                Eigen::MatrixXd damped = free_hessian;
+                damped.diagonal().array() += lambda;
+                const Eigen::VectorXd free_step = damped.ldlt().solve(-free_gradient);
+
+                Eigen::VectorXd step = Eigen::VectorXd::Zero(n);
+                for (int a = 0; a < free_count; ++a) {
+                    step(free_indices[a]) = free_step(a);
+                }
+                if (step.allFinite()) {
+                    alpha = 1.0;
+                    for (int backtrack = 0; backtrack < 30; ++backtrack) {
+                        trial_point = z + alpha * step;
+                        for (int i = 0; i < n; ++i) {
+                            if (at_lower_bound(i)) {
+                                trial_point(i) = std::max(trial_point(i), 0.0);
+                            }
                         }
+                        trial_value = objective(trial_point, trial_gradient);
+                        if (std::isfinite(trial_value) && trial_value < value) {
+                            improved = true;
+                            break;
+                        }
+                        alpha *= 0.5;
                     }
-                    trial_value = objective(trial_point, trial_gradient);
-                    if (std::isfinite(trial_value) && trial_value < value) {
-                        improved = true;
-                        break;
-                    }
-                    alpha *= 0.5;
+                }
+                if (!improved) {
+                    lambda *= 10.0;
                 }
             }
             if (!improved) {
-                lambda *= 10.0;
+                message = "no further progress";
+                break;
+            }
+            // Levenberg, coupled to the line search rather than to success alone: a
+            // step that had to be backtracked is a step the quadratic model was
+            // trusted too far on, so the damping goes up even though the step was
+            // accepted. Without it the full step is rejected almost every iteration
+            // and the run crawls -- measured on the Python twin at T=50, a median
+            // of 14 backtracks and 658 iterations against 44 with this rule.
+            lambda = alpha < 1.0 ? lambda * 10.0 : std::max(lambda * 0.2, 1e-14);
+
+            // [fc] Stan stops as soon as ANY of its tests holds.
+            const double scale = std::max({std::abs(value), std::abs(trial_value), 1.0});
+            const double objective_change = value - trial_value;
+            const double parameter_change = (trial_point - z).cwiseAbs().maxCoeff();
+            const bool converged =
+                objective_change < stan_convergence::TOL_ABS_F ||
+                objective_change / scale < stan_convergence::TOL_REL_F * stan_convergence::EPS ||
+                parameter_change < stan_convergence::TOL_ABS_X;
+
+            z = trial_point;
+            value = trial_value;
+            gradient = trial_gradient;
+            loss_trace.push_back(value);
+            if (converged) {
+                break;
             }
         }
-        if (!improved) {
-            message = "no further progress";
+
+        if (iteration >= stan_convergence::MAX_ITERATIONS) {
+            status = -2;
+            message = "reached the iteration cap without converging";
+        }
+
+        // Where the run stopped: a minimum, or a saddle to leave (#193).
+        if (status != 0 || escapes >= newton_saddle::MAX_ESCAPES) {
             break;
         }
-        // Levenberg, coupled to the line search rather than to success alone: a
-        // step that had to be backtracked is a step the quadratic model was
-        // trusted too far on, so the damping goes up even though the step was
-        // accepted. Without it the full step is rejected almost every iteration
-        // and the run crawls -- measured on the Python twin at T=50, a median
-        // of 14 backtracks and 658 iterations against 44 with this rule.
-        lambda = alpha < 1.0 ? lambda * 10.0 : std::max(lambda * 0.2, 1e-14);
-
-        // [fc] Stan stops as soon as ANY of its tests holds.
-        const double scale = std::max({std::abs(value), std::abs(trial_value), 1.0});
-        const double objective_change = value - trial_value;
-        const double parameter_change = (trial_point - z).cwiseAbs().maxCoeff();
-        const bool converged =
-            objective_change < stan_convergence::TOL_ABS_F ||
-            objective_change / scale < stan_convergence::TOL_REL_F * stan_convergence::EPS ||
-            parameter_change < stan_convergence::TOL_ABS_X;
-
-        z = trial_point;
-        value = trial_value;
-        gradient = trial_gradient;
+        const Eigen::VectorXd direction = negative_curvature(z, gradient);
+        if (direction.size() == 0) {
+            break;
+        }
+        Eigen::VectorXd left(n), left_gradient(n);
+        double left_value = value;
+        if (!leave_saddle(z, value, direction, left, left_value, left_gradient)) {
+            break;
+        }
+        z = left;
+        value = left_value;
+        gradient = left_gradient;
         loss_trace.push_back(value);
-        if (converged) {
-            break;
-        }
+        ++escapes;
+        lambda = 1e-6;
+        message = "converged";
     }
 
-    if (iteration >= stan_convergence::MAX_ITERATIONS) {
-        status = -2;
-        message = "reached the iteration cap without converging";
-    }
     if (verbose) {
         std::cout << "newton: " << message << " after " << iteration
-                  << " iterations, f = " << value << std::endl;
+                  << " iterations and " << escapes << " saddle escapes, f = "
+                  << value << std::endl;
     }
-    return {objective.to_natural(z), loss_trace, iteration, status, message};
+    return {objective.to_natural(z), loss_trace, iteration, status, message, escapes};
 }
 
 OptimizeResult optimize(Eigen::VectorXd params,
@@ -1072,6 +1178,9 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
                       "Raw liblbfgs status code; 0 is LBFGS_SUCCESS.")
         .def_readonly("status_message", &OptimizeResult::status_message,
                       "Human-readable form of `status`.")
+        .def_readonly("saddle_escapes", &OptimizeResult::saddle_escapes,
+                      "How many saddle points newton() stopped at and stepped off "
+                      "(#193); always 0 from optimize().")
         .def("__repr__", [](const OptimizeResult& r) {
             return "<OptimizeResult status=" + std::to_string(r.status) +
                    " (" + r.status_message + ") n_iterations=" +

@@ -67,14 +67,16 @@ iterations, Newton comes within $\StallVariantNewtonMax$, and no fit takes longe
 \StallSecondsMax{} seconds. The workaround \prophetissue{842} produced is what keeps
 short series on the optimum today.
 
-This implementation does not do better here by default. The model is not convex ---
-\StallStarts{} random starts reach \StallOptima{} distinct local optima, \StallBestReach{}
-of them the best --- and its own default rule, which follows Prophet's to Newton, stops
-at a saddle point: stationary, but with curvature $\StallOursEigen$ along one
-direction, \StallOursShort{} nats below the optimum that its L-BFGS reaches. From the
-same starting point Stan's Newton, which reflects negative eigenvalues of the Hessian,
-reaches the optimum; this implementation's adds damping to the Hessian instead, and
-stops at the saddle.
+This implementation reaches the same optimum by its default rule, though not by the
+same route. The model is not convex --- \StallStarts{} random starts reach \StallOptima{}
+distinct local optima, \StallBestReach{} of them the best --- and the default rule, which
+follows Prophet's to Newton, meets a saddle point on the way. Stan's Newton reflects
+negative eigenvalues of the Hessian, so a saddle repels it. This implementation's damps
+the Hessian instead, which leaves the steps of a convex fit as they were but can stop at
+a saddle; so where it stops, it checks the curvature over the coordinates it is free to
+move, and along a direction of negative curvature it steps off and continues
+(\projectissue{193}). On this reproducer it meets \StallOursEscapes{} saddle point,
+steps off it, and ends at the optimum.
 
 \paragraph{Non-finite log-probabilities under logistic growth.}
 Issue~\prophetissue{1032}, opened by a maintainer, records a series under logistic

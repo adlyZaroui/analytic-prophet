@@ -5,7 +5,8 @@ Issue #172: the prophet#842 reproducer, rerun on current software.
 on current Prophet, on this implementation, and on the smoothed program. The
 paper states the outcome in words -- it no longer stalls, the kink stops
 L-BFGS, the flat direction prices the stop, and this implementation's own
-Newton path ends at a saddle. Checked here:
+Newton path meets a saddle and steps off it (#193; it used to stop there).
+Checked here:
 
   * **the port is exact** -- the regressor parsed from the thread's own
     twenty-digit literals, the dates, the values;
@@ -99,14 +100,19 @@ def test_the_shortfall_lies_along_the_softest_direction(points):
     assert eigenvalues[0] > 0 and eigenvalues[-1] / eigenvalues[0] > 50
 
 
-def test_the_model_is_not_convex_and_our_default_stops_at_a_saddle(points):
+def test_the_model_is_not_convex_and_our_default_steps_off_the_saddle_it_meets(points):
+    """#193 inverted this test. The default rule used to stop at a saddle here,
+    3.22 nats short with curvature -4.74 along one direction; it now checks
+    where it stops, steps off along the negative curvature, and ends at the
+    optimum. The paper says it meets one saddle point."""
     summary = json.loads((RESULTS / "issue842.meta.json").read_text())["summary"]
     assert len(summary["local_optima"]) >= 2
     ours = points["ours default"]
     assert ours["algorithm"] == "Newton"
-    assert float(ours["min_eigenvalue"]) < 0                # a direction of negative curvature
-    assert float(ours["residual_relaxed"]) < 1e-2           # and stationary: a saddle
-    assert float(ours["shortfall"]) > 1.0
+    assert int(ours["saddle_escapes"]) == 1                 # "it meets one saddle point"
+    assert float(ours["shortfall"]) < 1e-6                  # and ends at the optimum,
+    assert float(ours["min_eigenvalue"]) > 0                # a minimum, not a saddle
+    assert int(points["ours LBFGS"]["saddle_escapes"]) == 0
     assert float(points["ours LBFGS"]["shortfall"]) < 1e-6
     assert float(points["prophet Newton"]["min_eigenvalue"]) > 0
 
