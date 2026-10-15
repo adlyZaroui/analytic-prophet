@@ -116,8 +116,10 @@ def test_every_length_has_every_arm(rows):
 
 
 def test_the_split_arm_is_the_shipped_fit(rows):
-    """Same code, same start: the split arm lands exactly where
-    fit(backend="python", algorithm="Newton") does, at every length."""
+    """Same code, same start: the split arm lands on the optimum
+    fit(backend="python", algorithm="Newton") reaches, to 1e-9, at every
+    length. fit() takes its steps in log(sigma_obs) since #229 and the arms in
+    sigma_obs, so the last bits differ and the point does not."""
     assert all(row["matches_shipped"] == "True" for row in _arm(rows, "split"))
 
 

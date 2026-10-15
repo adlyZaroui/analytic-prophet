@@ -325,7 +325,9 @@ T = 50 to 2905:
 It oscillates across the kink at `delta = 0`, crawls, and then *declares convergence* — it
 does not need the iteration budget to fail. On the split reformulation, where the L1 term
 is linear and its curvature is exactly zero rather than undefined, the same code reaches
-the optimum and lands exactly where `fit(backend="python", algorithm="Newton")` does.
+the optimum and lands where `fit(backend="python", algorithm="Newton")` does — the same
+point to 1e-9, though `fit()` has taken its Newton steps in `log(sigma_obs)` since
+[#229](https://github.com/adlyZaroui/analytic-prophet/issues/229).
 
 That is the [central claim](#prophets-optimizer-stops-short-on-this-objective) measured
 from the other side: one second-order method with an exact gradient, varying only how the
