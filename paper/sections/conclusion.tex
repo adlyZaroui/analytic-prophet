@@ -1,0 +1,15 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+Prophet's MAP estimate is not the posterior mode. The Laplace prior on the
+changepoint rates puts the optimum where the objective is not differentiable, and the
+L-BFGS and Newton methods Prophet takes from Stan, built for smooth objectives, stop
+short of it without reporting that they have. The evidence isolates the kink as the
+cause. Smoothing the prior inside Prophet's own program, with nothing else changed,
+brings Stan's L-BFGS between \SmoothFactorLong{} and \SmoothFactorShort{} times
+closer, and one Newton code reaches the optimum on the split parameterisation and not
+on the natural one. Splitting each rate into non-negative parts is an exact fix that
+reaches the optimum's exact zeros, and it can be applied from outside Prophet's Stan
+model, which need not change. On the held-out M4 census the corrected optimum
+forecasts better on \RmseWinRate\% of the series, by a median of \RmseAdvantage\% in
+RMSE: the defect is real, and its cost to forecast accuracy is usually small.

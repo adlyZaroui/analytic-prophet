@@ -1,0 +1,61 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{What a Prophet user can do today.}
+Prophet already ships the method that comes closest. Passing
+\code{algorithm="Newton"} to \code{fit} runs Stan's Newton method at any length, and
+on the Peyton Manning series it stops between \NewtonStanMin{} and \NewtonStanMax{}
+nats short of the optimum (\cref{sec:evidence:newton}). We ran it on the
+\NewtonCensusSeries{} census series drawn at random for \cref{sec:evidence:kkt}
+(\code{paper/experiments/newton_census.py}). There, Prophet's default L-BFGS stops a
+median of \NewtonCensusLbfgsMedian{} nats short of the corrected optimum, and its
+Newton method \NewtonCensusNewtonMedian, closer on every one of them, at a median of
+\NewtonCensusTimeRatio{} times the time a fit takes. On \NewtonCensusAbove{} series it
+even scores above the corrected optimum, by at most \NewtonCensusAboveMax{} nats: the
+corrected optimum is this implementation's L-BFGS-B at its stopping tolerance, not
+exact (\cref{sec:evidence:kkt}). Nor is Prophet's Newton the optimum: no rate comes
+out exactly zero, and its relaxed residual has a median of
+\NewtonCensusRelaxedMedian. Tighter tolerances are not a remedy. With all five of
+L-BFGS's stopping tests at machine precision the gap remains
+(\cref{sec:evidence:lp}), and where that makes the line search fail, Prophet's
+fall-back to Newton passes the same tolerances on, cmdstanpy rejects them for Newton,
+and the fit raises an error.
+
+\paragraph{Adopting the fix with Prophet's Stan model frozen.}
+Prophet's 2023 update says that ``at this moment we do not plan to make any more
+changes to the underlying Stan model'' \citep{duong2023prophet}. The fix does not
+need it to. A step outside Stan can start where Prophet's optimizer stops and solve
+the split problem of \cref{sec:reformulation} with nothing but the frozen program's
+own gradient. Stan's gradient of $\lp$ in $\delta_j$ is minus the smooth part's,
+minus $\operatorname{sign}(\delta_j)/\tau$ with $\operatorname{sign}(0) = 0$
+(\cref{sec:evidence:kkt}), so the smooth part's gradient is recovered exactly by
+taking the prior's known term back out. We ran that step: SciPy's L-BFGS-B on the split
+problem, started from Prophet's own solution, with every objective and gradient taken
+from cmdstanpy's \code{log_prob} of Prophet's unmodified program
+(\code{paper/experiments/polish.py}). At each of the lengths of \cref{sec:evidence:lp}
+it ends at the corrected optimum or just above it --- by at most $\FrozenAboveMax$
+nats, its tolerance being tighter than this implementation's default --- with as many
+rates exactly zero as the optimum has, in \FrozenCallsMin{} to \FrozenCallsMax{} calls
+of \code{log_prob}. Through cmdstanpy each call is a CmdStan subprocess, and the step takes
+\FrozenSecondsMin{} to \FrozenSecondsMax{} seconds; BridgeStan evaluates the same
+gradient in memory \citep{roualdes2023bridgestan}. The alternatives inside Stan do not
+reach the optimum as they stand: neither smooth reparametrisation of
+\cref{sec:related} does on Stan's own L-BFGS, and the split stated in Stan cannot
+reach a zero (\cref{sec:implementation}).
+
+\paragraph{How far the result reaches.}
+Nothing in the mechanism is particular to Prophet. A Stan program fitted with
+\code{optimize} whose density contains the absolute value of a parameter, through
+\code{double_exponential} as Prophet's does or through an explicit \code{abs}, puts
+the same kink in front of the same optimizers. How short they stop depends, as here,
+on how many coordinates its optimum sets to zero (\cref{sec:evidence:surrogate}), and
+no program but Prophet's is measured in this paper. Prophet's R package fits the same
+program the same way. In version \EnvProphet{} of Prophet's repository its Stan file
+differs from the Python package's only in blank lines, and it is optimized by L-BFGS,
+by Newton below 100 observations, with the same fall-back to Newton.
+
+\paragraph{What is out of scope.}
+Everything here concerns the MAP estimate. With \code{mcmc_samples} above zero,
+Prophet samples the posterior with Stan's No-U-Turn sampler instead of optimizing it,
+and a posterior mean is an average of draws, which is never exactly sparse. Nothing
+in this paper is a claim about sampling.

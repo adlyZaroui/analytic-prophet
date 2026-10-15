@@ -664,12 +664,46 @@ def inside_stan():
     }
 
 
+def newton_census():
+    """#208: Prophet's own Newton on the census sample, beside its L-BFGS."""
+    rows = list(csv.DictReader(open(PAPER_RESULTS / "newton_census.csv")))
+    ran = [row for row in rows if not row["newton_error"]]
+
+    def values(name):
+        return [float(row[name]) for row in ran]
+
+    above = [-value for value in values("shortfall_newton") if value < 0]
+    ratio = [float(row["seconds_newton"]) / float(row["seconds_lbfgs"]) for row in ran]
+    return {
+        "NewtonCensusSeries": f"{len(rows)}",
+        "NewtonCensusLbfgsMedian": f"{statistics.median(values('shortfall_lbfgs')):.1f}",
+        "NewtonCensusNewtonMedian": f"{statistics.median(values('shortfall_newton')):.2g}",
+        "NewtonCensusRelaxedMedian": f"{statistics.median(values('relaxed_newton')):.2g}",
+        "NewtonCensusAbove": f"{len(above)}",
+        "NewtonCensusAboveMax": f"{max(above, default=0.0):.2g}",
+        "NewtonCensusTimeRatio": f"{statistics.median(ratio):.0f}",
+    }
+
+
+def frozen():
+    """#208: the split problem solved from outside Stan, through log_prob alone."""
+    rows = list(csv.DictReader(open(PAPER_RESULTS / "polish.csv")))
+    calls = [int(row["calls"]) for row in rows]
+    seconds = [float(row["seconds"]) for row in rows]
+    return {
+        # it ends at or above the corrected optimum, its tolerance being tighter
+        "FrozenAboveMax": _scientific(max(-float(row["shortfall_polished"]) for row in rows)),
+        "FrozenCallsMin": f"{min(calls):,}", "FrozenCallsMax": f"{max(calls):,}",
+        "FrozenSecondsMin": f"{min(seconds):.0f}", "FrozenSecondsMax": f"{max(seconds):.0f}",
+    }
+
+
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
     return {**census(), **posterior(), **certificate(), **margin(), **newton(),
             **limitations(), **smoothing(), **stall(), **tau_path(), **multistart(),
             **flat(), **rounding(), **tolerance(), **strength(), **environment(),
-            **inside_stan()}
+            **inside_stan(), **newton_census(), **frozen()}
 
 
 def render(values):

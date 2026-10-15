@@ -7,8 +7,9 @@ before defining them, and "this implementation" first appeared in a figure
 caption. Checked here:
 
   * **the order** -- introduction, model, why smooth optimizers fail, the fix,
-    the evidence, consequences, limitations, related work, reproducibility,
-    and the forecast protocol as an appendix;
+    the evidence, consequences, discussion (#208), limitations, related work,
+    conclusion (#208), reproducibility, and the forecast protocol as an
+    appendix;
   * **every term is defined before its first use**, read in that order: the
     terms the evidence leans on, the units and names it quotes in, and the
     error measures the forecast comparison reports;
@@ -29,7 +30,7 @@ PAPER = REPO / "paper"
 SECTIONS = PAPER / "sections"
 
 ORDER = ["introduction", "model", "smooth", "reformulation", "evidence", "consequences",
-         "limitations", "related", "reproducibility"]
+         "discussion", "limitations", "related", "conclusion", "reproducibility"]
 APPENDICES = ["appendix_forecast"]
 
 
