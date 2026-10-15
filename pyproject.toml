@@ -4,20 +4,30 @@
 # extension is optional -- a build without a compiler, Eigen or LBFGSpp still
 # produces an installable package, and the core is compiled on first use as it
 # always was (#108).
-requires = ["setuptools>=61", "pybind11>=2.10"]
+#
+# setuptools 77 is the first with `project.license-files` and a `license` that
+# is an SPDX expression (PEP 639), which [project] below uses (#219). Below it
+# the build would fail on that table rather than fall back to something else.
+requires = ["setuptools>=77", "pybind11>=2.10"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "analytic-prophet"
 description = "Facebook Prophet's fitting engine with a hand-derived analytic gradient in place of Stan's automatic differentiation"
 readme = "README.md"
-license = { file = "LICENSE" }
+# PEP 639 (#219): an SPDX expression and the files that carry the terms. Both
+# are MIT; LICENSE-PROPHET is Prophet's, for the code derived from it (#199).
+# Explicit patterns must match, so a build missing either file fails instead of
+# shipping without it -- the default globs used to pick LICENSE-PROPHET up
+# silently. The `License ::` classifier is gone because setuptools refuses one
+# beside an expression; the expression is what tools read now.
+license = "MIT"
+license-files = ["LICENSE", "LICENSE-PROPHET"]
 authors = [{ name = "Adly Zaroui" }]
 keywords = ["forecasting", "time-series", "prophet", "optimization"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: C++",
     "Topic :: Scientific/Engineering :: Mathematics",

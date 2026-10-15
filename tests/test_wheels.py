@@ -204,8 +204,8 @@ def test_prophets_licence_is_committed_as_prophet_ships_it():
 
 def test_prophets_licence_reaches_every_distribution(pyproject, release):
     """Three routes: the sdist (MANIFEST.in), every wheel's metadata
-    (setuptools' default licence globs, which a `license = {file = ...}` table
-    leaves in force), and the release wheels' licences/ directory."""
+    (`license-files` since #219, which names it; before that, setuptools'
+    default licence globs), and the release wheels' licences/ directory."""
     import fnmatch
 
     assert "include LICENSE-PROPHET" in (REPO / "MANIFEST.in").read_text().splitlines()
@@ -224,6 +224,23 @@ def test_prophets_licence_reaches_every_distribution(pyproject, release):
     shell = " ".join(step.get("run", "") for step in release["jobs"]["verify"]["steps"])
     for wanted in ('"licences/LICENSE.prophet"', '"LICENSE-PROPHET"'):
         assert wanted in shell, f"the release does not check the wheels for {wanted}"
+
+
+def test_the_licence_is_declared_as_pep_639_asks(pyproject):
+    """#219: setuptools deprecated `license = {file = ...}`, due 2027-02-18,
+    and the release builds use whatever setuptools is newest. An SPDX
+    expression replaces it, with the files named, and the `License ::`
+    classifier goes because setuptools refuses one beside an expression."""
+    project = pyproject["project"]
+    assert project["license"] == "MIT"
+    assert project["license-files"] == ["LICENSE", "LICENSE-PROPHET"]
+    for name in project["license-files"]:
+        # an explicit pattern must match, so a missing file fails the build
+        assert (REPO / name).is_file(), name
+    assert not [c for c in project["classifiers"] if c.startswith("License ::")]
+    # the first setuptools that reads `license-files` and an SPDX `license`
+    requires = pyproject["build-system"]["requires"]
+    assert [r for r in requires if r.startswith("setuptools")] == ["setuptools>=77"]
 
 
 def test_the_collector_ships_prophets_licence_and_names_what_derives_from_it(
