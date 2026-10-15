@@ -23,7 +23,10 @@ specifies is
   \label{eq:objective}
 \end{equation}
 with $\theta = (k, m, \delta, \beta, \sigma)$ and $\tau$ the
-\code{changepoint_prior_scale}, $0.05$ by default.
+\code{changepoint_prior_scale}, $0.05$ by default. Unless it says otherwise, this
+paper fits Prophet's \emph{default configuration}: linear growth, the additive
+seasonal terms Prophet selects from the span and spacing of the history, 25
+changepoints and $\tau = 0.05$.
 
 Every term of \eqref{eq:objective} is smooth except one. The Laplace prior
 contributes $\tau^{-1}\sum_j \lvert\delta_j\rvert$, whose derivative in $\delta_j$
@@ -33,9 +36,11 @@ kink along each coordinate hyperplane $\{\delta_j = 0\}$.
 That would be harmless if optima avoided those hyperplanes. They do not. The
 Laplace prior is chosen so that most changepoints contribute nothing, and a
 minimiser of \eqref{eq:objective} with $\tau = 0.05$ typically has many
-$\delta_j = 0$ exactly: on the full Peyton Manning series the optimum has
-\KktZerosPeyton{} of its 25 rates at zero, and across the census of
-\cref{sec:consequences} a median of \KktZerosCensusMedian. Prophet's solutions have
+$\delta_j = 0$ exactly. On the full \emph{Peyton Manning series}, the example of
+Prophet's documentation --- the logarithm of a Wikipedia article's daily page views,
+$T = 2905$ observations --- the optimum has \KktZerosPeyton{} of its 25 rates at zero,
+and across the census of \cref{sec:consequences} a median of
+\KktZerosCensusMedian. Prophet's solutions have
 none, on any of the \KktSeries{} series.
 The optimum lies on the non-differentiable set by design.
 

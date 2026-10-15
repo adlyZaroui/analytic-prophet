@@ -9,9 +9,15 @@ they are current). What is checked here is the rest of the issue's acceptance:
     figure they quote the same one, and where the paper adds one it is the
     harsher (the census-wide worst case beside the showcase pool's);
   * **the sentences that are typed, not generated, are true of the data** --
-    "ours is the longer" tail, "about a third", "the cost of calling CmdStan",
-    "the rest is Stan's Newton", M4 recording "no location";
+    "ours is the longer" tail, "about a third", M4 recording "no location";
   * **no number is typed into the section** beyond the fixed ones it names.
+
+#204 cut the item on speed, "the speed difference is mostly not the gradient":
+the paper makes no claim about speed, so it needs no caveat about it. The
+measurement behind it stays (`paper/experiments/overhead.py`), because the
+README's cost section quotes it, and so do the two tests that hold its typed
+sentences to the data -- "the cost of calling CmdStan" from T = 100 up, and
+Stan's Newton method below it -- which now guard the README's wording.
 """
 import csv
 import importlib.util
@@ -38,12 +44,13 @@ def macros():
 
 def test_no_number_is_typed_into_the_section():
     """Every figure is a macro. The only literals allowed are the ones the
-    section names rather than measures: the nominal 80%, Prophet's T = 100
-    rule, and the two lengths that bound Tier 0's range."""
+    section names rather than measures: the nominal 80%, and the two lengths
+    that bound Tier 0's range. Prophet's T = 100 rule left with the item on
+    speed (#204)."""
     text = re.sub(r"\\(?:prophet|project)issue\{\d+\}", " ", SECTION.read_text())
     text = re.sub(r"\\[A-Za-z]+", " ", text)
     literals = set(re.findall(r"(?<![\w.])\d[\d,.]*", text))
-    assert literals <= {"80", "100", "300", "2905"}, sorted(literals)
+    assert literals <= {"80", "300", "2905"}, sorted(literals)
 
 
 def test_where_the_readme_quotes_a_figure_the_paper_quotes_the_same(macros):
@@ -86,11 +93,12 @@ def _overhead():
 
 
 def test_above_t_100_the_advantage_is_the_cost_of_calling_cmdstan():
-    """'without it Prophet's fit takes between 0.9 and 1.1 times as long as this
-    implementation's: the measured advantage there is the cost of calling CmdStan.'
-    Held to the committed timings: once the one-iteration call is taken off,
-    Prophet is within a quarter of this implementation at every L-BFGS length,
-    and the call is a substantial share of its fit."""
+    """The README: 'without it Prophet's fit takes 0.9-1.1 times as long as this
+    one: the advantage there is the cost of calling CmdStan.' The paper said the
+    same until #204 cut its item on speed. Held to the committed timings: once
+    the one-iteration call is taken off, Prophet is within a quarter of this
+    implementation at every L-BFGS length, and the call is a substantial share
+    of its fit."""
     rows = [row for row in _overhead() if row["prophet_algorithm"] == "LBFGS"]
     assert {int(row["observations"]) for row in rows} == {100, 300, 1000, 2905}
     for row in rows:
@@ -101,8 +109,10 @@ def test_above_t_100_the_advantage_is_the_cost_of_calling_cmdstan():
 
 
 def test_below_t_100_the_rest_is_stans_newton():
-    """At T = 50 the call is a small share of Prophet's fit, and taking it off
-    leaves this implementation still several times faster."""
+    """The README: below 100 observations Prophet runs Stan's Newton method, and
+    at T = 50 that, not the subprocess, is most of its time. At T = 50 the call
+    is a small share of Prophet's fit, and taking it off leaves this
+    implementation still several times faster."""
     row = next(row for row in _overhead() if row["observations"] == "50")
     fit, call, ours = (float(row[key]) for key in ("prophet_fit", "one_iteration_call",
                                                    "ours_fit"))

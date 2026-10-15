@@ -255,7 +255,12 @@ def _evaluation():
 
 
 def limitations():
-    """#178: every figure the limitations section states, from committed results."""
+    """#178: every figure the limitations section states, from committed results.
+
+    And the cost of calling CmdStan (`overhead.csv`), which the section stated
+    until #204 cut its item on speed: the paper makes no claim about speed. The
+    README's cost section still quotes those figures, so they are generated here
+    for it; the two only that item used went with it."""
     report, showcase = _evaluation()
     rows = _rows("tier2_accuracy")
     paired = {row["metric"]: float(row["value"]) for row in rows
@@ -313,9 +318,7 @@ def limitations():
         "LimOverheadShareMax": f"{max(map(share, lbfgs)) * 100:.0f}",
         "LimParityMin": f"{min(map(parity, lbfgs)):.1f}",
         "LimParityMax": f"{max(map(parity, lbfgs)):.1f}",
-        "LimNewtonLength": f"{int(newton['observations'])}",
         "LimNewtonSpeedup": f"{float(newton['prophet_fit']) / float(newton['ours_fit']):.1f}",
-        "LimNewtonShare": f"{share(newton) * 100:.0f}",
     }
 
 

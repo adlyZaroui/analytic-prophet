@@ -1,13 +1,19 @@
-\section{An exact reformulation}
+\section{The fix: an exact reformulation}
 \label{sec:reformulation}
 
 Write each rate as the difference of two non-negative parts,
 $\delta_j = \delta_j^+ - \delta_j^-$ with $\delta_j^+, \delta_j^- \ge 0$, and
 replace $\lvert\delta_j\rvert$ in \eqref{eq:objective} by $\delta_j^+ + \delta_j^-$.
 The penalty becomes linear, so the objective is smooth, and the non-smoothness
-moves into simple bound constraints that L-BFGS-B \citep{byrd1995limited} handles
-natively. The reformulation is standard for $\ell_1$ problems
+moves into simple bound constraints, which L-BFGS-B, the bound-constrained form of
+L-BFGS \citep{byrd1995limited}, handles natively. The reformulation is standard for $\ell_1$ problems
 (\cref{sec:related}); what needs stating is that it is exact here, and why.
+\Cref{sec:reformulation:exact} states and proves it, and \cref{sec:implementation}
+describes the implementation that computes the optimum for the evidence of
+\cref{sec:evidence}.
+
+\subsection{Exactness}
+\label{sec:reformulation:exact}
 
 Collect the remaining parameters as $\theta = (k, m, \beta, \sigma)$ and write
 Prophet's objective \eqref{eq:objective} as
@@ -23,7 +29,9 @@ $\sigma$. The split problem is
   \qquad \delta^+, \delta^- \ge 0 .
   \label{eq:Q}
 \end{equation}
-Nothing below uses the form of $F$. It holds for linear and logistic growth, additive
+Where the two need telling apart, Prophet's own parameterisation, in which each
+$\delta_j$ is a single unconstrained parameter, is the \emph{natural} one and
+\eqref{eq:Q} the \emph{split}. Nothing below uses the form of $F$. It holds for linear and logistic growth, additive
 and multiplicative seasonality, extra regressors, and $\sigma$ free or held fixed;
 all that changes between them is $F$, and the penalty, which is all the split
 touches, is the same in every case. Write $s(\delta) = (\delta_+, \delta_-)$ for the
@@ -123,3 +131,49 @@ the two problems share a minimiser. They do here because of
 \cref{prop:exact} --- complementarity --- and not because of the distributional
 identity.
 \end{remark}
+
+\subsection{The implementation}
+\label{sec:implementation}
+
+The evidence of \cref{sec:evidence} measures Prophet's estimate against the optimum,
+so the optimum has to be computed, and this implementation computes it outside Stan;
+its code is in the repository this paper is built from (\cref{sec:reproducibility}).
+It solves \eqref{eq:Q} by L-BFGS-B, or, below 100 observations, where Prophet runs
+Newton's method, by a projected Newton method on the same bounds, and it starts from
+Prophet's own initialisation, in which every rate is zero. Both methods keep the
+bounds themselves, projecting onto them, so a rate can come out exactly zero, which
+none of Prophet's does (\cref{sec:model}). The point it returns, carried back to
+$\delta = \delta^+ - \delta^-$, is the corrected optimum.
+
+It fits Stan's model, not a transcription of it. Stan reports the log density it
+maximises as \code{lp__}, written $\lp$ here, and for Prophet's program $\lp$ is
+exactly minus \eqref{eq:objective}, with no offset between the two: Stan's sampling
+statements drop the same constants that \eqref{eq:objective} leaves out. A difference
+in $\lp$ is therefore a difference in Prophet's own log posterior, given in nats, the
+unit of a natural logarithm. At \KktStanPoints{} points --- Prophet's solution and this
+implementation's at $T = 300$, $1000$ and $2905$ on the Peyton Manning series, and
+seeded random points --- this implementation's objective differs from $-\lp$ by at
+most $\KktStanObjectiveRelative$ of $\lvert\lp\rvert$, and its gradient in
+$(k, m, \delta, \beta)$ differs from Stan's by at most $\KktStanGradientRelative$ of
+the largest component. Nor does it grade itself. Every value of $\lp$ this paper
+compares is computed by Stan, and every optimum it uses as a reference is checked
+against the first-order optimality conditions with Stan's gradient
+(\cref{sec:evidence:kkt}), so no claim depends on this implementation's gradient
+being right.
+
+The solver runs outside Stan because the fix cannot run inside it. Stan can state the
+split only by declaring both parts non-negative, and it optimises such parameters
+through their logarithms, so a zero is approached and never reached; both parts of a
+zero rate must also start above zero. We restated it that way in Prophet's program
+and ran it on Stan's L-BFGS with Prophet's settings
+(\code{paper/experiments/inside_stan.py}). From Prophet's initialisation, with both
+parts of every rate starting at $\tau$, it ends
+\InsideSplitStartMin--\InsideSplitStartMax{} nats short of the optimum, and up to
+\InsideSplitFloorWorst{} with the other starting values tried, without setting a
+single rate exactly to zero. The
+gradient, by contrast, need not be this implementation's. Stan's own is reachable
+from outside Stan, through cmdstanpy's \code{log_prob}, which is how
+\cref{sec:evidence:kkt} computes it, or in memory through BridgeStan
+\citep{roualdes2023bridgestan}. This implementation writes its gradient out by hand,
+which spares a call into Stan at every evaluation; that is a convenience, and nothing
+in this paper depends on it.

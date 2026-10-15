@@ -65,10 +65,11 @@ def test_the_reparametrisations_are_cited_in_related_work():
                            "Smooth reparametrisations, run inside Stan.")
     for key in ("hoff2017lasso", "kolb2026smoothing", "poon2021smooth"):
         assert key in paragraph, key
-    # #202's result enters as generated macros, never typed
+    # #202's result enters as generated macros, never typed. The split's figures
+    # moved to the fix's implementation paragraph (#204), where they are the
+    # reason its solver runs outside Stan: tests/test_paper_order.py.
     for macro in ("InsideRuns", "InsideBest", "InsideHadamardStartMin",
-                  "InsideHadamardStartMax", "InsideHadamardRandomMedianLong",
-                  "InsideSplitStartMin", "InsideSplitStartMax", "InsideSplitFloorWorst"):
+                  "InsideHadamardStartMax", "InsideHadamardRandomMedianLong"):
         assert f"\\{macro}" in paragraph, macro
     assert "\\code{paper/experiments/inside_stan.py}" in paragraph
 
