@@ -67,13 +67,12 @@ product form then ends between $\InsideHadamardStartMin$ and \InsideHadamardStar
 nats short, depending on that choice. From random starts it falls further short than
 Prophet's own L-BFGS from the same starts, in median, at every length and setting; on
 the full Peyton Manning series with $\sigma$ fixed it stops a median of
-\InsideHadamardRandomMedianLong{} nats short of the optimum. Stan can state the split only by declaring both parts non-negative, and it
-optimises such parameters through their logarithms, so a zero is approached and never
-reached. Both parts of a zero rate must also start above zero. Started at $\tau$, the
-split ends \InsideSplitStartMin--\InsideSplitStartMax{} nats short; at the other starting
-values tried, up to \InsideSplitFloorWorst. An exact reformulation is therefore not
-enough on its own. The one in \cref{sec:reformulation} reaches exact zeros because it is
-solved by a method that keeps the bounds itself.
+\InsideHadamardRandomMedianLong{} nats short of the optimum. The split, declared
+non-negative, needs both parts of a zero rate to start above zero as well, and falls
+short for the reason \cref{sec:implementation} gives: Stan optimises such parameters
+through their logarithms, so a zero is approached and never reached. An exact
+reformulation is therefore not enough on its own. The one in \cref{sec:reformulation}
+reaches exact zeros because it is solved by a method that keeps the bounds itself.
 
 \paragraph{The lasso and its solution path.}
 With $\sigma$ fixed, linear growth and additive seasonality, Prophet's MAP problem

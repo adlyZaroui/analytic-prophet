@@ -197,7 +197,7 @@ def _abstract():
 @pytest.mark.parametrize("phrase", OVERCLAIMS)
 def test_the_summary_claims_no_more_than_the_sections_show(phrase):
     """Contribution 4 read the reports as attributions; contribution 2 said flat
-    growth removes the non-smooth directions, which section 4.6 says it does not;
+    growth removes the non-smooth directions, which section 5.6 says it does not;
     the abstract said Prophet reached the optimum from none of the starts, when
     Prophet itself cannot hold sigma fixed."""
     for page in SUMMARY:
@@ -225,7 +225,7 @@ def test_the_abstract_says_what_ran_the_random_starts():
     assert "held fixed" in sentence and "prophet's program" in sentence
 
 
-def test_flat_growth_is_described_as_section_4_6_describes_it():
+def test_flat_growth_is_described_as_section_5_6_describes_it():
     introduction = _normalise((PAPER / "sections" / "introduction.tex").read_text())
     assert "fit the same model" in introduction
     evidence = _normalise((PAPER / "sections" / "evidence.tex").read_text())

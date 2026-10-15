@@ -22,16 +22,8 @@ nothing to select.
 The controls that change Prophet's Stan program
 (Sections~\ref{sec:evidence:multistart}, \ref{sec:evidence:surrogate}
 and~\ref{sec:evidence:path}), and the reparametrisations run inside Stan in
-\cref{sec:related}, compile modified copies of it, each a minimal diff kept
-beside the original in \code{paper/stan/}, with CmdStan~\EnvCmdStan, the version
-Prophet bundles. Compiled the same way, the unmodified program reproduces Prophet's
+\cref{sec:implementation,sec:related}, compile modified copies of it, each a minimal
+diff kept beside the original in \code{paper/stan/}, with CmdStan~\EnvCmdStan, the
+version Prophet bundles. Compiled the same way, the unmodified program reproduces Prophet's
 shipped executable exactly, in the optimum, the log density and its gradient, on both
 of Prophet's optimizer paths; the test suite checks this before any variant is used.
-
-One earlier measurement is not reproduced, and nothing here rests on it. This
-implementation's first backend was the C library liblbfgs, and a sweep of the prior's
-strength on it found the iterations before its line search failed tracking $\lambda$.
-The library was linked from the system rather than kept in the repository, the backend
-has since been replaced, and the sweep survives only in the project's notes. The
-sweep of SciPy's L-BFGS-B in \cref{sec:evidence:surrogate} asks the same question of an
-optimizer that is installed, and is regenerated with everything else.

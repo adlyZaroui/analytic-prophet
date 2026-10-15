@@ -251,16 +251,6 @@ def test_the_quadratic_is_the_librarys_objective(prophet_comparison):
         assert ours(a) - ours(b) == pytest.approx(library(a) - library(b), rel=1e-9)
 
 
-def test_the_paper_says_which_option_replaced_liblbfgs():
-    """#175: the lost sweep is cited as not reproduced, and its replacement named."""
-    text = _text("reproducibility")
-    assert "One earlier measurement is not reproduced, and nothing here rests on it" in text
-    assert "liblbfgs" in text and "L-BFGS-B" in text
-    for number in ("3528", "3,528"):
-        assert number not in " ".join(_text(name) for name in
-                                      ("evidence", "smooth", "reproducibility"))
-
-
 # -- the rounding -------------------------------------------------------------
 
 def test_the_rounding_sample_is_the_seeded_census_sample():

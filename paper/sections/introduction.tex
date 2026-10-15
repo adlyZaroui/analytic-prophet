@@ -4,12 +4,12 @@
 Prophet \citep{taylor2018forecasting} fits a decomposable time-series model by
 maximum a~posteriori (MAP) estimation. Its authors specified the model as a Stan
 program \citep{carpenter2017stan} and delegated the optimization to Stan, which
-runs L-BFGS by default and Newton's method on short series. The posterior they
-specified places a Laplace prior on the rates by which the trend changes slope,
-and a Laplace prior contributes a term $\sum_j |\delta_j|/\tau$ to the negative log
-posterior. That term is not differentiable where any $\delta_j = 0$ --- and the
-optimum sits there, because sending most rates to zero is precisely what the
-prior is for.
+runs the limited-memory quasi-Newton method L-BFGS by default and Newton's method
+on short series. The posterior they specified places a Laplace prior on the rates
+by which the trend changes slope, and a Laplace prior contributes a term
+$\sum_j |\delta_j|/\tau$ to the negative log posterior. That term is not
+differentiable where any $\delta_j = 0$ --- and the optimum sits there, because
+sending most rates to zero is precisely what the prior is for.
 
 Stan's reference manual describes its optimizers by pointing to
 \citet{nocedal2006numerical} for ``thorough description and analysis''
@@ -35,7 +35,13 @@ consequently returns, as its MAP estimate, a point that is not the posterior mod
 removable by an exact reformulation, and it accounts for part of one long-standing
 report in Prophet's issue tracker and plausibly underlies another
 (\cref{sec:consequences}); we report its consequences for the optimum and for
-predictive performance.
+predictive performance. Prophet's estimate is measured against the optimum computed
+by an implementation of the reformulation outside Stan, \emph{this implementation} in
+what follows (\cref{sec:implementation}), and we call that optimum the
+\emph{corrected optimum}. The implementation is the instrument, not a contribution,
+and it never grades itself: every comparison is scored by Stan's own log density of
+Prophet's program, and every optimum used as a reference is checked with Stan's own
+gradient.
 
 \paragraph{What it does not claim.}
 That L-BFGS is ill-suited to an $\ell_1$-penalised objective is well known:
@@ -66,8 +72,8 @@ think, more useful for being stated precisely:
 
 \paragraph{The size of it.}
 The defect is real and its cost to forecast accuracy is usually small. On a
-frozen census of \CensusSeries{} held-out M4 series \citep{makridakis2020m4} the corrected optimum
-forecasts better on \RmseWinRate\% of them, by a median of \RmseAdvantage\% in
-RMSE. We treat that result as corroboration that the optimization gap matters
-somewhat in practice, not as the thesis, and \cref{sec:limitations} is explicit
-about where it is weakest.
+frozen census of \CensusSeries{} held-out M4 series \citep{makridakis2020m4} the
+corrected optimum forecasts better on \RmseWinRate\% of them, by a median of
+\RmseAdvantage\% in root mean squared error (RMSE). We treat that result as
+corroboration that the optimization gap matters somewhat in practice, not as the
+thesis, and \cref{sec:limitations} is explicit about where it is weakest.

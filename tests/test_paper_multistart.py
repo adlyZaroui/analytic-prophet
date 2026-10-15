@@ -1,7 +1,7 @@
 """
 Issue #169: Prophet from many random starts, where the optimum is unique.
 
-The argument in section 4.3 is that with sigma fixed the objective is strictly
+The argument in section 5.3 is that with sigma fixed the objective is strictly
 convex, so a converging method reaches one point from every start, and
 Prophet's fits do not. Checked here, against the committed data and the code:
 

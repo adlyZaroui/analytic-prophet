@@ -26,7 +26,8 @@ default configuration, and forecast the horizon: Prophet through its own
 fitted state; each places its changepoints by Prophet's rule, which gives the same
 locations. Both are scored by Prophet's own \code{performance_metrics} with a rolling
 window of one, which pools every forecast point of every cutoff into a single value per
-series: MAE, RMSE, MAPE, sMAPE and the coverage of the nominal 80\% interval, beside
+series: the mean absolute error (MAE), RMSE, the mean absolute percentage error
+(MAPE), sMAPE and the coverage of the nominal 80\% interval, beside
 which the mean width of that interval is recorded. Both sides' uncertainty draws are
 seeded, with \CensusSeed, so a rerun reproduces every number.
 

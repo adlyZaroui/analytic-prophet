@@ -45,6 +45,20 @@ under their entries below.
 - the stopping rule: "The optimizer terminates when any of the log density, gradient,
   or parameter values are within their specified tolerance."
 
+**`roualdes2023bridgestan`** — Roualdes, Ward, Carpenter, Seyboldt & Axen, *Journal of
+Open Source Software* 8(87):5236, 2023. Metadata checked against Crossref (published
+2023-07-22). Read in the published article's JATS record
+(`www.theoj.org/joss-papers/joss.05236/10.21105.joss.05236.jats`). Cited in §4.2 for
+one thing: Stan's own gradient of a model is reachable from outside Stan, in memory, so
+a solver outside Stan does not need a gradient of its own.
+
+- "BridgeStan provides in-memory access to the methods of Stan models through Python,
+  Julia, R, and Rust."
+- "Using memory allocated within such higher level languages, BridgeStan provides
+  computations of the log joint density function and corresponding gradient of a Stan
+  model, which is itself implemented using highly templated C++ from the Stan math
+  library."
+
 **`stan2025reference`** — Stan Reference Manual, version 2.37, the CmdStan version
 Prophet bundles (released 2025-09-02). Checked at
 `mc-stan.org/docs/2_37/reference-manual/optimization.html`.
@@ -69,7 +83,7 @@ Prophet bundles (released 2025-09-02). Checked at
 **Stan source, not in the bibliography** — `stan/optimization/bfgs_linesearch.hpp` in
 CmdStan 2.37.0, cited in §3 by path. `WolfeLineSearch` performs "a line search …
 satisfying the strong Wolfe conditions", with `c1 = 1e-4` and `c2 = 0.9` in
-`bfgs.hpp`. Stan's Hessian for Newton (§4.6) is `grad_hess_log_prob.hpp`: a
+`bfgs.hpp`. Stan's Hessian for Newton (§5.7) is `grad_hess_log_prob.hpp`: a
 four-point finite difference of the gradient with `epsilon = 1e-3`.
 
 **`carpenter2017lasso`** — Bob Carpenter, comment of 14 February 2017 on "Lasso regression
@@ -97,6 +111,12 @@ and those of 2019-06-24 and 2019-12-05, which carry the same comment).
 
 The source sets apostrophes and quotation marks typographically; they are straight here
 and in the paper.
+
+**Prophet's documentation, not in the bibliography** — the quick start
+(`facebook.github.io/prophet/docs/quick_start.html`, read 2026-10-15) introduces the
+series §2 names the Peyton Manning series: "As an example, let's look at a time series
+of the log daily page views for the Wikipedia page for Peyton Manning." The paper
+describes it in those terms and does not quote it.
 
 ## Smooth and nonsmooth optimization
 
@@ -182,7 +202,9 @@ Process.* 1(4):586–597, 2007.
 ## Smooth reparametrisations of the ℓ1 term (§8)
 
 Cited in §8 together with `paper/experiments/inside_stan.py` (#202), which runs two of
-them in Prophet's own Stan program, on Stan's own L-BFGS. The sources say the
+them in Prophet's own Stan program, on Stan's own L-BFGS: the product form, reported in
+§8, and the split declared non-negative, reported in §4.2 as the reason the fix's solver
+runs outside Stan (#204). The sources say the
 reparametrised problem has the same minimisers. They do not say that a given solver
 finds them, and the paper cites them for the first and measures the second.
 
