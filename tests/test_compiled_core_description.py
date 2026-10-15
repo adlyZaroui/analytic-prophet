@@ -10,7 +10,8 @@ any of it, so nothing failed. Here each description is held to the code:
   * the benchmark README's compiled row to the solvers `optimize.cpp` builds;
   * its configuration paragraph to `PROPHET_KWARGS`, and that to Prophet's
     own defaults where Prophet is installed;
-  * its epoch to `seasonality.FOURIER_EPOCH`;
+  * its epoch to `seasonality.FOURIER_EPOCH`, and the benchmarks' docstrings
+    with it;
   * the binding's help text to what `optimize()` and `newton()` run, and its
     status codes to the ones the source sets.
 """
@@ -71,7 +72,12 @@ def test_the_agreement_benchmark_states_the_epoch_the_code_uses():
     readme = _one_line(README.read_text())
     assert "Prophet's 1970 epoch (`seasonality.FOURIER_EPOCH`)" in readme
     assert FOURIER_EPOCH == pd.Timestamp("1970-01-01")
-    assert "from the series start" not in readme
+    # the same two reasons were repeated in the benchmarks' own docstrings
+    for path in [README, *sorted((REPO / "benchmark").glob("*.py"))]:
+        text = _one_line(path.read_text())
+        for stale in ("series start", "rotated Fourier basis", "rotated basis",
+                      "indexed against different changepoints"):
+            assert stale not in text, (path.name, stale)
 
 
 def test_the_bindings_help_text_names_what_runs(cpp_module):
