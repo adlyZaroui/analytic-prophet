@@ -2,7 +2,7 @@
 Issue #176: why the split reformulation is exact, stated for the full model.
 
 Proposition 1 in `paper/sections/reformulation.tex` claims, for *any*
-F(theta, delta) and tau > 0: equal optimal values; complementarity at every
+F(psi, delta) and tau > 0: equal optimal values; complementarity at every
 local or global minimiser of the split problem, which carries back to
 Prophet's problem; and that the split problem's KKT points are exactly the
 complementary splits of points where 0 is in Prophet's subdifferential. It
@@ -22,32 +22,32 @@ import numpy as np
 import pytest
 
 TAU = 0.5
-P_THETA, S = 3, 6
+P_PSI, S = 3, 6
 
 
 @pytest.fixture(scope="module")
 def nonconvex():
-    """F(theta, delta) with sines, cosines and a bilinear coupling: smooth,
+    """F(psi, delta) with sines, cosines and a bilinear coupling: smooth,
     bounded below, and nowhere near convex."""
     rng = np.random.default_rng(176)
     A = rng.normal(size=(8, S))
     b = rng.normal(size=8)
-    C = 0.3 * rng.normal(size=(P_THETA, S))
+    C = 0.3 * rng.normal(size=(P_PSI, S))
 
-    def F(theta, delta):
-        return (np.sum(np.sin(3 * theta)) + 0.5 * theta @ theta
+    def F(psi, delta):
+        return (np.sum(np.sin(3 * psi)) + 0.5 * psi @ psi
                 + 0.5 * np.sum((A @ delta - b) ** 2) + np.sum(np.cos(2 * delta))
-                + theta @ C @ delta)
+                + psi @ C @ delta)
 
-    def gradient(theta, delta):
-        return (3 * np.cos(3 * theta) + theta + C @ delta,
-                A.T @ (A @ delta - b) - 2 * np.sin(2 * delta) + C.T @ theta)
+    def gradient(psi, delta):
+        return (3 * np.cos(3 * psi) + psi + C @ delta,
+                A.T @ (A @ delta - b) - 2 * np.sin(2 * delta) + C.T @ psi)
 
     return F, gradient
 
 
 def _parts(z):
-    return z[:P_THETA], z[P_THETA:P_THETA + S], z[P_THETA + S:]
+    return z[:P_PSI], z[P_PSI:P_PSI + S], z[P_PSI + S:]
 
 
 def test_the_identity_the_proof_rests_on(nonconvex):
@@ -57,12 +57,12 @@ def test_the_identity_the_proof_rests_on(nonconvex):
     F, _ = nonconvex
     rng = np.random.default_rng(0)
     for _ in range(200):
-        theta = rng.normal(size=P_THETA)
+        psi = rng.normal(size=P_PSI)
         plus, minus = rng.exponential(size=S), rng.exponential(size=S)
         minus[rng.random(S) < 0.4] = 0.0
         delta = plus - minus
-        Q = F(theta, delta) + np.sum(plus + minus) / TAU
-        P = F(theta, delta) + np.sum(np.abs(delta)) / TAU
+        Q = F(psi, delta) + np.sum(plus + minus) / TAU
+        P = F(psi, delta) + np.sum(np.abs(delta)) / TAU
         assert Q - P == pytest.approx(2 / TAU * np.sum(np.minimum(plus, minus)),
                                       rel=1e-12, abs=1e-12)
 
@@ -75,19 +75,19 @@ def local_solutions(nonconvex):
     F, gradient = nonconvex
 
     def Q(z):
-        theta, plus, minus = _parts(z)
-        return F(theta, plus - minus) + np.sum(plus + minus) / TAU
+        psi, plus, minus = _parts(z)
+        return F(psi, plus - minus) + np.sum(plus + minus) / TAU
 
     def gQ(z):
-        theta, plus, minus = _parts(z)
-        g_theta, g_delta = gradient(theta, plus - minus)
-        return np.concatenate([g_theta, g_delta + 1 / TAU, -g_delta + 1 / TAU])
+        psi, plus, minus = _parts(z)
+        g_psi, g_delta = gradient(psi, plus - minus)
+        return np.concatenate([g_psi, g_delta + 1 / TAU, -g_delta + 1 / TAU])
 
     rng = np.random.default_rng(1)
-    bounds = [(None, None)] * P_THETA + [(0, None)] * (2 * S)
+    bounds = [(None, None)] * P_PSI + [(0, None)] * (2 * S)
     solutions = []
     for _ in range(30):
-        start = np.concatenate([rng.normal(scale=2, size=P_THETA),
+        start = np.concatenate([rng.normal(scale=2, size=P_PSI),
                                 rng.exponential(size=2 * S)])
         result = minimize(Q, start, jac=gQ, method="L-BFGS-B", bounds=bounds,
                           options={"ftol": 1e-15, "gtol": 1e-12, "maxiter": 10_000})
@@ -108,11 +108,11 @@ def test_every_local_solution_is_complementary_and_stationary_for_prophets_probl
     and the corresponding delta stationary for P = F + |delta|/tau."""
     _, gradient = nonconvex
     for result in local_solutions:
-        theta, plus, minus = _parts(result.x)
+        psi, plus, minus = _parts(result.x)
         assert np.all(np.minimum(plus, minus) == 0.0)
 
         delta = plus - minus
-        g_theta, g_delta = gradient(theta, delta)
+        g_psi, g_delta = gradient(psi, delta)
         mu_plus, mu_minus = g_delta + 1 / TAU, -g_delta + 1 / TAU
         assert np.all(mu_plus >= -1e-6) and np.all(mu_minus >= -1e-6)
         assert np.max(np.abs(mu_plus * plus)) < 1e-6
@@ -120,7 +120,7 @@ def test_every_local_solution_is_complementary_and_stationary_for_prophets_probl
 
         residual = np.where(delta != 0, g_delta + np.sign(delta) / TAU,
                             np.sign(g_delta) * np.maximum(np.abs(g_delta) - 1 / TAU, 0))
-        assert np.max(np.abs(g_theta)) < 1e-6
+        assert np.max(np.abs(g_psi)) < 1e-6
         assert np.max(np.abs(residual)) < 1e-6
 
 

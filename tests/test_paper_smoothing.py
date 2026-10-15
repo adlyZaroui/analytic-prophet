@@ -115,11 +115,15 @@ def test_the_two_curves_cross_at_every_length(rows):
 
 def test_the_paper_quotes_the_drop_per_length_not_a_blanket_claim():
     """At T = 2905 the gap falls by about one order of magnitude, not several;
-    the text gives each length's factor rather than 'orders of magnitude'."""
+    the paper gives each length's factor rather than 'orders of magnitude'.
+    Since #209 the factors are in the per-length table, one row of it."""
+    table = (PAPER / "generated" / "lengths.tex").read_text()
+    row = next(line for line in table.splitlines() if r"\SmoothDropShort" in line)
+    assert r"\SmoothDropMid" in row and r"\SmoothDropLong" in row
     text = (PAPER / "sections" / "evidence.tex").read_text()
-    assert r"\SmoothDropLong" in text
     section = text[text.index(r"\label{sec:evidence:surrogate}"):text.index(r"\label{sec:evidence:flat}")]
     assert "orders of magnitude" not in section
+    assert "differs widely from one length to another" in " ".join(section.split())
 
 
 def test_the_code_reproduces_a_committed_cell(rows, prophet_comparison):
