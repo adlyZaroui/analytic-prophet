@@ -355,11 +355,12 @@ def test_the_open_differences_the_readme_points_at_are_really_there():
         f"saying there are: {section[:200]}")
 
 
-def test_both_files_count_the_same_pre_reformulation_failures():
-    """The README's third item was Stan's Newton; the doc's was "Stan itself",
-    developed below as *both* its L-BFGS and its Newton. Both were true and
-    they enumerated differently, so a reader following the link found a list
-    whose third element was a different experiment."""
+def test_the_pre_reformulation_failures_are_counted_in_one_place():
+    """The README and the doc used to list the optimizers that failed before
+    the reformulation, and enumerated them differently: the README's third item
+    was Stan's Newton, the doc's "Stan itself", developed below as *both* its
+    L-BFGS and its Newton. #212 took the list out of the README, which now
+    leads with evidence a reader can reproduce, so the doc is the one place."""
     doc = " ".join(NON_SMOOTH.read_text().split())
     readme = " ".join((REPO / "README.md").read_text().split())
 
@@ -367,8 +368,6 @@ def test_both_files_count_the_same_pre_reformulation_failures():
     for optimizer in ("liblbfgs", "scipy's L-BFGS-B", "Stan's L-BFGS", "Stan's Newton"):
         assert optimizer in doc, f"the doc's list no longer covers {optimizer}"
 
-    # The README splits the same four as "Prophet's own optimizer" plus three.
-    assert "and so did three others" in readme
-    assert "Stan's own Newton" in readme
-    assert "The README lists the same four" in doc, (
-        "the doc no longer reconciles its count with the README's")
+    assert "liblbfgs" not in readme and "and so did three others" not in readme
+    assert "The README lists the same four" not in doc, (
+        "the doc reconciles its count with a list the README no longer has")

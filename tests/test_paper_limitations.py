@@ -47,9 +47,17 @@ def test_no_number_is_typed_into_the_section():
 
 
 def test_where_the_readme_quotes_a_figure_the_paper_quotes_the_same(macros):
-    readme = README.read_text()
+    """#212 extended this to every paper figure the README carries -- it had
+    drifted on two, 8.2x at T = 50 against the paper's 7.5x and 0.0967% against
+    0.0968%. tests/test_readme_structure.py checks each in its sentence, and
+    that the README carries no number without a source."""
+    readme = " ".join(README.read_text().split())
     for name in ("LimCoverageOurs", "LimCoverageProphet", "LimWorstPool", "LimPoolSize",
-                 "LimWidthMedian"):
+                 "LimWidthMedian", "LimWidthWider", "LimWorstCensus", "LimBestCensus",
+                 "LimMfourSeries", "LimNewtonSpeedup", "LimOverheadShareMin",
+                 "LimOverheadShareMax", "LimParityMin", "LimParityMax", "CensusSeries",
+                 "RmseAdvantage", "RmseWins", "RmseWinRate", "MultiTotal",
+                 "SmoothFactorLong", "SmoothFactorShort"):
         assert macros[name] in readme, f"README does not quote {name} = {macros[name]}"
 
 

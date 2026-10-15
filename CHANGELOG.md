@@ -1,16 +1,12 @@
 # Development history
 
-Every item below was found and fixed with a regression test, and is listed
-because the failure modes are instructive — several were silent, producing
-plausible wrong numbers rather than errors.
+Every item below was found and fixed with a regression test, and is listed because the
+failure modes are instructive — several were silent, producing plausible wrong numbers
+rather than errors.
 
 [← back to the README](README.md)
 
 ---
-
-Every item below was found and fixed with a regression test. Listed because the failure
-modes are instructive, and because several were silent — producing plausible wrong
-numbers rather than errors.
 
 | | issue | what was wrong |
 |---|---|---|
@@ -70,3 +66,30 @@ starting points, 2 of 5 seeds land on local optima 1206 and 912 nats worse than
 Prophet's deterministic initialization reaches. That initialization is doing real work.
 
 ---
+
+## What the README used to say
+
+The README states what holds now, for a reader who never saw its earlier versions
+([#212](https://github.com/adlyZaroui/analytic-prophet/issues/212)). How its claims
+changed is recorded here instead.
+
+- **The memory figures were stronger before
+  [#130](https://github.com/adlyZaroui/analytic-prophet/issues/130), by accident.**
+  Deferring scipy dropped what is resident before a fit from 130 MiB to 73, and peak RSS is
+  a high-water mark, so fit growth that used to hide under the import's own transient peak
+  became visible. The earlier, larger ratio was flattering for that reason alone.
+- **Interval width.** Across the original 36-series sample, interval width was
+  indistinguishable and the README declined to claim anything. Across the 3,008-series
+  census the intervals are measurably wider, and the README says so.
+- **Coverage.** Across 36 series the per-series coverage differences had no tail beyond
+  ±0.05, and the README said so; across the census both tails have members, and the full
+  account is in the evaluation report.
+- **The optimizers that failed before the reformulation.** The README quoted liblbfgs
+  dying after two iterations and scipy's L-BFGS-B stalling 17.8% above the minimum of its
+  objective. Those runs are historical and were not kept, so the README now leads with
+  evidence a reader can reproduce, in the paper.
+- **The showcase caption** called its top panel "the mechanism", a causal claim nothing
+  measured, and said that on the worst series "Prophet is 78.7% better", where our RMSE is
+  78.7% higher than Prophet's (620 against 347). It now says what each panel is.
+- **Speed.** The README quoted the evaluation's cost tier, 8.2× at T = 50; the paper
+  measures the same comparison as 7.5×, and the README now quotes the paper's figures.

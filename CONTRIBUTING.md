@@ -42,6 +42,62 @@ without it and the benchmarks print an install hint, so `pip install prophet` is
 needed to run those. `holidays` is required for `add_country_holidays` and imported
 lazily, so nothing else needs it.
 
+## Where things are cached
+
+Everything this project caches hangs off **one root**, by the same rule on every
+platform: `$ANALYTIC_PROPHET_CACHE`, else `$XDG_CACHE_HOME/analytic-prophet`, else
+`~/.cache/analytic-prophet`. The compiled core goes in `build/` and the M4 corpus the
+evaluation suite downloads goes in `m4/`, so one variable moves both and deleting the root
+is how you start over ([#111](https://github.com/adlyZaroui/analytic-prophet/issues/111)).
+
+From the source distribution or a clone, the first `fit(df)` compiles `optimize.cpp`, says
+so rather than appearing to hang, and caches the result
+([#108](https://github.com/adlyZaroui/analytic-prophet/issues/108)). The cache is keyed by a
+digest of the source and the compile command, so editing `optimize.cpp` rebuilds and
+nothing else does. Without a compiler the build raises, naming the one thing that is
+missing, and the tests that need the toolchain skip rather than fail.
+
+## Layout
+
+```
+analytic_prophet/
+    __init__.py       re-exports the package's surface
+    forecaster.py     Prophet's forecaster.py — the model
+    constants.py      the numbers the model is defined by
+    layout.py         where each parameter sits in the flat vector
+    seasonality.py    Fourier basis, registry, selection rule
+    make_holidays.py  Prophet's make_holidays.py, plus the design columns
+    trend.py          the three growth modes and their derivatives
+    optimizer.py      projected Newton, and the stopping tolerances
+    models.py         Prophet's models.py — the compiled backend's loader
+    build.py          compiling optimize.cpp on demand, and caching it
+    serialize.py      Prophet's serialize.py — save and load
+    optimize.cpp      that backend
+.github/workflows/    CI: the suite on every push, the tiers on request
+docs/                 the model, the argument, the deviations
+tests/                the suite, plus the Peyton Manning series under data/
+benchmark/            fast micro-benchmarks, for running against a change
+evaluation/           the claim-level study, and its generated report
+paper/                the preprint, its experiments and their committed results
+```
+
+`forecaster.py`, `make_holidays.py`, `models.py` and `serialize.py` take Prophet's own
+names. **The rest have no Prophet file to correspond to, which is the point:** `layout.py`,
+`optimizer.py` and the derivatives in `trend.py` are what Stan supplies there, and
+`constants.py` holds numbers that live in `prophet.stan` rather than in any Python file.
+Writing them down is what this project is, so they get files you can open.
+
+Two of the rest are not that, and saying so costs nothing: `seasonality.py` is code
+Prophet has as well, inside its own `forecaster.py`, and `build.py` has no counterpart
+because Prophet ships its Stan model already compiled.
+
+The C++ source sits *inside* the package rather than beside it because it is the
+implementation, not a build input to it — where Prophet hands the problem to Stan, this
+hands it to a gradient written out by hand.
+
+One rule the layout imposes, for anyone adding a test: **patch a name where it is looked
+up, not where it is defined.** `analytic_prophet/__init__.py` says why.
+
 ## The loop
 
 Every change in this repository has gone through the same sequence:

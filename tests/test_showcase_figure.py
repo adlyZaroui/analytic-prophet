@@ -80,22 +80,29 @@ def fitted_advantages(advantages):
     return keep
 
 
+def _caption(readme):
+    """From the figure to the next heading, on one line: markdown wraps, and a
+    phrase can straddle a newline."""
+    caption = readme[readme.index("figures/showcase.png"):]
+    return " ".join(caption[:caption.index("\n## ")].split())
+
+
 def test_the_figure_exists_and_the_readme_shows_it(readme):
     assert FIGURE.exists(), "the showcase figure is not committed"
     assert FIGURE.stat().st_size > 10_000, "suspiciously small for a 3-panel figure"
     assert "figures/showcase.png" in readme
 
-    # above the fold: before the feature list, as the issue asks
-    assert readme.index("figures/showcase.png") < readme.index("## What it does")
+    # in the forecasts section, after the sentence and the table it illustrates
+    # (#212 put it there; it used to sit above the fold, before the features)
+    section = readme[readme.index("## 3. Forecasts"):]
+    section = section[:section.index("\n## ", 1)]
+    assert "figures/showcase.png" in section
 
 
 def test_the_caption_states_the_selection_rule(readme):
     """A showcase that does not say it was selected is the overclaim this
     issue exists to avoid."""
-    caption = readme[readme.index("figures/showcase.png"):]
-    caption = caption[:caption.index("## What it does")]
-    # one line, because markdown wraps and a phrase can straddle a newline
-    caption = " ".join(caption.split())
+    caption = _caption(readme)
 
     assert "chosen by rule" in caption
     for rule in ("beats Prophet's by the most", "median", "Prophet beats us by the most"):
@@ -117,7 +124,7 @@ def test_the_caption_reports_the_median_advantage_correctly(readme, advantages):
 
 def test_the_caption_reports_the_series_count_correctly(readme, advantages):
     # The README writes 3,008 for a reader; the count is 3008.
-    quoted = re.search(r"all ([\d,]+) series the median", readme)
+    quoted = re.search(r"all ([\d,]+) series the median", " ".join(readme.split()))
     assert quoted and int(quoted.group(1).replace(",", "")) == len(advantages), (
         f"the caption gives {quoted.group(1) if quoted else 'no count'}, the "
         f"results score {len(advantages)} series")
@@ -167,7 +174,7 @@ def test_the_panels_are_series_the_model_actually_fits(fitted_advantages):
 
 
 def test_the_caption_states_the_size_of_the_filtered_set(readme, fitted_advantages):
-    quoted = re.search(r"\*\*(\d+) where a Prophet-shaped model fits", readme)
+    quoted = re.search(r"\*\*(\d+) where a Prophet-shaped model fits", " ".join(readme.split()))
     assert quoted, "the caption no longer says how many series the ranking covers"
     assert int(quoted.group(1)) == len(fitted_advantages)
 
@@ -178,3 +185,19 @@ def test_the_selection_spans_a_real_range(fitted_advantages):
     assert max(fitted_advantages.values()) > 0.05, "no series shows a visible advantage"
     assert min(fitted_advantages.values()) < 0, (
         "no series where Prophet wins; panel 3 is a lie")
+
+
+def test_the_caption_says_what_each_panel_is_and_no_more(readme, fitted_advantages):
+    """#212. "The top panel is the mechanism" was a causal claim nothing
+    measured -- reaching the true optimum also produces the bottom panel. And
+    "on the worst series for us Prophet is 78.7% better" read a relative
+    difference the wrong way round: our RMSE is 78.7% higher than Prophet's,
+    which makes Prophet's 44% lower, not 78.7%."""
+    caption = _caption(readme)
+    assert "is the mechanism" not in caption
+    assert "Prophet is" not in caption
+    best = max(fitted_advantages.values())          # (theirs - ours) / theirs
+    worst = min(fitted_advantages.values())
+    assert f"our RMSE is {best * 100:.1f}% lower" in caption
+    # on the worst series ours is higher by (ours - theirs) / theirs = -worst
+    assert f"ours is {-worst * 100:.1f}% higher" in caption

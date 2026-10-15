@@ -49,9 +49,6 @@ This caused four separate, independently-discovered failures here:
    does not have, so a second-order method defeated in the same place says the problem
    is not L-BFGS. Also below.
 
-The README lists the same four, splitting them as Prophet's own optimizer — item 3 — plus
-three others.
-
 ### The fix: a smooth reformulation
 
 Split `delta` into non-negative parts:
@@ -77,9 +74,9 @@ whole Peyton Manning series — with yearly seasonality only:**
 | this implementation | **7797.2523** |
 | difference | **+2.34 nats** |
 
-**That is one configuration, and the margin is not the same in others.** The README quotes
-the default — yearly *and* weekly — where the same 2905 rows give **+0.36 nats**, six
-times smaller. Same series, same protocol, same scorer; only the width of the model
+**That is one configuration, and the margin is not the same in others.** The evaluation
+report quotes the default — yearly *and* weekly — where the same 2905 rows give
+**+0.36 nats**, six times smaller. Same series, same protocol, same scorer; only the width of the model
 differs:
 
 | T | default (yearly + weekly) | yearly only |
