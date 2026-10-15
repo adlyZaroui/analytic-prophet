@@ -144,7 +144,8 @@ def canonical_to_split(params, layout=DEFAULT_LAYOUT):
     turns |delta| into delta_pos + delta_neg: smooth, with the non-smoothness
     pushed into simple bound constraints L-BFGS-B handles natively. At an
     optimum at most one of each pair is non-zero, so the two problems have the
-    same solution. This is the same fix the C++ core gets from OWL-QN.
+    same solution. The C++ core solves the same reformulation, where it used
+    OWL-QN until #23.
     """
     k, m, delta, sigma_obs, beta = extract_params(params, layout)
     return np.concatenate(([k], [m], np.maximum(delta, 0), np.maximum(-delta, 0), [sigma_obs], beta))

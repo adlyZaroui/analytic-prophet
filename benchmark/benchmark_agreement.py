@@ -11,9 +11,10 @@ two halves, because they answer different questions and can disagree.
   2. PREDICTIONS. Do the forecasts agree? Measured on this implementation's
      *default* configuration, because that is what a user gets.
 
-Comparing fitted parameters directly is not one of the criteria, and cannot
-be: `beta` lives in a rotated Fourier basis and `delta` is indexed against
-different changepoints. See _prophet_bridge.py.
+Comparing fitted parameters directly is not one of the criteria. They are
+comparable, on the same epoch and changepoints, but they differ wherever
+Prophet stops short of the optimum, which the posterior criterion measures
+directly. See _prophet_bridge.py.
 
     python benchmark/benchmark_agreement.py
     python benchmark/benchmark_agreement.py --sizes 300 1000 --horizon 90

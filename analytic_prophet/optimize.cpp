@@ -40,8 +40,10 @@ Eigen::MatrixXd fourier_series(const Eigen::VectorXd& t_days, double period, int
 }
 
 // Parameter vector layout: [k, m, delta(S), beta(K), zeta], length 2 + S + K + 1.
-// zeta = log(sigma_obs): liblbfgs has no box constraints, and optimizing the
-// log enforces sigma_obs > 0 for free. Offsets are computed from S (and K,
+// zeta = log(sigma_obs): optimizing the log keeps sigma_obs > 0 with no bound.
+// It was chosen when the solver was liblbfgs, which has no box constraints;
+// L-BFGS-B could bound sigma_obs instead, but zeta has stayed, and since #229
+// the Python backend works in the same coordinates. Offsets are computed from S (and K,
 // implied by the vector length) rather than hardcoded -- the literals this
 // replaced (segment(2, 25), tail(size - 27)) would have silently absorbed the
 // new trailing element into beta.
@@ -527,12 +529,11 @@ void minus_log_posterior_and_gradient(const Eigen::VectorXd& params_vec,
 // and sets no tolerances, so these are what the original actually runs with.
 // [stan] src/stan/optimization/bfgs.hpp, ConvergenceOptions + step()
 //
-// Stan stops as soon as ANY of them holds. liblbfgs natively offers only two
-// (epsilon on a relative gradient norm, and past/delta on relative objective
-// change), which is how this implementation ended up with a single criterion
-// -- and that one unreachable, so runs terminated on line-search exhaustion
-// tens of thousands of iterations past convergence. They are evaluated in the
-// progress callback instead, which liblbfgs lets us stop the run from.
+// Stan stops as soon as ANY of them holds. Under liblbfgs, before #23, this
+// implementation ended up with a single criterion -- and that one unreachable,
+// so runs terminated on line-search exhaustion tens of thousands of iterations
+// past convergence. Now newton() evaluates Stan's tests itself, and optimize()
+// passes LBFGSpp the ones it can express (see its LBFGSBParam below).
 namespace stan_convergence {
     constexpr double EPS = 2.220446049250313e-16;   // machine epsilon, as Stan uses it
     constexpr double F_SCALE = 1.0;                 // ConvergenceOptions::fScale
@@ -1160,8 +1161,10 @@ std::pair<double, Eigen::VectorXd> minus_log_posterior_and_gradient_py(
 }
 
 PYBIND11_MODULE(analytic_prophet_cpp, m) {
-    m.doc() = "Analytic Prophet's C++ core: an L-BFGS/OWL-QN MAP optimizer for the "
-              "Prophet posterior, plus the objective and analytic gradient it drives.";
+    m.doc() = "Analytic Prophet's C++ core: a MAP optimizer for the Prophet posterior "
+              "-- L-BFGS-B, or a projected Newton method, on the split reformulation "
+              "of its changepoint prior -- plus the objective and analytic gradient "
+              "it drives.";
 
     py::class_<OptimizeResult>(m, "OptimizeResult",
             "Outcome of one optimize() run.")
@@ -1175,7 +1178,9 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
                       "n_iterations.")
         .def_readonly("n_iterations", &OptimizeResult::n_iterations)
         .def_readonly("status", &OptimizeResult::status,
-                      "Raw liblbfgs status code; 0 is LBFGS_SUCCESS.")
+                      "0 when a convergence test was met. Otherwise 1 if LBFGSpp's "
+                      "L-BFGS-B raised (its line search failing, typically), 2 if "
+                      "optimize() reached its iteration cap, -2 if newton() did.")
         .def_readonly("status_message", &OptimizeResult::status_message,
                       "Human-readable form of `status`.")
         .def_readonly("saddle_escapes", &OptimizeResult::saddle_escapes,
@@ -1208,8 +1213,8 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::arg("verbose") = false,
           // The optimizer touches no Python objects, so let other threads run.
           py::call_guard<py::gil_scoped_release>(),
-          "Run L-BFGS (OWL-QN) on the Prophet minus-log-posterior and return an "
-          "OptimizeResult. `params` is not modified in place; the optimized vector "
+          "Run L-BFGS-B (LBFGSpp) on the split reformulation of the Prophet "
+          "minus-log-posterior and return an OptimizeResult. `params` is not modified in place; the optimized vector "
           "comes back on the result.");
 
     m.def("newton", &newton,
@@ -1261,7 +1266,8 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
           py::call_guard<py::gil_scoped_release>(),
           "Return (minus_log_posterior, gradient) at `params`. With "
           "include_l1_prior=False the Laplace prior on delta is omitted from both, "
-          "which is what OWL-QN requires of the callback it drives.");
+          "which is how the split reformulation uses it: it adds the prior itself, "
+          "linearly in delta_pos and delta_neg.");
 }
 
 // To compile, run the following command:

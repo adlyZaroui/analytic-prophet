@@ -1,15 +1,14 @@
 """Scoring this implementation and Prophet on a common footing.
 
-Raw parameters cannot be compared between the two. Prophet builds its Fourier
-features from days since the 1970 epoch, this implementation from days since
-the series start, so `beta` lives in a rotated basis -- coefficients differ,
-including in sign, while describing the same function. Changepoints also sit
-at different locations by default, so `delta` is not comparable element-wise.
+The parameters are comparable now: both build their Fourier features from days
+since the 1970 epoch (#36), and both place the changepoints by Prophet's rule
+(#15). They still differ wherever Prophet stops short of the optimum, by an
+amount that depends on how flat the objective is in each direction, so a
+tolerance on them would measure that flatness rather than either fit.
 
-What *is* comparable is Stan's log density. It is one scalar, invariant to
-those reparameterizations, and it is the quantity the model is defined by.
-`CmdStanModel.log_prob` evaluates it at arbitrary parameter values, so both
-implementations can be scored by the original's own objective.
+What settles it is Stan's log density. It is one scalar, the quantity the model
+is defined by, and `CmdStanModel.log_prob` evaluates it at arbitrary parameter
+values, so both implementations can be scored by the original's own objective.
 """
 import numpy as np
 
@@ -71,10 +70,13 @@ def stan_log_prob(stan_model, stan_data, k, m, delta, sigma_obs, beta):
 def transfer_seasonality(beta_from, X_from, X_to):
     """Re-express seasonality coefficients in another Fourier basis.
 
-    Both bases span the same space -- same frequencies, same period, differing
-    only in time origin and column order -- so transferring the seasonality
-    *vector* and solving for coefficients is exact. Returns the coefficients
-    and the residual of the solve, which the caller should check is ~0.
+    Both bases span the same space -- same frequencies, same period -- so
+    transferring the seasonality *vector* and solving for coefficients is
+    exact. Returns the coefficients and the residual of the solve, which the
+    caller should check is ~0. Since #36 the two bases are the same one, so
+    this is the identity up to rounding; going through the seasonality rather
+    than copying `beta` keeps a basis change on either side from passing
+    silently.
     """
     seasonality = X_from @ beta_from
     beta_to, *_ = np.linalg.lstsq(X_to, seasonality, rcond=None)

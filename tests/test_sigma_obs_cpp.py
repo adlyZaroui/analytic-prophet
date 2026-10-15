@@ -3,8 +3,9 @@ Issue #18: sigma_obs estimated in the C++ core, as in prophet.stan's
 `parameters` block (`real<lower=0> sigma_obs`, prior `normal(0, 0.5)`).
 
 The C++ vector runs [k, m, delta(S), beta(K), zeta] with zeta = log(sigma_obs)
-last. The log parameterization is what keeps sigma_obs positive: liblbfgs has
-no box constraints, so there is nothing else holding it above zero.
+last. The log parameterization is what keeps sigma_obs positive: there is no
+bound on it, so nothing else holds it above zero. (It was chosen when the
+solver was liblbfgs, which has no box constraints.)
 
 Three things are worth pinning here, and the middle one is the load-bearing
 check: the T*log(sigma_obs) normalization term is droppable only while
@@ -95,8 +96,8 @@ def test_fitted_sigma_obs_approaches_the_gaussian_mle(peyton_manning_df, compile
 
 def test_sigma_obs_is_positive_by_construction():
     """sigma_obs = exp(zeta), so no value of the optimized vector can produce a
-    non-positive one -- which is what replaces the box constraint liblbfgs does
-    not have."""
+    non-positive one -- which is what holds it above zero, in place of a
+    bound."""
     for zeta in (-500.0, -1.0, 0.0, 1.0, 50.0):
         params = np.zeros(CPP_PARAM_SIZE)
         params[-1] = zeta

@@ -8,14 +8,16 @@ hours rather than seconds.
 The division is deliberate: these answer "did that change break something", and
 `evaluation/` answers "what can this project claim".
 
-The premise of this project is a Prophet that differs from the original in one
-respect only: the gradient comes from a closed-form expression rather than
-Stan's automatic differentiation. Two consequences should follow, and these
-benchmarks exist to check them rather than assume them.
+The premise of this project is Prophet's model fitted without Stan: its
+gradient written out by hand rather than taken by automatic differentiation,
+in-process rather than through a CmdStan subprocess, and its changepoint prior
+solved through an exact reformulation that Prophet's optimizer does not use
+(#23). Two consequences should follow, and these benchmarks exist to check them
+rather than assume them.
 
-- **Fitting time must not regress.** Replacing autodiff with an analytic
-  gradient removes work; there is no mechanism by which it should make fitting
-  slower. A slower fit is a defect, not a tradeoff.
+- **Fitting time must not regress.** Writing the gradient out and starting no
+  subprocess remove work; nothing here should make fitting slower. A slower fit
+  is a defect, not a tradeoff.
 - **Memory should improve.** Reverse-mode autodiff retains a tape of the
   forward pass to reverse over; a closed-form gradient does not. If this
   project is not cheaper here, the analytic approach is not paying for itself.
@@ -42,27 +44,27 @@ are not named `test_*`. They are slow and measure the machine, not correctness.
 
 | name | what it runs |
 |---|---|
-| `prophet` | the original, via cmdstanpy (Stan's L-BFGS, autodiff gradient) |
-| `python` | `fit(backend="python")`: scipy L-BFGS-B over the split reformulation, closed-form gradient |
-| `python(numeric grad)` | same, but scipy approximates the gradient by finite differences |
-| `compiled` | `fit(df)`: the compiled core, liblbfgs OWL-QN, closed-form gradient |
+| `prophet` | the original, via cmdstanpy: Stan's L-BFGS, or its Newton method below 100 observations; autodiff gradient |
+| `python` | `fit(backend="python")`: scipy's L-BFGS-B over the split reformulation, or a projected Newton method below 100 observations; closed-form gradient |
+| `python(numeric grad)` | same, but the gradient is approximated by finite differences |
+| `compiled` | `fit(df)`: the compiled core, LBFGSpp's L-BFGS-B over the split reformulation, or a projected Newton method below 100 observations; closed-form gradient |
 
 `python(numeric grad)` is not a serious candidate — it is included as the control
 that shows what the analytic gradient buys, since it is the same optimizer on
 the same problem with the gradient obtained the expensive way.
 
-### Prophet is configured to match, not left on defaults
+### Prophet runs on its own defaults, restated
 
-This matters more than it looks. Prophet's defaults add weekly seasonality
-(Fourier order 3) and, on sub-daily data, daily seasonality. Benchmarking
-against those would compare a 26-column design matrix against our 20-column one
-and report the difference as performance. `PROPHET_KWARGS` in `_common.py` pins
-Prophet to the model this project actually implements: additive, linear growth,
-yearly seasonality only at order 10, MAP rather than MCMC, with matching
-changepoint count, range and prior scales.
+`PROPHET_KWARGS` in `_common.py` restates Prophet's defaults rather than relying
+on them, so that a change in Prophet's defaults shows up as a benchmark change
+instead of silently moving the baseline. Both sides choose their seasonal
+components from the history by Prophet's own rule (#16 task 3), so the
+comparison is against Prophet as a user gets it.
 
-If this project grows weekly seasonality or holidays (issue #16), that
-configuration must grow with it or the comparison quietly stops being fair.
+It used to pin both sides to yearly seasonality at order 10, when that was the
+only component this project could fit: against Prophet's defaults, a 26-column
+design matrix would have been compared with a 20-column one and the difference
+reported as performance.
 
 ## Method notes
 
@@ -95,12 +97,13 @@ macOS and kilobytes on Linux; `peak_rss_bytes()` normalizes that.
 the fits are. It is also the project's acceptance criterion (issue #30), enforced
 by `tests/test_prophet_agreement.py`.
 
-Comparing **learned parameters** was the obvious design and does not work.
-`beta` lives in a rotated Fourier basis — Prophet measures days from the 1970
-epoch, this implementation from the series start — so the coefficients differ,
-including in sign, while describing the same function. `delta` is indexed
-against different changepoints. A test comparing them would measure the
-parameterization, not the model.
+Comparing **learned parameters** was the obvious design, and it measures the
+wrong thing. The parameters are comparable: the Fourier features use Prophet's
+1970 epoch (`seasonality.FOURIER_EPOCH`), and since #15 the changepoints are
+Prophet's own. But they differ wherever Prophet stops short of the optimum,
+which is everywhere it has been measured, and by how much depends on how flat
+the objective is in each direction. A tolerance on them would measure that
+flatness, not whether either fit is right.
 
 Two criteria replace it:
 

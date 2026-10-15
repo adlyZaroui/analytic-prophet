@@ -145,10 +145,12 @@ stop short on this objective, and both land exactly where we do once the trend i
 out of it. The third piece is evidence that one model is being fitted rather than two; it
 is *not* evidence about the kink specifically, for the reason given in that section.
 
-**Using `lp__` as the yardstick is what made this legible.** Parameters cannot be
-compared directly across the two implementations (rotated Fourier basis, different
-changepoints), but `lp__` is a single scalar, reparameterization-invariant, and is the
-quantity the model is actually defined by. Both implementations can be scored on it.
+**Using `lp__` as the yardstick is what made this legible.** When this was written the
+parameters could not be compared directly across the two implementations: the Fourier
+basis started at a different time, and the changepoints sat elsewhere, until #36 and #15
+aligned both. `lp__` was comparable throughout. It is a single scalar,
+reparameterization-invariant, and the quantity the model is actually defined by, so both
+implementations can be scored on it.
 
 ### What this does and does not claim
 
