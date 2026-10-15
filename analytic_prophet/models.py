@@ -65,8 +65,9 @@ def canonical_to_cpp(params, layout=DEFAULT_LAYOUT):
     The C++ core carries zeta = log(sigma_obs) as the LAST element, whereas the
     canonical layout keeps sigma_obs between delta and beta, mirroring the order
     of Stan's `parameters` block. Both describe the same model; only the
-    packing differs. The log is what keeps sigma_obs positive in the C++, since
-    liblbfgs has no box constraints.
+    packing differs. The log is what keeps sigma_obs positive in the C++, with
+    no bound -- chosen when the solver was liblbfgs, which has no box
+    constraints, and kept since; the Python backend uses it too (#229).
     """
     k, m, delta, sigma_obs, beta = extract_params(params, layout)
     return np.concatenate(([k], [m], delta, beta, [np.log(sigma_obs)]))

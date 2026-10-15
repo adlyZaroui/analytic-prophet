@@ -1752,8 +1752,8 @@ class AnalyticProphet:
 
         # The compiled optimizer's layout is [k, m, delta(S), beta(K), zeta],
         # with zeta = log(sigma_obs) last -- see cpp_to_canonical. Estimating
-        # the log keeps sigma_obs positive without box constraints, which
-        # liblbfgs does not have.
+        # the log keeps sigma_obs positive with no bound, as the Python backend
+        # does too since #229.
         zeta_init = np.log(defaults['sigma_obs'])
         params = np.concatenate(([defaults['k']], [defaults['m']],
                                  defaults['delta'], defaults['beta'], [zeta_init]))

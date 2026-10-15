@@ -29,9 +29,10 @@ tracking the L1 strength exactly: 1/changepoint_prior_scale = 20 died at 2 itera
 rerun; paper/experiments/strength.py asks the same question of SciPy's L-BFGS-B,
 #175.)
 
-The fix is OWL-QN, liblbfgs's built-in support for exactly this class of
+The fix was OWL-QN, liblbfgs's built-in support for exactly this class of
 objective, which takes the L1 coefficient itself and handles the kink by
-projecting each step onto the current orthant.
+projecting each step onto the current orthant -- until #23 replaced it here as
+well, with the split reformulation below solved by LBFGSpp's L-BFGS-B.
 
 The same root cause independently broke fit(): plain L-BFGS-B stalls on the
 same kinks, at a loss 17.8% above the optimum, while reporting success=True.
