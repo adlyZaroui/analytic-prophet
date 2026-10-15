@@ -19,12 +19,13 @@ specifies is
     + \frac{k^2}{2\sigma_k^2} + \frac{m^2}{2\sigma_m^2}
     + \frac{1}{\tau}\sum_{j=1}^{S}\lvert\delta_j\rvert
     + \frac{\lVert\beta\rVert^2}{2\sigma_\beta^2}
-    + \frac{\sigma^2}{2\sigma_\varepsilon^2},
+    + \frac{\sigma^2}{2\sigma_\sigma^2},
   \label{eq:objective}
 \end{equation}
-with $\theta = (k, m, \delta, \beta, \sigma)$ and $\tau$ the
-\code{changepoint_prior_scale}, $0.05$ by default. Unless it says otherwise, this
-paper fits Prophet's \emph{default configuration}: linear growth, the additive
+with $\theta = (k, m, \delta, \beta, \sigma)$, the prior scales $\sigma_k$,
+$\sigma_m$, $\sigma_\beta$ and $\sigma_\sigma$ of $k$, $m$, $\beta$ and $\sigma$, and
+$\tau$ the \code{changepoint_prior_scale}, $0.05$ by default. Unless it says
+otherwise, this paper fits Prophet's \emph{default configuration}: linear growth, the additive
 seasonal terms Prophet selects from the span and spacing of the history, 25
 changepoints and $\tau = 0.05$.
 

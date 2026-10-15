@@ -6,6 +6,18 @@ objective could be a difference in what is being fitted rather than how; a
 difference in where two optimizers stop could reflect non-uniqueness rather than
 non-convergence; and a failure could be an artefact of one algorithm rather than
 of the objective. The controls are chosen to rule each of those out in turn.
+Most are measured at the three lengths used throughout, $T = 300$, $1000$ and $2905$
+on the Peyton Manning series, and \cref{tab:lengths} collects those results.
+
+\begin{table}[t]
+  \centering
+  \small
+  \caption{The results of this section at each of its three lengths, on the Peyton
+    Manning series in Prophet's default configuration. Margins and shortfalls are in
+    nats of $\lp$, each against the optimum of the problem its subsection describes.}
+  \label{tab:lengths}
+  \input{generated/lengths}
+\end{table}
 
 \subsection{The optimum, under Prophet's own density}
 \label{sec:evidence:lp}
@@ -14,17 +26,15 @@ We score both solutions with Stan's own log density, evaluated through
 \code{CmdStanModel.log_prob} on Prophet's compiled model, fitting both on
 Prophet's own changepoint locations so that only the optimizer differs. On the
 Peyton Manning series in Prophet's default configuration the corrected optimum
-is higher at every length measured, by \LpMarginShort{} nats at $T = 300$,
-\LpMarginMid{} at $T = 1000$ and \LpMarginLong{} at $T = 2905$.
+is higher at every length measured (\cref{tab:lengths}).
 
 The margin is a difference of log densities, and it is never quoted here as a
 share of $\lp$: Stan's sampling statements drop normalising constants and Prophet
 fits $y / \max\lvert y\rvert$, so $\lp$ is defined only up to an additive constant
-and a share of it depends on constants nobody chose. Two readings are free of them.
-As a ratio of posterior densities, Prophet's solution has \LpDensityShort\%,
-\LpDensityMid\% and \LpDensityLong\% of the density at the corrected optimum. Per
-observation, the margin falls by a factor of \LpPerObsDecline{} across the range, from
-\LpPerObsShort{} to \LpPerObsLong{} nats. The margin itself does not decline, and it
+and a share of it depends on constants nobody chose. Two readings are free of them,
+and \cref{tab:lengths} gives both: the density at Prophet's solution as a share of the
+density at the corrected optimum, and the margin per observation, which falls by a
+factor of \LpPerObsDecline{} across the range. The margin itself does not decline, and it
 depends on the width of the model as much as its length: with yearly seasonality alone
 the margin at $T = 2905$ is \MarginYearlyLong{} nats rather than \LpMarginLong.
 
@@ -65,12 +75,9 @@ by less than \KktLpMin.
 
 Nor is the margin a matter of Prophet's stopping tolerances. Stan's L-BFGS has five
 tests besides its budget of iterations, and with every one set to machine precision or
-below it runs on until an iteration makes no progress or its line search fails. On the
-full series that takes it from iteration \TolDefaultIterLong{} to
-\TolFiveIterLong{}, and it still ends \TolFiveShortLong{} nats short of the optimum
-(\TolDefaultShortLong{} at the defaults); at $T = 300$ and $1000$ it ends
-\TolFiveShortShort{} and \TolFiveShortMid{} nats short, against \TolDefaultShortShort{}
-and \TolDefaultShortMid. With yearly seasonality alone at $T = 2905$ it runs
+below it runs on until an iteration makes no progress or its line search fails. It
+runs longer at every length, and at every length it still ends short of the optimum
+(\cref{tab:lengths}). With yearly seasonality alone at $T = 2905$ it runs
 \TolFiveIterYearly{} iterations instead of \TolDefaultIterYearly{} and closes the gap
 from \TolDefaultShortYearly{} to \TolFiveShortYearly{} nats, and no further. These runs
 call Stan directly, because where the line search fails Prophet cannot report the
@@ -81,12 +88,12 @@ tolerances on, and cmdstanpy rejects them for Newton, so the fit raises an error
 \label{sec:evidence:kkt}
 
 A margin in $\lp$ compares two points; a first-order certificate grades each on
-its own. Write \eqref{eq:objective} as a smooth part $s$ plus
-$\tau^{-1}\sum_j\lvert\delta_j\rvert$ and hold $\sigma$ at the point's own value. The
-point is a minimiser if and only if $0$ lies in the subdifferential there:
-$\partial s/\partial x = 0$ for $x$ among $k$, $m$ and $\beta$;
-$\partial s/\partial\delta_j + \operatorname{sign}(\delta_j)/\tau = 0$ wherever
-$\delta_j \ne 0$; and $\lvert\partial s/\partial\delta_j\rvert \le 1/\tau$ wherever
+its own. Write \eqref{eq:objective} as $F + \tau^{-1}\sum_j\lvert\delta_j\rvert$,
+with $F$ the smooth part of \eqref{eq:P}, and hold $\sigma$ at the point's own value.
+The point is a minimiser if and only if $0$ lies in the subdifferential there:
+$\partial F/\partial x = 0$ for $x$ among $k$, $m$ and $\beta$;
+$\partial F/\partial\delta_j + \operatorname{sign}(\delta_j)/\tau = 0$ wherever
+$\delta_j \ne 0$; and $\lvert\partial F/\partial\delta_j\rvert \le 1/\tau$ wherever
 $\delta_j = 0$. The norm of the subdifferential's minimum-norm element measures how far
 a point is from meeting them. The ``if'' is the convexity of \cref{sec:model}, which
 holds in Prophet's default configuration once $\sigma$ is fixed. Fixing it costs the
@@ -149,26 +156,20 @@ argument needs no reference implementation.
 We fit Prophet's own L-BFGS from \MultiStarts{} random starts at each length, with
 $\sigma$ held at Prophet's own estimate. The starts are seeded: $k$ and $m$ from
 $N(0, 1)$, every $\delta_j$ from Prophet's own $\mathrm{Laplace}(0, \tau)$ prior, every
-$\beta_j$ from $N(0, 1)$. The fits scatter, by \MultiFixedSpreadShort,
-\MultiFixedSpreadMid{} and \MultiFixedSpreadLong{} nats in $\lp$ at the three lengths,
-and their rates differ from the optimum's by a median of \MultiFixedDistanceShort,
-\MultiFixedDistanceMid{} and \MultiFixedDistanceLong. None of the \MultiTotal{} fits
-comes within $10^{-3}$ nats of the optimum: they fall short by \MultiFixedMinShort{} to
-\MultiFixedMaxShort{} nats at $T = 300$, \MultiFixedMinMid{} to \MultiFixedMaxMid{} at
-$T = 1000$ and \MultiFixedMinLong{} to \MultiFixedMaxLong{} at $T = 2905$, and Prophet's
-own default start is no exception, at \MultiFixedDefaultShort, \MultiFixedDefaultMid{}
-and \MultiFixedDefaultLong{} nats. The optimum used to measure the distance is this
-implementation's, certified with a relaxed residual of at most
+$\beta_j$ from $N(0, 1)$. The fits scatter, both in $\lp$ and in their rates
+(\cref{tab:lengths}). None of the \MultiTotal{} fits comes within $10^{-3}$ nats of
+the optimum, and Prophet's own default start is no exception. The optimum used to
+measure the distance is this implementation's, certified with a relaxed residual of at
+most
 $\MultiReferenceResidual$; from \MultiOurs{} of the same starts it reaches it every time,
 to within $\MultiOursWorst$ nats.
 
 With $\sigma$ free the objective is not jointly convex, and scatter there proves nothing
 by itself; it is reported beside the convex case so the two are not confused. The
-picture is the same. Prophet's fits fall short by \MultiFreeMinShort{} to
-\MultiFreeMaxShort{} nats at $T = 300$ and \MultiFreeMinLong{} to \MultiFreeMaxLong{} at
-$T = 2905$, and this implementation again reaches one point from every start. In
-\MultiFallbacks{} of the free-$\sigma$ fits Stan's L-BFGS exited abnormally and Prophet's
-fall-back to Newton finished it.
+picture is the same, Prophet's fits falling short at every length
+(\cref{tab:lengths}), and this implementation again reaches one point from every
+start. In \MultiFallbacks{} of the free-$\sigma$ fits Stan's L-BFGS exited abnormally
+and Prophet's fall-back to Newton finished it.
 
 \subsection{Smoothing the prior inside Stan}
 \label{sec:evidence:surrogate}
@@ -209,24 +210,18 @@ smoothed one and Prophet's.
 
 At $\varepsilon = \SmoothEpsMin$ the smoothed program is Prophet's for every practical
 purpose, and Stan stops short of its optimum by amounts comparable to Prophet's
-shortfall on the $\ell_1$ problem: \SmoothGapAtMinShort, \SmoothGapAtMinMid{} and
-\SmoothGapAtMinLong{} nats at the three lengths, against \LpMarginShort, \LpMarginMid{}
-and \LpMarginLong. As $\varepsilon$
-grows the convergence gap falls, by a factor of up to \SmoothDropShort, \SmoothDropMid{}
-and \SmoothDropLong{} at the three lengths, while the smoothing bias rises, in proportion
-to $\varepsilon$ up to $\varepsilon = 10^{-2}$, and the two cross near $\varepsilon = \SmoothCrossingShort$,
-$\SmoothCrossingMid$ and $\SmoothCrossingLong$. At the best $\varepsilon$ on the grid
-($\SmoothBestEpsShort$, $\SmoothBestEpsMid$ and $\SmoothBestEpsLong$), Stan's own L-BFGS on
-the smoothed program lands within $\SmoothBestShort$, $\SmoothBestMid$ and
-$\SmoothBestLong$ nats of Prophet's $\ell_1$ optimum --- \SmoothFactorShort, \SmoothFactorMid{}
-and \SmoothFactorLong{} times closer than Prophet gets on its actual problem. Nothing but the
-smoothness of the objective changed.
+shortfall on the $\ell_1$ problem (\cref{tab:lengths}). As $\varepsilon$ grows the
+convergence gap falls, by a factor that differs widely from one length to another,
+while the smoothing bias rises, in proportion to $\varepsilon$ up to
+$\varepsilon = 10^{-2}$, and the two cross. At the best $\varepsilon$ on the grid,
+Stan's own L-BFGS on the smoothed program lands between \SmoothFactorLong{} and
+\SmoothFactorShort{} times closer to Prophet's $\ell_1$ optimum than Prophet gets on its
+actual problem. Nothing but the smoothness of the objective changed.
 
 The gap does not vanish as $\varepsilon$ grows. Wherever $\varepsilon \ge 10^{-4}$ it
-stays between $\SmoothPlateauMinShort$ and $\SmoothPlateauMaxShort$ nats at
-$T = 300$, and between $\SmoothPlateauMinLong$ and $\SmoothPlateauMaxLong$ at $T = 2905$,
-where Stan ends on its relative-gradient test, as it does in \SmoothStoppedGradient{} of
-the \SmoothRuns{} runs. What remains there is not the kink, which the smoothed problem does
+stays within a band at each length (\cref{tab:lengths}), and there Stan ends on its
+relative-gradient test, as it does in \SmoothStoppedGradient{} of the \SmoothRuns{}
+runs. What remains there is not the kink, which the smoothed problem does
 not have, but the point at which Stan's stopping rule declares a smooth problem
 solved.
 
@@ -240,12 +235,10 @@ $\lambda\lVert\delta\rVert_1$ with a unique minimiser, which an active-set metho
 computes exactly; Stan's gradient certifies each with a relaxed residual of at most
 $\StrengthReferenceResidual$. Wherever that minimiser has no rate at zero, L-BFGS
 reaches it to within $\StrengthSmoothMax$ nats. As $\lambda$ grows and more of the
-minimiser's rates sit on the kink, it stops further short: by \StrengthDefaultShort,
-\StrengthDefaultMid{} and \StrengthDefaultLong{} nats at the default $\lambda = 20$,
-where \StrengthDefaultZerosShort, \StrengthDefaultZerosMid{} and
-\StrengthDefaultZerosLong{} of the 25 rates are zero. Across the \StrengthCells{} cells
-the rank correlation between the shortfall and the number of zero rates is
-\StrengthRankCorrelation.
+minimiser's rates sit on the kink, it stops further short; \cref{tab:lengths} gives
+the shortfall at the default $\lambda = 20$, and how many rates are zero there. Across
+the \StrengthCells{} cells the rank correlation between the shortfall and the number of
+zero rates is \StrengthRankCorrelation.
 
 \subsection{The solution path in $\tau$}
 \label{sec:evidence:path}
@@ -336,4 +329,5 @@ to straddle the kink wherever $\lvert\delta_j\rvert < 2\times10^{-3}$, and it da
 reflecting negative eigenvalues rather than by adding to the diagonal. Run by
 Prophet on the same series, it stops between \NewtonStanMin{} and \NewtonStanMax{}
 nats short of the optimum: closer than the natural-parameterisation Newton at every
-length, and at no length at the optimum, with no rate exactly zero.
+length, and at no length at the optimum, with no rate exactly zero. \Cref{tab:lengths}
+gives both at its three lengths.

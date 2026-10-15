@@ -15,16 +15,16 @@ describes the implementation that computes the optimum for the evidence of
 \subsection{Exactness}
 \label{sec:reformulation:exact}
 
-Collect the remaining parameters as $\theta = (k, m, \beta, \sigma)$ and write
+Collect the remaining parameters as $\psi = (k, m, \beta, \sigma)$ and write
 Prophet's objective \eqref{eq:objective} as
 \begin{equation}
-  P(\theta, \delta) = F(\theta, \delta) + \tau^{-1}\lVert\delta\rVert_1 ,
+  P(\psi, \delta) = F(\psi, \delta) + \tau^{-1}\lVert\delta\rVert_1 ,
   \label{eq:P}
 \end{equation}
 where $F$ is everything else: the likelihood and the priors on $k$, $m$, $\beta$ and
 $\sigma$. The split problem is
 \begin{equation}
-  Q(\theta, \delta^+, \delta^-) = F(\theta, \delta^+ - \delta^-)
+  Q(\psi, \delta^+, \delta^-) = F(\psi, \delta^+ - \delta^-)
     + \tau^{-1}\textstyle\sum_j(\delta_j^+ + \delta_j^-),
   \qquad \delta^+, \delta^- \ge 0 .
   \label{eq:Q}
@@ -34,26 +34,26 @@ $\delta_j$ is a single unconstrained parameter, is the \emph{natural} one and
 \eqref{eq:Q} the \emph{split}. Nothing below uses the form of $F$. It holds for linear and logistic growth, additive
 and multiplicative seasonality, extra regressors, and $\sigma$ free or held fixed;
 all that changes between them is $F$, and the penalty, which is all the split
-touches, is the same in every case. Write $s(\delta) = (\delta_+, \delta_-)$ for the
+touches, is the same in every case. Write $\varphi(\delta) = (\delta_+, \delta_-)$ for the
 complementary split, with $(x)_+ = \max(x, 0)$ and $(x)_- = \max(-x, 0)$
 componentwise.
 
 \begin{proposition}
 \label{prop:exact}
-Let $\Theta \subseteq \mathbb{R}^p$, let $F\colon \Theta\times\mathbb{R}^S \to \mathbb{R}$ be any
-function and $\tau > 0$.
+Let $\Psi$ be a subset of a Euclidean space, let
+$F\colon \Psi\times\mathbb{R}^S \to \mathbb{R}$ be any function and $\tau > 0$.
 \begin{enumerate}
   \item[(i)] $\inf Q = \inf P$, whether or not either is attained.
-  \item[(ii)] If $(\theta^\star, \delta^{+\star}, \delta^{-\star})$ minimises $Q$,
+  \item[(ii)] If $(\psi^\star, \delta^{+\star}, \delta^{-\star})$ minimises $Q$,
     globally or locally, then $\delta^{+\star}_j\,\delta^{-\star}_j = 0$ for every
-    $j$ and $(\theta^\star, \delta^{+\star} - \delta^{-\star})$ minimises $P$ in the
-    same sense. Conversely, if $(\theta^\star, \delta^\star)$ minimises $P$, globally
-    or locally, then $(\theta^\star, s(\delta^\star))$ minimises $Q$ in the same
+    $j$ and $(\psi^\star, \delta^{+\star} - \delta^{-\star})$ minimises $P$ in the
+    same sense. Conversely, if $(\psi^\star, \delta^\star)$ minimises $P$, globally
+    or locally, then $(\psi^\star, \varphi(\delta^\star))$ minimises $Q$ in the same
     sense.
-  \item[(iii)] If $\Theta$ is open and $F$ is continuously differentiable, a point
+  \item[(iii)] If $\Psi$ is open and $F$ is continuously differentiable, a point
     satisfies the Karush--Kuhn--Tucker conditions of \eqref{eq:Q} if and only if
-    it is the complementary split $(\theta, s(\delta))$ of a point at which
-    $0 \in \partial P$: $\nabla_\theta F = 0$,
+    it is the complementary split $(\psi, \varphi(\delta))$ of a point at which
+    $0 \in \partial P$: $\nabla_\psi F = 0$,
     $\partial F/\partial\delta_j = -\operatorname{sign}(\delta_j)/\tau$ wherever
     $\delta_j \ne 0$, and $\lvert\partial F/\partial\delta_j\rvert \le 1/\tau$
     wherever $\delta_j = 0$.
@@ -65,10 +65,10 @@ Everything follows from an identity. For any feasible $(\delta^+, \delta^-)$, wi
 $\delta = \delta^+ - \delta^-$, we have $\delta^+_j + \delta^-_j = \lvert\delta_j\rvert
 + 2\min(\delta^+_j, \delta^-_j)$, so
 \begin{equation}
-  Q(\theta, \delta^+, \delta^-) = P(\theta, \delta)
+  Q(\psi, \delta^+, \delta^-) = P(\psi, \delta)
     + \frac{2}{\tau}\sum_j \min(\delta^+_j, \delta^-_j),
   \qquad\text{and in particular}\qquad
-  Q(\theta, s(\delta)) = P(\theta, \delta).
+  Q(\psi, \varphi(\delta)) = P(\psi, \delta).
   \label{eq:QP}
 \end{equation}
 
@@ -77,31 +77,31 @@ $\inf Q \ge \inf P$; and every value of $P$ is a value of $Q$, so
 $\inf Q \le \inf P$.
 
 (ii) Suppose $c = \min(\delta^{+\star}_j, \delta^{-\star}_j) > 0$ for some $j$.
-Subtracting any $\varepsilon \in (0, c]$ from both leaves $\delta^\star$, and
+Subtracting any $h \in (0, c]$ from both leaves $\delta^\star$, and
 therefore $F$, unchanged, keeps the point feasible, and lowers $Q$ by
-$2\varepsilon/\tau$. Such points are arbitrarily close, so the point is not even a
+$2h/\tau$. Such points are arbitrarily close, so the point is not even a
 local minimiser; hence every pair has a zero member and
-$(\delta^{+\star}, \delta^{-\star}) = s(\delta^\star)$. Since $s$ is continuous, a
-point $(\theta, \delta)$ near $(\theta^\star, \delta^\star)$ has
-$(\theta, s(\delta))$ near $(\theta^\star, s(\delta^\star))$, and then
-$P(\theta, \delta) = Q(\theta, s(\delta)) \ge Q(\theta^\star, s(\delta^\star)) =
-P(\theta^\star, \delta^\star)$; for a global minimiser the same holds at every
-point. Conversely, a feasible $(\theta, \delta^+, \delta^-)$ near
-$(\theta^\star, s(\delta^\star))$ has $(\theta, \delta^+ - \delta^-)$ near
-$(\theta^\star, \delta^\star)$, and then, by \eqref{eq:QP},
-$Q(\theta, \delta^+, \delta^-) \ge P(\theta, \delta^+ - \delta^-) \ge
-P(\theta^\star, \delta^\star) = Q(\theta^\star, s(\delta^\star))$.
+$(\delta^{+\star}, \delta^{-\star}) = \varphi(\delta^\star)$. Since $\varphi$ is continuous, a
+point $(\psi, \delta)$ near $(\psi^\star, \delta^\star)$ has
+$(\psi, \varphi(\delta))$ near $(\psi^\star, \varphi(\delta^\star))$, and then
+$P(\psi, \delta) = Q(\psi, \varphi(\delta)) \ge Q(\psi^\star, \varphi(\delta^\star)) =
+P(\psi^\star, \delta^\star)$; for a global minimiser the same holds at every
+point. Conversely, a feasible $(\psi, \delta^+, \delta^-)$ near
+$(\psi^\star, \varphi(\delta^\star))$ has $(\psi, \delta^+ - \delta^-)$ near
+$(\psi^\star, \delta^\star)$, and then, by \eqref{eq:QP},
+$Q(\psi, \delta^+, \delta^-) \ge P(\psi, \delta^+ - \delta^-) \ge
+P(\psi^\star, \delta^\star) = Q(\psi^\star, \varphi(\delta^\star))$.
 
-(iii) Write $g = \nabla_\delta F$ at $(\theta, \delta^+ - \delta^-)$. The
-Karush--Kuhn--Tucker conditions of \eqref{eq:Q} are $\nabla_\theta F = 0$ and, for
-each $j$, multipliers $\mu^+_j, \mu^-_j \ge 0$ with
-$g_j + 1/\tau = \mu^+_j$, $-g_j + 1/\tau = \mu^-_j$ and
+(iii) Write $\partial_j F$ for $\partial F/\partial\delta_j$ at
+$(\psi, \delta^+ - \delta^-)$. The Karush--Kuhn--Tucker conditions of \eqref{eq:Q}
+are $\nabla_\psi F = 0$ and, for each $j$, multipliers $\mu^+_j, \mu^-_j \ge 0$ with
+$\partial_j F + 1/\tau = \mu^+_j$, $-\partial_j F + 1/\tau = \mu^-_j$ and
 $\mu^+_j\delta^+_j = \mu^-_j\delta^-_j = 0$. Adding the two equations gives
 $\mu^+_j + \mu^-_j = 2/\tau > 0$, so the multipliers never both vanish and
 complementarity holds at every such point, not only at minimisers. If
-$\delta^+_j > 0$ then $\mu^+_j = 0$ and $g_j = -1/\tau$, and symmetrically
-$g_j = 1/\tau$ if $\delta^-_j > 0$; if both are zero, the multipliers are
-non-negative exactly when $\lvert g_j\rvert \le 1/\tau$. Each step reverses.
+$\delta^+_j > 0$ then $\mu^+_j = 0$ and $\partial_j F = -1/\tau$, and symmetrically
+$\partial_j F = 1/\tau$ if $\delta^-_j > 0$; if both are zero, the multipliers are
+non-negative exactly when $\lvert \partial_j F\rvert \le 1/\tau$. Each step reverses.
 \end{proof}
 
 None of this makes use of convexity, and it holds for any likelihood, so it covers
@@ -118,9 +118,9 @@ projected gradient, the same first-order condition that
 If $\delta^+_j, \delta^-_j$ are independent exponential variables with rate
 $1/\tau$, then $\delta^+_j - \delta^-_j \sim \mathrm{Laplace}(0, \tau)$, and
 \eqref{eq:Q} is, up to an additive constant, the negative log of the \emph{joint}
-posterior over $(\theta, \delta^+, \delta^-)$ under those priors. Since the
+posterior over $(\psi, \delta^+, \delta^-)$ under those priors. Since the
 likelihood sees only $\delta^+ - \delta^-$, that posterior's marginal for
-$(\theta, \delta)$ is exactly Prophet's. The reformulation therefore has a
+$(\psi, \delta)$ is exactly Prophet's. The reformulation therefore has a
 probabilistic reading as well as an algebraic one: it preserves Prophet's prior
 as a marginal.
 
