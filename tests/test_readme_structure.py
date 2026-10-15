@@ -120,7 +120,7 @@ TESTED_ELSEWHERE = {
 # Not results: settings, structure, and dates.
 CONSTANTS = {
     "1": "a section number, and ours / Prophet's - 1", "2": "a section number",
-    "3": "a section number", "4": "the paper's evidence section, §4",
+    "3": "a section number",
     "0": "T = 0", "17": "C++17; and Prophet's methods that are the same (test_parity_surface)",
     "8": "Prophet's methods that are module-level here (test_parity_surface); and "
          "\\SmoothFactorLong",
@@ -258,6 +258,11 @@ def test_the_evidence_leads_with_what_a_reader_can_reproduce(readme):
                if line.startswith("- **")]
     assert len(bullets) == 3
     assert "liblbfgs" not in readme and "17.8%" not in readme
+    # each links into the paper by its file, not by a section number, which the
+    # paper's restructure (#204) and its discussion (#208) both move
+    section = _section(readme, "3. Why: the optimum Prophet misses")
+    assert section.count("paper/sections/evidence.tex)") == len(bullets)
+    assert not re.search(r"\[§\s*\d", readme)
 
 
 def test_the_paper_and_how_to_cite_it(readme):

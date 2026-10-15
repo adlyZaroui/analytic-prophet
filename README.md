@@ -214,13 +214,13 @@ The evidence, each piece reproducible and written up in the paper:
 
 - **Prophet's solution fails the first-order optimality conditions on every one of 3,008
   M4 series**, even when each changepoint rate is read in the way most favourable to it
-  ([§4](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
+  ([in the paper](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
 - **From 150 random starts, with the noise scale σ held fixed so that the optimum is
   unique, Stan's L-BFGS with Prophet's settings reaches it from none**
-  ([§4](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
+  ([in the paper](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
 - **Smoothing the prior inside Prophet's own Stan program, with nothing else changed,
   brings the same L-BFGS 8 to 1,592 times closer to the optimum**: the kink is what stops
-  it ([§4](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
+  it ([in the paper](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
 
 → [the paper](#paper--citing), and the argument in prose:
 [the non-smooth objective](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/non-smooth-objective.md)
