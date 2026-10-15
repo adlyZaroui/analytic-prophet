@@ -17,7 +17,8 @@ Recorded, all scored by Stan's density of Prophet's compiled program:
   * **this implementation** on the same data and changepoints, by its default
     rule and by L-BFGS, and from 40 random starts -- the model is not convex,
     so the best of those is the reference optimum and their spread maps the
-    local optima;
+    local optima -- with how many saddle points its Newton path stepped off on
+    the way (#193);
   * **the smoothed program** (#168) fitted by Stan's L-BFGS across eps -- the
     control that separates the kink from the flat direction;
   * at each point, the minimum-norm subgradient over every parameter, sigma
@@ -73,7 +74,8 @@ CAP = 10_000           # Prophet's iteration budget
 
 POINT_FIELDS = ["point", "algorithm", "epsilon", "iterations", "stopped_by", "seconds",
                 "lp", "shortfall", "k", "m", "delta_1", "delta_2", "beta", "sigma_obs",
-                "residual", "residual_relaxed", "cos_softest", "min_eigenvalue"]
+                "residual", "residual_relaxed", "cos_softest", "min_eigenvalue",
+                "saddle_escapes"]
 VARIANT_FIELDS = ["variant", "algorithm", "iterations", "stopped_by", "seconds", "lp",
                   "best_lp", "shortfall", "stalled"]
 
@@ -142,7 +144,8 @@ def _ours(df, changepoints_t, lib_path, algorithm=None, initial_params=None, **m
     return {"k": fitted.params["k"][0][0], "m": fitted.params["m"][0][0],
             "delta": np.asarray(fitted.params["delta"][0], dtype=float),
             "sigma_obs": float(fitted.sigma_obs),
-            "beta": np.asarray(fitted.params["beta"][0], dtype=float)}, fitted.optimizer_used
+            "beta": np.asarray(fitted.params["beta"][0], dtype=float)}, fitted.optimizer_used, \
+        fitted.opt.saddle_escapes
 
 
 def _beta_size(df, changepoints_t, lib_path, **model):
@@ -216,27 +219,27 @@ def reproducer(lib_path):
     for algorithm in ("Newton", "LBFGS"):
         point, iterations, reason, seconds = _stan("original", data, inits, algorithm)
         points.append((f"prophet {algorithm}", algorithm, "", iterations, reason,
-                       default_seconds if algorithm == "Newton" else seconds, point))
+                       default_seconds if algorithm == "Newton" else seconds, point, ""))
     for algorithm in (None, "LBFGS"):
-        point, used = _ours(df, changepoints_t, lib_path, algorithm)
+        point, used, escapes = _ours(df, changepoints_t, lib_path, algorithm)
         points.append((f"ours {'default' if algorithm is None else algorithm}", used, "",
-                       "", "", "", point))
+                       "", "", "", point, escapes))
     for epsilon in EPSILONS:
         point, iterations, reason, seconds = _stan("smooth", data, inits, "LBFGS", epsilon)
         points.append((f"smoothed eps={epsilon:g}", "LBFGS", epsilon, iterations, reason,
-                       seconds, point))
+                       seconds, point, ""))
 
     starts = _random_starts(STARTS, int(data["S"]), _beta_size(df, changepoints_t, lib_path))
     local = []
     for start in starts:
-        point, _ = _ours(df, changepoints_t, lib_path, "LBFGS", initial_params=start)
+        point, _, _ = _ours(df, changepoints_t, lib_path, "LBFGS", initial_params=start)
         local.append((_score(data, point)[0], point))
     best_lp, best = max(local, key=lambda item: item[0])
-    points.append(("ours best of 40 starts", "LBFGS", "", "", "", "", best))
+    points.append(("ours best of 40 starts", "LBFGS", "", "", "", "", best, 0))
 
     eigenvalues, softest = _softest(data, best)
     rows = []
-    for name, algorithm, epsilon, iterations, reason, seconds, point in points:
+    for name, algorithm, epsilon, iterations, reason, seconds, point, escapes in points:
         lp, residual = _score(data, point)
         relaxed = _score(data, point, relaxed=True)[1]
         shift = np.array([point["k"] - best["k"], point["m"] - best["m"],
@@ -251,7 +254,8 @@ def reproducer(lib_path):
                      "beta": float(np.ravel(point["beta"])[0]),
                      "sigma_obs": float(point["sigma_obs"]), "residual": residual,
                      "residual_relaxed": relaxed, "cos_softest": cosine,
-                     "min_eigenvalue": float(_softest(data, point)[0][0])})
+                     "min_eigenvalue": float(_softest(data, point)[0][0]),
+                     "saddle_escapes": escapes})
     landscape = sorted({round(lp, 4) for lp, _ in local}, reverse=True)
     counts = {value: sum(1 for lp, _ in local if round(lp, 4) == value) for value in landscape}
     summary = {"eigenvalues": eigenvalues.tolist(), "softest": softest.tolist(),

@@ -1,19 +1,19 @@
 variant,algorithm,iterations,stopped_by,seconds,lp,best_lp,shortfall,stalled
-as reported,LBFGS,28,Convergence detected: absolute parameter change was below tolerance,0.03280091704800725,4.865966896627507,4.944870188238952,0.0789032916114456,False
-as reported,Newton,24,improvement in lp__ at most 1e-8,0.038434625021182,4.944870168733208,4.944870188238952,1.9505744575099015e-08,False
-regressor rounded to 15 digits,LBFGS,28,Convergence detected: absolute parameter change was below tolerance,0.03239195898640901,4.865966896627733,4.944870188238952,0.07890329161121912,False
-regressor rounded to 15 digits,Newton,24,improvement in lp__ at most 1e-8,0.03818033391144127,4.944870168733166,4.944870188238952,1.950578631948474e-08,False
-regressor rounded to 16 digits,LBFGS,28,Convergence detected: absolute parameter change was below tolerance,0.032371749985031784,4.865966896627507,4.944870188238952,0.0789032916114456,False
-regressor rounded to 16 digits,Newton,24,improvement in lp__ at most 1e-8,0.03810499992687255,4.944870168733208,4.944870188238952,1.9505744575099015e-08,False
-last y 1 instead of 0,LBFGS,22,Convergence detected: absolute parameter change was below tolerance,0.03151724999770522,5.765487799862414,6.511113348653299,0.7456255487908852,False
-last y 1 instead of 0,Newton,18,improvement in lp__ at most 1e-8,0.035525750019587576,6.511100247890068,6.511113348653299,1.3100763230688983e-05,False
-1 changepoint,LBFGS,9,Convergence detected: absolute parameter change was below tolerance,0.031939417007379234,4.081013786116197,4.944870188238949,0.8638564021227522,False
-1 changepoint,Newton,21,improvement in lp__ at most 1e-8,0.03959837497677654,4.944055403192707,4.944870188238949,0.0008147850462414397,False
-3 changepoints,LBFGS,26,Convergence detected: absolute parameter change was below tolerance,0.03132429195102304,3.6056546055328145,4.94487018823895,1.3392155827061352,False
-3 changepoints,Newton,35,improvement in lp__ at most 1e-8,0.040767583064734936,4.944870166308363,4.94487018823895,2.19305862358965e-08,False
-6 changepoints,LBFGS,54,Convergence detected: absolute parameter change was below tolerance,0.03108837502077222,3.7757962410980337,4.94487018823895,1.169073947140916,False
-6 changepoints,Newton,36,improvement in lp__ at most 1e-8,0.042010959004983306,4.944866861505828,4.94487018823895,3.3267331218667096e-06,False
-additive seasonality,LBFGS,35,Convergence detected: absolute parameter change was below tolerance,0.03130129200872034,4.973070332007115,5.134978386862362,0.16190805485524695,False
-additive seasonality,Newton,30,improvement in lp__ at most 1e-8,0.038937083911150694,5.134976368671431,5.134978386862362,2.0181909308192303e-06,False
-no regressor,LBFGS,11,Convergence detected: absolute parameter change was below tolerance,0.03179254103451967,3.605550840706332,4.658859728508564,1.053308887802232,False
-no regressor,Newton,26,improvement in lp__ at most 1e-8,0.03648541704751551,4.65885921506769,4.658859728508564,5.134408738172169e-07,False
+as reported,LBFGS,28,Convergence detected: absolute parameter change was below tolerance,0.03247070801444352,4.865966896627507,4.944870188238952,0.0789032916114456,False
+as reported,Newton,24,improvement in lp__ at most 1e-8,0.03961937502026558,4.944870168733208,4.944870188238952,1.9505744575099015e-08,False
+regressor rounded to 15 digits,LBFGS,28,Convergence detected: absolute parameter change was below tolerance,0.03206437500193715,4.865966896627733,4.944870188238952,0.07890329161121912,False
+regressor rounded to 15 digits,Newton,24,improvement in lp__ at most 1e-8,0.03772691707126796,4.944870168733166,4.944870188238952,1.950578631948474e-08,False
+regressor rounded to 16 digits,LBFGS,28,Convergence detected: absolute parameter change was below tolerance,0.0318294579628855,4.865966896627507,4.944870188238952,0.0789032916114456,False
+regressor rounded to 16 digits,Newton,24,improvement in lp__ at most 1e-8,0.03837616601958871,4.944870168733208,4.944870188238952,1.9505744575099015e-08,False
+last y 1 instead of 0,LBFGS,22,Convergence detected: absolute parameter change was below tolerance,0.03225404105614871,5.765487799862414,6.511113348653299,0.7456255487908852,False
+last y 1 instead of 0,Newton,18,improvement in lp__ at most 1e-8,0.03634420793969184,6.511100247890068,6.511113348653299,1.3100763230688983e-05,False
+1 changepoint,LBFGS,9,Convergence detected: absolute parameter change was below tolerance,0.032270750030875206,4.081013786116197,4.944870188238949,0.8638564021227522,False
+1 changepoint,Newton,21,improvement in lp__ at most 1e-8,0.0398503749165684,4.944055403192707,4.944870188238949,0.0008147850462414397,False
+3 changepoints,LBFGS,26,Convergence detected: absolute parameter change was below tolerance,0.031082874978892505,3.6056546055328145,4.94487018823895,1.3392155827061352,False
+3 changepoints,Newton,35,improvement in lp__ at most 1e-8,0.0404417080571875,4.944870166308363,4.94487018823895,2.19305862358965e-08,False
+6 changepoints,LBFGS,54,Convergence detected: absolute parameter change was below tolerance,0.03185916703660041,3.7757962410980337,4.94487018823895,1.169073947140916,False
+6 changepoints,Newton,36,improvement in lp__ at most 1e-8,0.04257849999703467,4.944866861505828,4.94487018823895,3.3267331218667096e-06,False
+additive seasonality,LBFGS,35,Convergence detected: absolute parameter change was below tolerance,0.031113083008676767,4.973070332007115,5.134978386862362,0.16190805485524695,False
+additive seasonality,Newton,30,improvement in lp__ at most 1e-8,0.039123250055126846,5.134976368671431,5.134978386862362,2.0181909308192303e-06,False
+no regressor,LBFGS,11,Convergence detected: absolute parameter change was below tolerance,0.03143125004135072,3.605550840706332,4.658859728508564,1.053308887802232,False
+no regressor,Newton,26,improvement in lp__ at most 1e-8,0.03647183405701071,4.65885921506769,4.658859728508564,5.134408738172169e-07,False
