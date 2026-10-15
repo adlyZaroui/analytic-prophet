@@ -1,6 +1,6 @@
 {
  "cmdstan": "2.37.0",
- "commit": "c468688b3d83152dd4b43d196f4553a39468ab8a",
+ "commit": "33ed06d7f6017ebbda7d6b08c5037b28095bc16d",
  "epsilons": [
   1e-08,
   3.162277660168379e-08,
@@ -29,10 +29,10 @@
  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
  "processor": "arm",
  "python": "3.14.7",
- "recorded": "2026-10-12T21:59:31+00:00",
+ "recorded": "2026-10-15T04:13:28+00:00",
  "seed": 20260925,
  "versions": {
-  "analytic-prophet": "0.1.0",
+  "analytic-prophet": "0.1.1",
   "cmdstanpy": "1.3.0",
   "numpy": "2.5.3",
   "pandas": "3.0.5",

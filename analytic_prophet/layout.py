@@ -157,3 +157,74 @@ def split_to_canonical(z, n_delta=N_CHANGE_POINTS):
     sigma_obs = z[2 + 2 * n_delta]
     beta = z[3 + 2 * n_delta:]
     return np.concatenate(([k], [m], delta_pos - delta_neg, [sigma_obs], beta))
+
+
+class LogSigma:
+    """sigma_obs optimized as zeta = log(sigma_obs), as the compiled core does (#229).
+
+    optimize.cpp has always worked in zeta, which keeps sigma_obs positive with
+    no bound. The Python backend optimized sigma_obs itself, floored at 1e-6,
+    so its Newton steps were taken in different coordinates from its twin's --
+    and on a non-convex model that is enough to end in a different local
+    minimum: logistic growth on Peyton Manning, at T = 60 and 99, 8.36 and 0.50
+    nats apart. Run in zeta, nothing else changed, the Python Newton lands
+    exactly where the C++ one does; the Python L-BFGS-B lands where it did, in
+    fewer iterations.
+
+    Callers keep working in sigma_obs. This wraps the objective and gradient
+    for an optimizer, and maps points and bounds in and out. `index` is where
+    sigma_obs sits in the vector: `2 + 2 * n_delta` in the split layout,
+    `layout.sigma_obs_idx` in the natural one.
+    """
+
+    def __init__(self, index):
+        self.index = index
+
+    def to_log(self, z):
+        w = np.array(z, dtype=float)
+        w[self.index] = np.log(w[self.index])
+        return w
+
+    def from_log(self, w):
+        z = np.array(w, dtype=float)
+        z[self.index] = np.exp(z[self.index])
+        return z
+
+    def objective(self, f):
+        return lambda w: f(self.from_log(w))
+
+    def gradient(self, g):
+        def gradient_in_log(w):
+            z = self.from_log(w)
+            grad = np.array(g(z), dtype=float)
+            grad[self.index] *= z[self.index]          # d/d zeta = sigma d/d sigma
+            return grad
+        return gradient_in_log
+
+    def objective_and_gradient(self, fg):
+        def both(w):
+            z = self.from_log(w)
+            value, grad = fg(z)
+            grad = np.array(grad, dtype=float)
+            grad[self.index] *= z[self.index]
+            return value, grad
+        return both
+
+    def gradient_from_log(self, w, grad_w):
+        """A gradient in zeta, back to sigma_obs at the same point."""
+        grad = np.array(grad_w, dtype=float)
+        grad[self.index] /= np.exp(w[self.index])
+        return grad
+
+    def bounds(self, bounds):
+        """scipy-style `(low, high)` pairs. zeta is unbounded, as in the C++
+        core -- sigma_obs = exp(zeta) is positive without a floor -- unless the
+        caller pinned sigma_obs, which stays pinned."""
+        bounds = list(bounds)
+        low, high = bounds[self.index]
+        if low is not None and low == high:
+            bounds[self.index] = (float(np.log(low)), float(np.log(high)))
+        else:
+            bounds[self.index] = (None, None)
+        return bounds
+

@@ -150,14 +150,23 @@ iteration for its finite-difference Hessian:
 
 | T | rule picks | iterations | `python` | `compiled` |
 |---|---|---|---|---|
-| 50 | Newton | 44 | 0.247s | 0.016s |
-| 100 | L-BFGS | 149 | 0.026s | 0.005s |
-| 300 | L-BFGS | 546 | 0.112s | 0.017s |
+| 50 | Newton | 37 | 0.224s | 0.020s |
+| 100 | L-BFGS | 157 | 0.028s | 0.009s |
+| 300 | L-BFGS | 515 | 0.105s | 0.022s |
 
-The compiled path at T = 50 is 0.10x Prophet's 0.171s, so the Hessian is
+The compiled path at T = 50 is 0.12x Prophet's 0.172s, so the Hessian is
 affordable where it matters. The Python path is the readable reference rather
-than the deliverable,
-and Newton is where that shows most: at these sizes it is ~20x its own L-BFGS.
-`analytic=False` still selects finite differences under Newton as it does under
-L-BFGS, which is why the numeric-gradient column jumps to 52x at T = 50 --
-differencing the objective inside a method that then differences the gradient.
+than the deliverable, and Newton is where that shows most: at these sizes it is
+~16x its own L-BFGS. `analytic=False` still selects finite differences under
+Newton as it does under L-BFGS, which is why the numeric-gradient column jumps to
+63x at T = 50 -- differencing the objective inside a method that then
+differences the gradient.
+
+The same column jumps further at T = 100, to about 30s. Since #229 the Python
+path works in log(sigma_obs), and there finite-difference L-BFGS-B reaches the
+analytic optimum and then fails its line search on differencing noise. Prophet's
+rule retries with Newton, which lands on the same point; in sigma_obs the run had
+stopped on `ftol` in half a second. At T = 2905 it now runs to its evaluation
+limit instead of stopping on `ftol`, about 15s against 9.6s, and ends 0.67 nats
+closer to the optimum. The analytic gradient is not affected: on the Python path,
+#229 cut the iterations at four of these five lengths.

@@ -383,62 +383,73 @@ index-spaced changepoints land on observations, and the problem is better condit
 for it.
 
 `ftol` is the one that stays, and the reason is not that Stan's number is wrong but that
-**scipy's iterate sequence has plateaus**. On the full series it takes a step with a
-relative decrease of **6.8e-16** — four orders below Stan's threshold — while still
-**4.80 nats** from the optimum, and then goes on descending for another 3800 iterations.
-37% of its steps are below the threshold. Stan's test is a one-step test, so it fires on
-the first of them.
+**scipy's iterate sequence has plateaus**. In `log(sigma_obs)` — the coordinates this path
+has used since [#229](https://github.com/adlyZaroui/analytic-prophet/issues/229), and the
+compiled core always has — it takes a step at T = 1000 with a relative decrease of
+**3.8e-13**, six times below Stan's threshold, while still **2.58 nats** from the optimum,
+and then goes on descending for another thousand iterations; 24% of the steps after it are
+below the threshold too. Stan's test is a one-step test, so it fires on the first of them.
+
+**The coordinates move the plateau; they do not remove it.** In `sigma_obs` itself, before
+#229, the same thing happened on the full series instead — a step of 6.8e-16 while
+**4.80 nats** from the optimum, with 37% of the steps below the threshold — while T = 1000
+converged.
 
 > **Where that plateau happens is a property of the scipy build, not of this objective.**
 > Every number in this section was measured on macOS/arm64. The first CI run
-> ([#103](https://github.com/adlyZaroui/analytic-prophet/issues/103)) measured the same
-> thing on Linux under the oldest supported scipy and found **no plateau at all**: Stan's
-> one-step test fires 5.8e-5 nats from the optimum, on a run that converges perfectly
-> well under Stan's own number. The two tests that pin the 4.80 nats now skip where the
-> plateau is absent and report what they measured instead.
+> ([#103](https://github.com/adlyZaroui/analytic-prophet/issues/103)) measured the
+> full-series plateau of the `sigma_obs` era on Linux under the oldest supported scipy and
+> found **none at all**: Stan's one-step test fired 5.8e-5 nats from the optimum, on a run
+> that converged perfectly well under Stan's own number. The tests that pin the plateau
+> skip where it is absent and report what they measured instead.
+>
+> In `log(sigma_obs)` the Linux CI runners disagree among themselves. At T = 1000 the
+> plateau costs 1.96 nats on some and is absent on others (2.3e-5), with the same scipy and
+> numpy on both, so it varies with the machine as much as with the build. The same goes
+> for whether the line search fails at T = 100 under the default settings: on most Linux
+> runners it does, and Prophet's rule then retries with Newton, which converges; on
+> macOS/arm64 it does not.
 >
 > This does not change the deviation or the reason for it. `ftol = 1e-16` costs
 > iterations and nothing else, so a platform where Stan's number would also have
-> converged is a platform where the tighter one is merely redundant — and the one place
-> it matters, it is worth 4.43 nats against Prophet. What it does change is the scope of
-> the claim: the plateau is real where it was measured and must not be read as a property
-> of scipy everywhere.
+> converged is a platform where the tighter one is merely redundant. What it does change
+> is the scope of the claim: the plateau is real where it was measured and must not be
+> read as a property of scipy everywhere.
 
-Three explanations were checked and ruled out:
+Two explanations were checked and ruled out:
 
 - **Not scipy's own stopping rule.** Evaluating Stan's test by hand on the trajectory
   fires at the same step.
 - **Not the line search.** The C++ core allows 60 tries where scipy's default is 20;
   `maxls` of 20, 60 and 100 give the identical trajectory.
-- **Not the parameterization.** Moving `sigma_obs` to `zeta = log(sigma_obs)`, which is
-  what the C++ core optimizes, fixes T = 300 and T = 2905 and breaks T = 1000 instead
-  (2.58 nats short). The C++ core runs the *same* split reformulation under Stan's real
-  tolerance and converges, so what differs between the two is the iterate sequence, not
-  the problem and not the test.
+
+The C++ core runs the *same* split reformulation, in the same coordinates, under Stan's
+real tolerance and converges, so what differs between the two is scipy's iterate sequence,
+not the problem and not the test.
 
 What settles it is the comparison #24 was waiting on — what Prophet itself reaches:
 
 | T | Prophet `lp__` | `fit()` as shipped | `fit()` under Stan's `ftol` |
 |---|---|---|---|
-| 300 | 813.35084 | **815.33726** | 815.11242 |
-| 1000 | 2852.76760 | **2855.52800** | 2855.52800 |
-| 2905 | 8004.79800 | **8005.15920** | **8000.37110** |
+| 300 | 813.35084 | **815.33726** | **815.33726** |
+| 1000 | 2852.76760 | **2855.52800** | 2852.94890 |
+| 2905 | 8004.79800 | **8005.15920** | **8005.15910** |
 
-Matching Stan's number would put the reference path **4.43 nats below the model it
-reproduces**. Tightening instead costs iterations and nothing else. The compiled
+Matching Stan's number would give back **2.58 of the 2.76 nats** by which this path beats
+Prophet at T = 1000. Tightening instead costs iterations and nothing else. The compiled
 backend, the deliverable, uses Stan's values unchanged.
 
-The table is macOS/arm64, like the rest of this section. On Linux the same comparison
-gives a shortfall of **3.86 nats** — the same conclusion, a different size. CI also
-measured the same job twice, minutes apart on the same Python, and got shortfalls on
-either side of 4.0, which is float nondeterminism in a 2905-point fit rather than
-anything moving ([#103](https://github.com/adlyZaroui/analytic-prophet/issues/103)).
+The measurement #24 was first settled on was the `sigma_obs` one: there, Stan's number put
+the path **4.43 nats below the model it reproduces** on the full series (8000.37110 against
+Prophet's 8004.79800), and 3.86 on Linux, with CI runs minutes apart straddling 4.0 — float
+nondeterminism in a 2905-point fit rather than anything moving
+([#103](https://github.com/adlyZaroui/analytic-prophet/issues/103)).
 
-`tests/test_convergence_tolerances.py` pins what survives that: that `fit()` as shipped
-scores **above** Prophet and that Stan's `ftol` scores **below** it, which hold
-everywhere measured, plus a loose floor on the size. The directions are the argument;
-the magnitude is the illustration. If Stan's `gtol` ever stops being a no-op, or Stan's
-`ftol` ever stops scoring below Prophet, the tests fail rather than the reasoning
-quietly going stale.
+`tests/test_convergence_tolerances.py` pins what survives across platforms: that `fit()` as
+shipped scores **above** Prophet, and that where the plateau appears, Stan's `ftol` gives
+back most of the margin, with loose floors on the sizes. The directions are the argument;
+the magnitudes are the illustration. If Stan's `gtol` ever stops being a no-op, or Stan's
+`ftol` stops costing anything where the plateau is, the tests fail rather than the
+reasoning quietly going stale.
 
 ---

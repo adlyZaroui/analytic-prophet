@@ -14,7 +14,8 @@ from .constants import (  # noqa: F401 -- re-exported, and the
     N_CHANGE_POINTS, CHANGEPOINT_RANGE, n_yearly, TAU, SIGMA, SIGMA_OBS_PRIOR_SCALE, sigma_k, sigma_m, SIGMA_OBS_INIT)
 from .layout import (  # noqa: F401 -- re-exported, and the
     # names tests monkeypatch must stay bound in this module
-    ParameterLayout, extract_params, from_dict_to_array, canonical_to_split, split_to_canonical, DEFAULT_LAYOUT, K_IDX, M_IDX, DELTA_SLICE, SIGMA_OBS_IDX, BETA_SLICE)
+    ParameterLayout, extract_params, from_dict_to_array, canonical_to_split, split_to_canonical, DEFAULT_LAYOUT, K_IDX, M_IDX, DELTA_SLICE, SIGMA_OBS_IDX, BETA_SLICE,
+    LogSigma)
 from .seasonality import (  # noqa: F401 -- re-exported, and the
     # names tests monkeypatch must stay bound in this module
     seasonality, history_spacing, parse_seasonality_args, check_seasonality_supported, condition_masks, make_seasonality_features, condition_matrix, seasonality_columns, seasonality_modes, seasonality_prior_scales, seasonal_time, fourier_series, SEASONALITY_DEFAULTS, HONORED_SEASONALITY_FIELDS, BUILT_IN_NAMES, _RESERVED_STEMS, RESERVED_COLUMN_NAMES, BUILT_IN_SEASONALITIES, AUTO_SEASONALITY_RULES, UNDER_IDENTIFIED_WARNING, FOURIER_EPOCH, YEARLY_PERIOD)
@@ -1565,29 +1566,47 @@ class AnalyticProphet:
             # recorded trajectory could rise (0.031 at T=1000) where the run
             # itself descends monotonically, and it was not comparable with
             # the compiled path's trace, which is the split objective throughout.
-            loss_over_iterations.append(self._split_minus_log_posterior(z, design=design))
+            loss_over_iterations.append(
+                self._split_minus_log_posterior(coordinates.from_log(z), design=design))
 
         initial_params_array = from_dict_to_array(initial_params_dict, self.layout)
 
         # sigma_obs must stay positive, mirroring Stan's `real<lower=0> sigma_obs`.
-        # fixed_sigma_obs collapses that bound to a single point, pinning sigma_obs
-        # for parity with the compiled optimizer, which never estimates it.
+        # The optimizers see log(sigma_obs) (#229, below), where that holds with no
+        # floor, so this 1e-6 states the domain rather than a bound they meet.
+        # fixed_sigma_obs collapses it to a single point, pinning sigma_obs for
+        # parity with the compiled optimizer, which never estimates it.
         sigma_obs_bounds = (fixed_sigma_obs, fixed_sigma_obs) if fixed_sigma_obs is not None else (1e-6, None)
         n_delta = self.layout.n_changepoints
         # Split-space bounds: k, m free; delta_pos/delta_neg >= 0; then sigma_obs, beta
         bounds = [(None, None)] * 2 + [(0, None)] * (2 * n_delta) + [sigma_obs_bounds] + \
                  [(None, None)] * self.layout.n_regressor_columns
 
-        z0 = canonical_to_split(initial_params_array, self.layout)
+        # **Both optimizers work in log(sigma_obs)**, as the compiled core does
+        # (#229). In sigma_obs itself the Newton twins took different steps, and
+        # on a non-convex model that is enough to end in different local minima:
+        # logistic growth on Peyton Manning, 8.36 nats apart at T = 60. L-BFGS-B
+        # follows for the same reason one level up -- in sigma_obs it exits
+        # abnormally on logistic growth at T = 300 where the compiled L-BFGS does
+        # not, and Prophet's rule then sends it to Newton, 13 nats from where the
+        # compiled path ends. In log(sigma_obs) it lands where it did on linear
+        # growth, in fewer iterations. Everything outside this function keeps
+        # sigma_obs: `self.opt.x` is mapped back below.
+        coordinates = LogSigma(2 + 2 * n_delta)
+        bounds = coordinates.bounds(bounds)
+        z0 = coordinates.to_log(canonical_to_split(initial_params_array, self.layout))
 
         if use_combined:
-            objective = lambda z: self._split_minus_log_posteriorAndGradient(z, design=design)
+            objective = coordinates.objective_and_gradient(
+                lambda z: self._split_minus_log_posteriorAndGradient(z, design=design))
             jac = True
         elif analytic:
-            objective = lambda z: self._split_minus_log_posterior(z, design=design)
-            jac = lambda z: self._split_gradient(z, design=design)
+            objective = coordinates.objective(
+                lambda z: self._split_minus_log_posterior(z, design=design))
+            jac = coordinates.gradient(lambda z: self._split_gradient(z, design=design))
         else:
-            objective = lambda z: self._split_minus_log_posterior(z, design=design)
+            objective = coordinates.objective(
+                lambda z: self._split_minus_log_posterior(z, design=design))
             jac = None
 
         options = {'maxiter': STAN_MAX_ITERATIONS}
@@ -1607,29 +1626,30 @@ class AnalyticProphet:
             #
             # ftol stays tighter than Stan's tol_rel_obj * eps = 2.22e-12, and
             # this one is real. scipy's iterate sequence on this objective has
-            # single steps that barely move followed by steps that move a lot:
-            # at T=2905 it takes a step with a relative decrease of 6.8e-16 --
-            # four orders below Stan's threshold -- while still 4.80 nats from
-            # the optimum, then resumes descending. 37% of its steps are below
-            # the threshold. Stan's test is a one-step test, so it fires on the
-            # first of them, and the fit lands 4.80 nats short.
+            # single steps that barely move followed by steps that move a lot.
+            # In log(sigma_obs), where this path has run since #229, at T=1000
+            # it takes a step with a relative decrease of 3.8e-13 -- six times
+            # below Stan's threshold -- while still 2.58 nats from the optimum,
+            # then resumes descending for another thousand iterations. Stan's
+            # test is a one-step test, so it fires on that step, and the fit
+            # lands 2.58 nats short. (In sigma_obs, before #229, the same thing
+            # happened at T=2905 instead, 4.80 nats short; the coordinates move
+            # the plateau rather than remove it.)
             #
             # That is not an artefact of scipy's own stopping rule: the same
             # thing happens when Stan's test is evaluated by hand on the true
             # objective. It is also not the line search (maxls 20/60/100 give
-            # the identical trajectory) and not the parameterization (moving
-            # sigma_obs to zeta = log(sigma_obs), which is what the C++ core
-            # optimizes, fixes T=300 and T=2905 and breaks T=1000 instead). The
-            # C++ core runs the same split reformulation under Stan's real
-            # tolerance and converges, so what differs is the iterate sequence,
-            # not the problem or the test.
+            # the identical trajectory). The C++ core runs the same split
+            # reformulation in the same coordinates under Stan's real tolerance
+            # and converges, so what differs is scipy's iterate sequence, not
+            # the problem or the test.
             #
             # The deciding measurement is against Prophet itself, which is what
             # #24 said it was blocked on. Under Stan's ftol, fit() scores
-            # lp__ = 8000.371 at T=2905 against Prophet's 8004.798: matching
-            # Stan's number numerically would put this path 4.43 nats *below*
-            # the model it is reproducing. Tightening instead costs iterations
-            # and nothing else.
+            # lp__ = 2852.949 at T=1000 against Prophet's 2852.768 and this
+            # path's 2855.528: matching Stan's number numerically would give
+            # back 2.58 of a 2.76-nat margin. Tightening instead costs
+            # iterations and nothing else. docs/deviations.md has the table.
             #
             # maxfun is Stan's cap expressed the other way round: Stan limits
             # iterations only, and scipy's default of 15000 evaluations would
@@ -1694,6 +1714,10 @@ class AnalyticProphet:
                 del loss_over_iterations[:]
                 result = run_newton()
 
+        # back to sigma_obs, which is what every reader of `opt` expects
+        if getattr(result, "jac", None) is not None and np.ndim(result.jac):
+            result.jac = coordinates.gradient_from_log(result.x, result.jac)
+        result.x = coordinates.from_log(result.x)
         self.opt = result
         vector = split_to_canonical(result.x, self.layout.n_changepoints)
         self.sigma_obs = vector[self.layout.sigma_obs_idx]

@@ -8,8 +8,9 @@ changepoint rates are represented.**
               |delta| / tau and its gradient as the subgradient sign(delta) / tau,
               with sign(0) = 0 -- Stan's convention (#170).
     split     delta = delta_pos - delta_neg, both >= 0, so the prior is linear.
-              This is what `fit(backend="python", algorithm="Newton")` runs, and
-              the script checks it lands exactly where that does.
+              This is what `fit(backend="python", algorithm="Newton")` runs --
+              in log(sigma_obs) since #229, where the arms here keep sigma_obs
+              -- and the script checks it lands on the same optimum, to 1e-9.
 
 Both go through `analytic_prophet.optimizer.projected_newton`, unmodified: the
 natural arm with no bounds but the one on sigma_obs, which both arms share. The
@@ -215,7 +216,10 @@ def measure(size, lib_path=None):
             row.update({key: arm[key] for key in (
                 "iterations", "stopped_by", "median_progress_tail", "sign_flips",
                 "coordinates_flipped", "exact_zeros", "min_abs_delta")})
-            row["matches_shipped"] = (name == "split" and float(arm["result"].fun) == shipped)
+            # the same optimum as fit(), which since #229 takes its Newton steps
+            # in log(sigma_obs): the same point, not the same last bits
+            row["matches_shipped"] = (name == "split"
+                                      and abs(float(arm["result"].fun) - shipped) < 1e-9)
             traces += [{"observations": size, "arm": name, "iteration": i,
                         "objective": float(value)} for i, value in enumerate(arm["trace"])]
         else:
