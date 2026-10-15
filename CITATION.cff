@@ -1,18 +1,19 @@
 cff-version: 1.2.0
 message: If you use this software, please cite it as below.
 title: >-
-  analytic-prophet: Prophet's model without Stan, fitted to the optimum
-  that Prophet's own optimizer misses
+  analytic-prophet: Stan-free Prophet forecasting model using an analytical
+  gradient instead of AutoDiff: faster and lighter on memory
 abstract: >-
-  Prophet's model without Stan, fitted to the optimum that Prophet's own
-  optimizer misses. Prophet's changepoint prior makes its objective
-  non-differentiable exactly where the optimum sits, and the smooth
-  optimizers it uses stop short of it. This package fits the same model --
-  verified against Stan's own log_prob -- with a gradient written out by
-  hand and a small C++ core, and solves an exact reformulation that has no
-  such kink. Ships with a four-tier evaluation suite: a correctness gate,
-  parameter recovery on synthetic series, held-out forecast accuracy on a
-  frozen census of M4 weekly and daily series, and cost.
+  Stan-free Prophet forecasting model using an analytical gradient instead
+  of AutoDiff: faster and lighter on memory. It fits Prophet's model --
+  verified against Stan's own log_prob -- with the log posterior and its
+  gradient written out by hand and a small C++ core, so it needs no Stan
+  toolchain and starts no CmdStan subprocess. It also solves an exact
+  reformulation of the non-differentiable changepoint prior that Prophet's
+  own optimizer stops short on, which makes its forecasts slightly better.
+  Ships with a four-tier evaluation suite: a correctness gate, parameter
+  recovery on synthetic series, held-out forecast accuracy on a frozen
+  census of M4 weekly and daily series, and cost.
 type: software
 authors:
   - family-names: Zaroui

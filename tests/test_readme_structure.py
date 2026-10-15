@@ -4,8 +4,11 @@ Issue #212: the README, restructured around three stories.
 It had grown into one list that held the API, the caches, the gradient, the
 kink, the optimum and the forecast statistics, with its own revision history
 woven through. The structure now is a pitch, how to install and start, what a
-Prophet user needs to know, then three stories -- Prophet without Stan, the
-optimum Prophet misses, the forecasts -- and the limitations, each once.
+Prophet user needs to know, then three stories, and the limitations, each once.
+
+#230 set the order of the stories by what the package is for: a faster, lighter
+Prophet first, the slightly better forecasts second, and why -- the optimum
+Prophet's optimizer misses -- third. The paper keeps the fix as its subject.
 
 The acceptance, checked here:
 
@@ -16,8 +19,8 @@ The acceptance, checked here:
   * **no history talk**: how the README used to read is in CHANGELOG.md;
   * **every term a new reader meets is defined or not used** -- Tier 2, lp__,
     the census, T;
-  * **the framing is the paper's**: a real defect whose cost to forecast
-    accuracy is usually small, not "more accurate";
+  * **the framing is the package's** (#230): faster and lighter first, the
+    forecast gain slight, and not "more accurate";
   * the two figures where the stories need them, the paper and how to cite
     it, and why this is a separate package.
 """
@@ -57,9 +60,9 @@ def _section(readme, heading):
     return readme[start:end if end != -1 else len(readme)]
 
 
-SECTIONS = ["Install", "Quickstart", "Coming from Prophet", "1. Prophet without Stan",
-            "2. The optimum Prophet misses", "3. Forecasts", "Limitations", "Documentation",
-            "Paper & citing", "Licence"]
+SECTIONS = ["Install", "Quickstart", "Coming from Prophet", "1. A faster, lighter Prophet",
+            "2. Slightly better forecasts", "3. Why: the optimum Prophet misses", "Limitations",
+            "Documentation", "Paper & citing", "Licence"]
 
 
 def test_the_structure_is_the_one_agreed(readme):
@@ -69,11 +72,12 @@ def test_the_structure_is_the_one_agreed(readme):
 
 def test_the_pitch_says_what_this_is_in_one_sentence(readme):
     """#213 repeats this sentence in the PyPI summary, CITATION.cff and the
-    GitHub About, so it is the README's first line of prose."""
+    GitHub About, so it is the README's first line of prose. #230 chose it: the
+    package is a faster, lighter Prophet."""
     first = next(line for line in readme.splitlines()[1:]
                  if line.strip() and not line.startswith("[!["))
-    assert first == ("**Prophet's model without Stan, fitted to the optimum that "
-                     "Prophet's own optimizer misses.**")
+    assert first == ("**Stan-free Prophet forecasting model using an analytical gradient "
+                     "instead of AutoDiff: faster and lighter on memory.**")
 
 
 # -- every number is generated and tested, or a stated constant -------------
@@ -213,14 +217,17 @@ def test_no_private_term_is_left_undefined(readme):
 
 # -- the framing, the figures, the paper ------------------------------------
 
-def test_the_framing_is_the_papers(readme):
-    """'our forecasts are more accurate' became, in the paper, 'the cost to
-    forecast accuracy is usually small'. The README says what the paper says,
-    and does not credit the gradient with the speed, which section 1 shows is
-    mostly the cost of calling CmdStan."""
+def test_the_framing_is_the_packages(readme):
+    """#230: the package is a faster, lighter Prophet, and its forecasts are
+    slightly better -- in that order, and sized as the paper sizes the gain.
+    The pitch names the analytical gradient; section 1 still says how little of
+    the speed it accounts for, which is mostly not calling CmdStan."""
     one = _one_line(readme)
-    lede = one[:one.index("**Status: early development.**")]
-    assert "its cost to forecast accuracy is usually small" in lede
+    lede = one[one.index("**Stan-free"):one.index("**Status: early development.**")]
+    faster = lede.index("faster and lighter on memory at every series length measured")
+    better = lede.index("The forecasts are slightly better too")
+    assert faster < better
+    assert "a real improvement, and usually a small one" in lede
     assert "more accurate" not in one
     assert "analytic gradient was for" not in one
     assert "Very little of the speed is the gradient" in one
@@ -236,8 +243,8 @@ def test_the_build_story_is_told_once(readme):
 
 
 def test_each_figure_is_where_its_story_is(readme):
-    optimum = _section(readme, "2. The optimum Prophet misses")
-    forecasts = _section(readme, "3. Forecasts")
+    optimum = _section(readme, "3. Why: the optimum Prophet misses")
+    forecasts = _section(readme, "2. Slightly better forecasts")
     assert f"]({RAW}paper/figures/tau_path_readme.png)" in optimum
     assert (REPO / "paper" / "figures" / "tau_path_readme.png").exists()
     assert f"]({RAW}evaluation/results/figures/showcase.png)" in forecasts
@@ -245,9 +252,9 @@ def test_each_figure_is_where_its_story_is(readme):
 
 def test_the_evidence_leads_with_what_a_reader_can_reproduce(readme):
     """The README quoted liblbfgs and a scipy run the docs mark as historical
-    and not kept. Section 2 now leads with three results the paper
+    and not kept. Section 3 now leads with three results the paper
     regenerates, each linked into it."""
-    bullets = [line for line in _section(readme, "2. The optimum Prophet misses").splitlines()
+    bullets = [line for line in _section(readme, "3. Why: the optimum Prophet misses").splitlines()
                if line.startswith("- **")]
     assert len(bullets) == 3
     assert "liblbfgs" not in readme and "17.8%" not in readme
@@ -259,6 +266,8 @@ def test_the_paper_and_how_to_cite_it(readme):
     title = _one_line(title.replace("\\\\", " "))
     assert f"*{title}*" in section
     assert "CITATION.cff" in section and "tree/main/paper/" in section
+    # #230: the package is about speed and memory, the paper about the fix
+    assert "The paper's subject is the fix, not the package's speed" in section
 
 
 def test_why_a_separate_package_quotes_prophets_plan_verbatim(readme):

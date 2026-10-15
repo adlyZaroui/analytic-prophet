@@ -5,17 +5,20 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/analytic-prophet)](https://pypi.org/project/analytic-prophet/)
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](https://github.com/adlyZaroui/analytic-prophet/blob/main/LICENSE)
 
-**Prophet's model without Stan, fitted to the optimum that Prophet's own optimizer misses.**
+**Stan-free Prophet forecasting model using an analytical gradient instead of AutoDiff: faster and lighter on memory.**
 
-[Prophet](https://github.com/facebook/prophet) places a Laplace prior on its trend's
-changepoint rates, which makes the objective it maximizes non-differentiable exactly where
-the optimum sits, and hands that objective to optimizers built for smooth ones. They stop
-short. This package fits the same model with a gradient written out by hand and a small
-C++ core instead of Stan, and solves an exact reformulation of the problem that has no
-such kink. By Prophet's own posterior density, its fits score higher at every series
-length measured. On 3,008 held-out M4 series its RMSE is lower on 1,929 of them, by a
-median of 0.40%: the optimization defect is real, and its cost to forecast accuracy is
-usually small.
+A reimplementation of [Prophet](https://github.com/facebook/prophet)'s fitting engine
+without Stan: the same model and the same API, with the log posterior and its gradient
+written out by hand and compiled into a small C++ core. `pip install` needs no Stan
+toolchain, a fit never starts a CmdStan subprocess, and fits are faster and lighter on
+memory at every series length measured.
+
+The forecasts are slightly better too. Prophet's changepoint prior makes the objective it
+maximizes non-differentiable exactly where the optimum sits, and the smooth optimizers it
+uses stop short of it; this package solves an exact reformulation with no such kink, so by
+Prophet's own posterior density its fits score higher at every series length measured. On
+3,008 held-out M4 series its RMSE is lower on 1,929 of them, by a median of 0.40%: a real
+improvement, and usually a small one.
 
 **Status: early development.** The model is feature-complete against Prophet's, but there
 is no MCMC and no plotting. See [coming from Prophet](#coming-from-prophet).
@@ -103,12 +106,12 @@ forecast = model.predict(future)                      # approximate, as Prophet 
 forecast = model.predict(future, vectorized=False)    # exact, and slower
 ```
 
-**Why a separate package, and not a pull request to Prophet.** The fix changes how the
-model is solved, and Prophet's maintainers wrote in 2023 that "at this moment we do not
-plan to make any more changes to the underlying Stan model"
+**Why a separate package, and not a pull request to Prophet.** This replaces how the model
+is fitted — without Stan, and to its optimum — and Prophet's maintainers wrote in 2023 that
+"at this moment we do not plan to make any more changes to the underlying Stan model"
 ([facebook/prophet in 2023 and beyond](https://medium.com/@cuongduong_35162/facebook-prophet-in-2023-and-beyond-c5086151c138)).
 
-## 1. Prophet without Stan
+## 1. A faster, lighter Prophet
 
 Prophet compiles its model with Stan and reaches it through CmdStan, a subprocess for every
 fit, with automatic differentiation for the gradient. Here the model's log posterior and its
@@ -149,37 +152,10 @@ allocation that grows with T, so this rules out fixed overhead rather than provi
 mechanism.
 → [every cost](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md#tier-3--what-it-costs)
 
-## 2. The optimum Prophet misses
+## 2. Slightly better forecasts
 
-The Laplace prior puts Σ|δⱼ|/τ in Prophet's objective, where δⱼ are the trend's changepoint
-rates: not differentiable where a rate is zero, which is where most of them belong. Stan's
-L-BFGS and Newton methods, which Prophet uses, are built for smooth objectives; they stop
-short of the optimum there, with no rate exactly zero. This package splits each rate into
-two non-negative parts, which turns the penalty linear and leaves simple bounds: the same
-optimum, and no kink.
-
-![Prophet's forecast a year ahead jumps as changepoint_prior_scale moves near its default; the exact optimum's moves in a straight line](https://raw.githubusercontent.com/adlyZaroui/analytic-prophet/main/paper/figures/tau_path_readme.png)
-
-*Refitted as `changepoint_prior_scale` moves a little around its default, Prophet's
-forecast a year past the data jumps between neighbouring settings; the exact optimum's
-moves in a straight line.*
-
-The evidence, each piece reproducible and written up in the paper:
-
-- **Prophet's solution fails the first-order optimality conditions on every one of 3,008
-  M4 series**, even when each changepoint rate is read in the way most favourable to it
-  ([§4](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
-- **From 150 random starts, with the noise scale σ held fixed so that the optimum is
-  unique, Stan's L-BFGS with Prophet's settings reaches it from none**
-  ([§4](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
-- **Smoothing the prior inside Prophet's own Stan program, with nothing else changed,
-  brings the same L-BFGS 8 to 1,592 times closer to the optimum**: the kink is what stops
-  it ([§4](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
-
-→ [the paper](#paper--citing), and the argument in prose:
-[the non-smooth objective](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/non-smooth-objective.md)
-
-## 3. Forecasts
+Reaching the optimum Prophet's optimizer misses (section 3) changes the forecasts a
+little, mostly for the better.
 
 On a frozen census of 3,008 held-out M4 series — every weekly and daily series the
 evaluation protocol can measure, fixed before anything was measured — this package's RMSE
@@ -219,6 +195,36 @@ lines sit on top of each other; on the last ours is 78.7% higher. Across all 3,0
 the median RMSE advantage is **0.40%**. A reader who runs this on their own data should
 expect the middle panel.
 
+## 3. Why: the optimum Prophet misses
+
+The Laplace prior puts Σ|δⱼ|/τ in Prophet's objective, where δⱼ are the trend's changepoint
+rates: not differentiable where a rate is zero, which is where most of them belong. Stan's
+L-BFGS and Newton methods, which Prophet uses, are built for smooth objectives; they stop
+short of the optimum there, with no rate exactly zero. This package splits each rate into
+two non-negative parts, which turns the penalty linear and leaves simple bounds: the same
+optimum, and no kink.
+
+![Prophet's forecast a year ahead jumps as changepoint_prior_scale moves near its default; the exact optimum's moves in a straight line](https://raw.githubusercontent.com/adlyZaroui/analytic-prophet/main/paper/figures/tau_path_readme.png)
+
+*Refitted as `changepoint_prior_scale` moves a little around its default, Prophet's
+forecast a year past the data jumps between neighbouring settings; the exact optimum's
+moves in a straight line.*
+
+The evidence, each piece reproducible and written up in the paper:
+
+- **Prophet's solution fails the first-order optimality conditions on every one of 3,008
+  M4 series**, even when each changepoint rate is read in the way most favourable to it
+  ([§4](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
+- **From 150 random starts, with the noise scale σ held fixed so that the optimum is
+  unique, Stan's L-BFGS with Prophet's settings reaches it from none**
+  ([§4](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
+- **Smoothing the prior inside Prophet's own Stan program, with nothing else changed,
+  brings the same L-BFGS 8 to 1,592 times closer to the optimum**: the kink is what stops
+  it ([§4](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
+
+→ [the paper](#paper--citing), and the argument in prose:
+[the non-smooth objective](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/non-smooth-objective.md)
+
 ## Limitations
 
 - **Two of M4's six frequencies.** The census is 3,008 series of M4's 100,000: every weekly
@@ -251,7 +257,9 @@ expect the middle panel.
 
 ## Paper & citing
 
-The argument and every experiment behind it are written up as a preprint, *Prophet's MAP
+The paper's subject is the fix, not the package's speed: it exhibits the problem, measures
+its consequences for forecasts and the consequences of fixing it. The argument and every
+experiment behind it are written up as a preprint, *Prophet's MAP
 Estimate Is Not the Posterior Mode: A Non-Differentiable Changepoint Prior, Smooth
 Optimizers, and an Exact Reformulation*, in
 [`paper/`](https://github.com/adlyZaroui/analytic-prophet/tree/main/paper/). Every number
