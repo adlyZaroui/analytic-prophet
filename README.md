@@ -1,6 +1,9 @@
 # analytic-prophet
 
 [![tests](https://github.com/adlyZaroui/analytic-prophet/actions/workflows/tests.yml/badge.svg)](https://github.com/adlyZaroui/analytic-prophet/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/analytic-prophet)](https://pypi.org/project/analytic-prophet/)
+[![Python versions](https://img.shields.io/pypi/pyversions/analytic-prophet)](https://pypi.org/project/analytic-prophet/)
+[![licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](https://github.com/adlyZaroui/analytic-prophet/blob/main/LICENSE)
 
 **Prophet's model without Stan, fitted to the optimum that Prophet's own optimizer misses.**
 

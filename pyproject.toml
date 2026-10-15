@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "analytic-prophet"
-description = "Facebook Prophet's fitting engine with a hand-derived analytic gradient in place of Stan's automatic differentiation"
+description = "Prophet's model without Stan, fitted to the optimum that Prophet's own optimizer misses."
 readme = "README.md"
 # PEP 639 (#219): an SPDX expression and the files that carry the terms. Both
 # are MIT; LICENSE-PROPHET is Prophet's, for the code derived from it (#199).
@@ -29,6 +29,12 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: C++",
     "Topic :: Scientific/Engineering :: Mathematics",
 ]
