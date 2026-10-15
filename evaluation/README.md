@@ -132,6 +132,7 @@ code usually live there.
 | `run.py` | the runner, tier registry and the gate |
 | `report.py` | tables and figures, from the committed results and nothing else |
 | `resummarise.py` | Tier 2's paired summary, rebuilt from its committed per-series rows |
+| `showcase.py`, `cost_figure.py` | the README's two figures: three held-out forecasts, and the costs against series length |
 | `tiers/` | one module per tier |
 | `results/` | the committed CSVs, their metadata, the report and its figures |
 

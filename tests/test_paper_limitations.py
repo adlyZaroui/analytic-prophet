@@ -50,11 +50,13 @@ def test_where_the_readme_quotes_a_figure_the_paper_quotes_the_same(macros):
     """#212 extended this to every paper figure the README carries -- it had
     drifted on two, 8.2x at T = 50 against the paper's 7.5x and 0.0967% against
     0.0968%. tests/test_readme_structure.py checks each in its sentence, and
-    that the README carries no number without a source."""
+    that the README carries no number without a source. Since #231 the README's
+    fit ratios are a figure drawn from Tier 3, so it no longer quotes
+    \\LimNewtonSpeedup."""
     readme = " ".join(README.read_text().split())
     for name in ("LimCoverageOurs", "LimCoverageProphet", "LimWorstPool", "LimPoolSize",
                  "LimWidthMedian", "LimWidthWider", "LimWorstCensus", "LimBestCensus",
-                 "LimMfourSeries", "LimNewtonSpeedup", "LimOverheadShareMin",
+                 "LimMfourSeries", "LimOverheadShareMin",
                  "LimOverheadShareMax", "LimParityMin", "LimParityMax", "CensusSeries",
                  "RmseAdvantage", "RmseWins", "RmseWinRate", "MultiTotal",
                  "SmoothFactorLong", "SmoothFactorShort"):
