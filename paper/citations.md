@@ -199,11 +199,11 @@ Process.* 1(4):586–597, 2007.
 - "the LARS modification calculates all possible Lasso estimates for a given
   problem"; the text refers to "the piecewise linear Lasso path".
 
-## Smooth reparametrisations of the ℓ1 term (§8)
+## Smooth reparametrisations of the ℓ1 term (§9)
 
-Cited in §8 together with `paper/experiments/inside_stan.py` (#202), which runs two of
+Cited in §9 together with `paper/experiments/inside_stan.py` (#202), which runs two of
 them in Prophet's own Stan program, on Stan's own L-BFGS: the product form, reported in
-§8, and the split declared non-negative, reported in §4.2 as the reason the fix's solver
+§9, and the split declared non-negative, reported in §4.2 as the reason the fix's solver
 runs outside Stan (#204). The sources say the
 reparametrised problem has the same minimisers. They do not say that a given solver
 finds them, and the paper cites them for the first and measures the second.
@@ -257,7 +257,7 @@ al. review it with the rest of that literature. It adds nothing about the
 lasso's minimisers that the three entries above do not, and nothing about quasi-Newton
 methods.
 
-## The M4 data (§7, and the census throughout)
+## The M4 data (§8, and the census throughout)
 
 **`makridakis2020m4`** — Makridakis, Spiliotis & Assimakopoulos, *Int. J. Forecast.*
 36(1):54–74, 2020. Cited for the competition and its 100,000 series. The full text is
@@ -272,7 +272,7 @@ frequency (Frequency), number of forecasts requested (Horizon), seasonal periods
 and starting date (StartingDate)", and: "Note that originally the starting date wasn't
 provided to the participants." No location is recorded.
 
-An earlier draft of §7 said M4's "dates are synthetic". Nothing here supports that
+An earlier draft of the limitations section said M4's "dates are synthetic". Nothing here supports that
 word. What is supported is in `paper/results/m4_calendar.csv` (#178):
 
 - **the dates look partly like placeholders:** 1,506 of the census's 2,714 daily series
@@ -327,9 +327,9 @@ by searching every comment, so §6's "none of them mentions it" stands.
   Newton which also runs into NaNs and throws the B[1] error". The paper had attributed
   that to #1032 itself; it now says where it comes from.
 
-## Verified for #208 and #212, not yet cited: Prophet's 2023 plan
+## Prophet's 2023 plan (§7)
 
-**`duong2023prophet`** (no bibliography entry until a section cites it) — Cuong Duong,
+**`duong2023prophet`** — Cuong Duong,
 "facebook/prophet in 2023 and beyond", Medium, 26 February 2023, linked from Prophet's
 README as its "2023 Update" (`github.com/facebook/prophet`, README, read 2026-10-14).
 Read in full from the Internet Archive's snapshot
@@ -344,3 +344,31 @@ because Medium refuses automated readers. The canonical URL is
   model." A citation must not turn "at this moment" into a permanent policy.
 - The post goes on to say: "Instead, we'll focus on ironing out the kinks in existing
   functionality".
+
+Cited in §7 (#208) for the plan, with "at this moment" kept, as the reason the fix is
+shown working from outside Prophet's Stan model rather than as a change to it. The
+repository's README quotes the same sentence (#212).
+
+## Prophet's own code, read for §7 and not in the bibliography
+
+**Prophet's R package** — read at tag `v1.4.0` of `github.com/facebook/prophet`, the
+release whose Python package these results use (its `R/DESCRIPTION` says `Version:
+1.2.2`). Cited in §7 for "fits the same program the same way".
+
+- `R/inst/stan/prophet.stan` differs from `python/stan/prophet.stan`, which
+  `paper/stan/prophet.stan` copies verbatim, only by three blank lines (`diff` prints
+  nothing else).
+- `R/R/stan_backends.R`, the optimizer: `algorithm = if(dat$T < 100) {'Newton'} else
+  {'LBFGS'},` with `iter = 1e4,` under rstan (`'newton'` and `'lbfgs'` under cmdstanr).
+- The same file, the fall-back, under both backends: on a non-zero return code it prints
+  "Optimization terminated abnormally. Falling back to Newton optimizer." and sets
+  `args$algorithm` to Newton.
+- `R/R/prophet.R`: `if (m$mcmc.samples > 0) {` calls `.sampling` instead of `.fit`.
+
+**Prophet's Python package, 1.4.0** — the version pinned in `paper/requirements.txt`, read
+from the installed source. Cited in §7 for sampling being a different path.
+
+- `forecaster.py`: `elif self.mcmc_samples > 0:` then
+  `self.params = stan_backend.sampling(stan_init, dat, self.mcmc_samples, **kwargs)`.
+- `models.py`, `CmdStanPyBackend.sampling`: `self.stan_fit = self.model.sample(**args)`,
+  cmdstanpy's NUTS sampler.

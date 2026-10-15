@@ -124,6 +124,15 @@ with Prophet's settings, from Prophet's start and #169's seeded starts, at three
 with σ fixed and free, writing `results/inside_stan.csv` in about two minutes (needs
 CmdStan 2.37.0, below).
 
+The discussion (#208) adds two. `experiments/newton_census.py` fits Prophet with its own
+`algorithm="Newton"` on the 200 census series `rounding.py` draws, beside its default
+L-BFGS and the corrected optimum, and records how far each stops short and how long each
+takes (`results/newton_census.csv`, about fifteen minutes on seven workers; needs the
+M4 cache). `experiments/polish.py` solves the split problem from Prophet's own solution
+with nothing but `log_prob` on Prophet's unmodified program, which is how Prophet could
+adopt the fix with its Stan model frozen (`results/polish.csv`, about ten minutes,
+almost all of it CmdStan subprocesses).
+
 ## Results not yet measured
 
 A `\pending{#issue}{…}` marker renders in red where the paper states something
