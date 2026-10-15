@@ -403,6 +403,13 @@ converged.
 > that converged perfectly well under Stan's own number. The tests that pin the plateau
 > skip where it is absent and report what they measured instead.
 >
+> In `log(sigma_obs)` the Linux CI runners disagree among themselves. At T = 1000 the
+> plateau costs 1.96 nats on some and is absent on others (2.3e-5), with the same scipy and
+> numpy on both, so it varies with the machine as much as with the build. The same goes
+> for whether the line search fails at T = 100 under the default settings: on most Linux
+> runners it does, and Prophet's rule then retries with Newton, which converges; on
+> macOS/arm64 it does not.
+>
 > This does not change the deviation or the reason for it. `ftol = 1e-16` costs
 > iterations and nothing else, so a platform where Stan's number would also have
 > converged is a platform where the tighter one is merely redundant. What it does change

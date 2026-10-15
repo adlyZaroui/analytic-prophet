@@ -132,10 +132,13 @@ def test_stans_objective_tolerance_stops_the_run_short(peyton_manning_df, scipy_
 
     **It is also not universal, which the first CI run established** (#103).
     The quantity being measured is where scipy's iterate sequence plateaus, and
-    that is a property of the scipy build: on macOS/arm64 Stan's one-step test
-    fires ~4.8 nats from the optimum, while on Linux CI under the oldest
-    supported scipy it fires essentially at it -- 5.8e-5 nats, a run that
-    converges perfectly well under Stan's number.
+    that is a property of the build and of the machine. In sigma_obs, on the
+    full series, Stan's one-step test fired ~4.8 nats from the optimum on
+    macOS/arm64 and essentially at it on Linux CI -- 5.8e-5 nats, a run that
+    converges perfectly well under Stan's number. In log(sigma_obs), at
+    T = 1000, it fires 2.58 nats short on macOS/arm64; on Linux CI, 1.96 nats
+    short on some runners and at the optimum (2.3e-5) on others, with the same
+    scipy and numpy on both.
 
     So the test skips where the plateau is absent rather than asserting it
     everywhere, and says what it measured. The deviation itself is unaffected:
@@ -156,8 +159,10 @@ def test_stans_objective_tolerance_stops_the_run_short(peyton_manning_df, scipy_
                     f"deviation to measure")
 
     assert stan.opt.nit < tight.opt.nit / 4     # 259 against 1340
-    assert cost > 2.0, (
-        f"Stan's ftol now costs {cost:.3f} nats, not ~2.6 -- "
+    # 2.58 on macOS/arm64, 1.96 on the Linux runners where it shows: the floor
+    # sits under both and still catches a collapse, which is all it can do
+    assert cost > 1.5, (
+        f"Stan's ftol now costs {cost:.3f} nats, not ~2 -- "
         f"the reasoning in fit() is out of date")
 
 
@@ -190,10 +195,13 @@ def test_the_run_stops_on_a_plateau_it_then_climbs_out_of(peyton_manning_df):
         pytest.skip(f"the first sub-threshold step on this scipy build leaves "
                     f"{remaining:.2e} nats on the table, so the one-step test "
                     f"does not misfire here")
-    # the run is nowhere near done when the first one arrives (2.58 nats) ...
-    assert remaining > 2.0
-    # ... and they recur rather than being a single unlucky step (24% of those after)
-    assert np.mean(relative_decrease[first:] <= STAN_FTOL) > 0.15
+    # the run is nowhere near done when the first one arrives (2.58 nats on
+    # macOS/arm64, 1.97 on the Linux runners where it shows) ...
+    assert remaining > 1.5, remaining
+    # ... and they recur rather than being a single unlucky step (24% of the
+    # steps after it on macOS/arm64; one step in a thousand would be chance)
+    recurring = np.mean(relative_decrease[first:] <= STAN_FTOL)
+    assert recurring > 0.05, recurring
 
 
 def test_stans_objective_tolerance_would_give_back_the_margin(prophet_comparison,

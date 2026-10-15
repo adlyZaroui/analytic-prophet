@@ -197,8 +197,14 @@ def test_the_compiled_path_follows_the_rule(peyton_manning_df,
                                              (101, "LBFGS")])
 def test_the_python_path_follows_the_same_rule(peyton_manning_df, n_rows, expected):
     """Both paths, or a script that switches between them changes optimizer
-    without asking."""
+    without asking.
+
+    The retry is off, because this is about the rule's choice. Whether scipy's
+    line search then fails is a property of the build (#103): at T = 100, in
+    log(sigma_obs), it does on most Linux CI runners and not on macOS/arm64, and
+    Prophet's rule then retries with Newton, which the tests below cover."""
     model = AnalyticProphet()
+    model.newton_fallback = False
     model.fit(peyton_manning_df.iloc[:n_rows].reset_index(drop=True), backend="python", analytic=True)
     assert model.optimizer_used == expected
 

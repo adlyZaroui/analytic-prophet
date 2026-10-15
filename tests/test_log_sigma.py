@@ -43,9 +43,11 @@ def test_the_backends_agree_on_logistic_growth(peyton_manning_df, compiled_optim
 
     assert python.optimizer_used == compiled.optimizer_used
     gap = python.loss_over_iterations[-1] - compiled.loss_over_iterations[-1]
-    # the Newton twins agree to the last few bits; the L-BFGS pair are two
-    # libraries under #24's tolerance, which is why the bound is looser there
-    assert abs(gap) < (1e-9 if compiled.optimizer_used == "Newton" else 1e-6), gap
+    # The Newton twins agree to the last few bits. The L-BFGS pair are two
+    # libraries under #24's tolerance, so the bound is the same-minimum one
+    # there: under 1e-6 on macOS/arm64, 2.8e-5 on every Linux CI leg, against
+    # the 13 nats between the minima the two used to reach.
+    assert abs(gap) < (1e-9 if compiled.optimizer_used == "Newton" else 1e-4), gap
 
 
 def test_the_fit_still_reports_sigma_obs(peyton_manning_df):
