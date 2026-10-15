@@ -169,7 +169,8 @@ def test_the_signature_of_each_shared_callable_is_compatible(prophet_class):
 
 # -- the names of the files themselves (#142) ------------------------------
 #
-# The same idea one level up. The README's Layout block claims which of this
+# The same idea one level up. The Layout block -- in CONTRIBUTING.md since
+# #212 moved it out of the README -- claims which of this
 # package's modules carry Prophet's own filenames, in two places -- as labels
 # in the tree and as a sentence under it -- and both had drifted from the
 # package and from each other: the sentence named three where there are four,
@@ -178,7 +179,7 @@ def test_the_signature_of_each_shared_callable_is_compatible(prophet_class):
 # Three copies of one fact, so the test is that they agree.
 
 LAYOUT_PACKAGE = Path(__file__).parent.parent / "analytic_prophet"
-LAYOUT_README = Path(__file__).parent.parent / "README.md"
+LAYOUT_README = Path(__file__).parent.parent / "CONTRIBUTING.md"   # since #212
 
 
 def _tree_labelled():

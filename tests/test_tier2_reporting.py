@@ -123,11 +123,12 @@ def test_every_row_is_scale_free(report):
 
 def test_the_reason_for_holm_is_the_right_one(report, readme):
     """Bonferroni does not assume independence; Holm is chosen because it is
-    uniformly at least as powerful, and both hold under any dependence."""
+    uniformly at least as powerful, and both hold under any dependence. The
+    README names Holm and leaves the reason to the report since #212."""
     source = (REPO / "evaluation" / "report.py").read_text()
+    assert "uniformly at least as powerful" in report
     for text in (report, readme):
         assert "far from independent" not in text
-        assert "uniformly at least as powerful" in text
     assert "assumes an independence" not in source
 
 
@@ -198,7 +199,7 @@ def test_the_readme_frames_the_corpus_size_as_a_limitation():
     fits = sum(1 for v in smape.values() if len(v) == 2 and max(v.values()) < 0.10)
 
     readme = _plain(" ".join((REPO / "README.md").read_text().split()))
-    section = readme[readme.index("## What this is not"):]
+    section = readme[readme.index("## Limitations"):]
     assert f"{len(measured)} series" in section, (
         f"the limits section does not state the corpus size ({len(measured)})")
     assert "100,000" in _plain(" ".join((REPO / "README.md").read_text().split())) \
@@ -226,25 +227,28 @@ def readme():
 
 @pytest.fixture(scope="module")
 def readme_table():
-    """`{label: (median, p, holm)}` parsed out of the README's accuracy table."""
+    """`{label: (median, lower on)}` parsed out of the README's accuracy table.
+
+    Three columns since #212: the README carries the medians and the win
+    counts, and leaves the p-values and the coverage row to the report."""
     rows = {}
     for line in README.read_text().splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) != 5 or cells[0] in ("", "---"):
+        if len(cells) != 3 or cells[0] in ("", "---"):
             continue
         label = cells[0].replace("⁑", "").replace("*", "").strip()
         median = cells[1].replace("−", "-").replace("*", "")
         try:
             # a relative row is printed as a percentage (#200)
             value = float(median.rstrip("%")) / 100 if median.endswith("%") else float(median)
-            rows[label] = (value, cells[2], float(cells[3]), float(cells[4]))
+            rows[label] = (value, cells[2])
         except ValueError:
             continue
     return rows
 
 
 README_TO_METRIC = {"MAE": "mae", "RMSE": "rmse", "MAPE": "mape", "sMAPE": "smape",
-                    "coverage": "coverage", "interval width": "interval_width"}
+                    "interval width": "interval_width"}
 
 
 def test_the_readme_names_the_test_and_the_adjustment(readme):
@@ -262,13 +266,11 @@ def test_every_number_in_the_readme_table_is_the_committed_one(readme_table, pai
         f"the README table no longer has every comparison: {sorted(readme_table)}")
 
     for label, metric in README_TO_METRIC.items():
-        median, _wins, raw, adj = readme_table[label]
+        median, _wins = readme_table[label]
         # relative rows are quoted to two places of a percentage
-        tolerance = 5e-5 if metric in ("mae", "rmse", "mape", "smape", "interval_width") else 5e-4
-        assert median == pytest.approx(paired[f"{metric}_median"], abs=tolerance), label
-        assert raw == pytest.approx(paired[f"{metric}_p_value"], abs=5e-5), label
-        assert adj == pytest.approx(adjusted[metric], abs=5e-5), (
-            f"{label}: README says Holm {adj}, the results give {adjusted[metric]:.4f}")
+        assert median == pytest.approx(paired[f"{metric}_median"], abs=5e-5), label
+    # "Holm-adjusted across the comparisons", and every one survives it
+    assert all(value < 0.05 for value in adjusted.values())
 
 
 def test_the_readme_quotes_the_win_counts_it_can_check(readme_table, paired):
@@ -303,49 +305,13 @@ def test_the_readme_does_not_call_the_wider_intervals_indistinguishable(readme, 
     assert f"wider by a median {paired['interval_width_median'] * 100:.2f}%" in readme
 
 
-def test_the_readme_reconciles_its_two_coverage_figures(readme):
-    """The median and the difference of means are different quantities and sat
-    on one page unjoined. What the counts are is checked below; this checks the
-    sentence that joins them exists."""
-    assert "median of the per-series" in readme
-    assert "difference of means" in readme
-
-
-def test_the_readme_skew_claim_is_the_one_the_data_supports():
-    """Recomputed, not copied from the report -- the point of this issue is
-    that copying is how the README went stale."""
-    import statistics
-
-    by_series = {}
-    for row in csv.DictReader(open(TIER2)):
-        if row["metric"] == "coverage" and row["series"] != "paired":
-            by_series.setdefault(row["series"], {})[row["implementation"]] = float(row["value"])
-    diffs = [v["analytic_prophet"] - v["prophet"]
-             for v in by_series.values() if len(v) == 2]
-
-    near = sum(1 for d in diffs if abs(d) < 0.02)
-    above = sum(1 for d in diffs if d > 0.05)
-    below = sum(1 for d in diffs if d < -0.05)
-
-    readme = _plain(" ".join(README.read_text().split()))
-    assert f"{near} of the {len(diffs)}" in readme
-    assert f"{above} by more than +0.05" in readme, (
-        f"{above} series differ by more than +0.05 and the README does not say it")
-    # `== 2` stood here, which was the 36-series data rather than a property of
-    # the README. 87 series now fall the other way and the README has to say so.
-    assert f"{below} by more than 0.05 the other way" in readme, (
-        f"{below} series differ by more than 0.05 the other way, unstated")
-    # `assert not [...]` stood here: the 36-series sample had no members in
-    # that tail and this encoded it. 87 series do at census scale, and what
-    # must hold is that the README states the count, which it does above.
-    # The median itself was pinned to 0.0026 -- the 36-series value. What the
-    # README has to do is quote whatever it currently is, to four places.
-    assert f"{statistics.median(diffs):+.4f}" in readme, (
-        f"the README does not quote the median coverage difference "
-        f"({statistics.median(diffs):+.4f})")
-
-
-# -- the figure the lede quotes (#153) -------------------------------------
+def test_the_readme_quotes_coverage_once(readme, paired):
+    """The median of the per-series coverage differences and the difference of
+    the means are different quantities, and sat on one page unjoined; the
+    report joins them (above). Since #212 the README quotes coverage once, as
+    the two means, so there is nothing on it to reconcile."""
+    assert f"{paired['coverage_median']:+.4f}" not in readme
+    assert len(re.findall(r"coverage \*\*[\d.]+\*\* for ours", readme)) == 1
 
 def _relative_rmse_differences():
     """Per-series `(ours - prophet) / prophet` for RMSE, from committed results.
