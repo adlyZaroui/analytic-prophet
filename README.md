@@ -124,16 +124,15 @@ relative (`paper/experiments/agreement.py`).
 → [verification](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/model.md#verification-the-objective-is-stans-objective)
 
 **What it costs**, against Prophet on the same series (Peyton Manning, default
-configuration; T is the number of observations):
+configuration; T is the number of observations), as Prophet's figure over this
+package's — above 1, this package is ahead:
 
-| | this package against Prophet |
-|---|---|
-| fit, T = 50 | **7.5× faster** |
-| fit, T = 1000 | **1.4× faster** |
-| fit, T = 2905 | **1.4× faster** |
-| predict, T = 2905, approximate / exact sampler | **1.7× / 2.6× faster** |
-| memory a fit adds, T = 2905 | **about two fifths** of Prophet's |
-| importing the library, over numpy and pandas | **+1.6 MiB**, against +40.2 |
+![fit time, prediction time and the memory a fit adds, as Prophet's over this package's, against series length](https://raw.githubusercontent.com/adlyZaroui/analytic-prophet/main/evaluation/results/figures/cost_ratios.png)
+
+The fit gains most where Prophet runs Stan's Newton method, below T = 100, and least from
+T = 1000 up; the exact sampler gains more than the approximate one at every length; and the
+memory gain grows with the series. Importing the library costs +1.6 MiB over numpy and
+pandas, against +40.2 for Prophet.
 
 **Very little of the speed is the gradient.** From T = 100 up, where Prophet runs L-BFGS,
 a CmdStan call capped at a single iteration takes 24–54% of Prophet's whole fit, and without

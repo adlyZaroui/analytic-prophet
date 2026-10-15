@@ -135,6 +135,7 @@ def test_no_figure_is_committed_that_the_report_never_shows(report):
     somebody will find and believe."""
     shown = set(re.findall(r"!\[[^\]]*\]\(figures/([^)]+)\)", report))
     committed = {p.name for p in FIGURES.glob("*.png")}
-    # the README's showcase is deliberately not part of the report
-    orphans = committed - shown - {"showcase.png"}
+    # the README's showcase and cost figure (#231) are deliberately not part of
+    # the report, which draws the same costs in absolute units
+    orphans = committed - shown - {"showcase.png", "cost_ratios.png"}
     assert orphans == set(), f"committed but shown nowhere: {sorted(orphans)}"

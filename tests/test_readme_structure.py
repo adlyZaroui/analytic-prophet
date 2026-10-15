@@ -90,7 +90,7 @@ def _prose_numbers(readme):
 
 # Generated: the paper's macros, so the README and the paper cannot disagree.
 FROM_THE_PAPER = ("CensusSeries", "RmseAdvantage", "RmseWins", "RmseWinRate", "MultiTotal",
-                  "SmoothFactorLong", "SmoothFactorShort", "LimNewtonSpeedup",
+                  "SmoothFactorLong", "SmoothFactorShort",
                   "LimOverheadShareMin", "LimOverheadShareMax", "LimParityMin", "LimParityMax",
                   "LimPoolSize", "LimBestCensus", "LimWorstPool", "LimWorstCensus",
                   "LimWidthMedian", "LimWidthWider", "LimCoverageOurs", "LimCoverageProphet",
@@ -101,9 +101,7 @@ TESTED_ELSEWHERE = {
     "40": "test_parity_surface: Prophet's public methods", "15": "test_parity_surface",
     "1e-13": "test_paper_agreement", "1e-9": "test_paper_agreement",
     "21": "test_paper_agreement: points measured",
-    "1.4": "test_tier3_reporting: fit ratios at T = 1000 and 2905; and the samplers' "
-           "disagreement, which the report quotes (below)",
-    "1.7": "test_tier3_reporting", "2.6": "test_tier3_reporting",
+    "1.4": "the samplers' disagreement, which the report quotes (below)",
     "1.6": "test_tier3_reporting", "40.2": "test_tier3_reporting",
     "0.3": "test_tier3_reporting", "3.6": "test_tier3_reporting",
     "0.52": "test_tier2_reporting", "0.43": "test_tier2_reporting",
@@ -157,7 +155,6 @@ def test_the_paper_figures_are_quoted_where_they_belong(readme, macros):
             f"From {macros['MultiTotal']} random starts",
             f"brings the same L-BFGS {macros['SmoothFactorLong']} to "
             f"{macros['SmoothFactorShort']} times closer",
-            f"| fit, T = 50 | **{macros['LimNewtonSpeedup']}× faster** |",
             f"takes {macros['LimOverheadShareMin']}–{macros['LimOverheadShareMax']}% of "
             f"Prophet's whole fit",
             f"takes {macros['LimParityMin']}–{macros['LimParityMax']} times as long",
