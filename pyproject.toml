@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "analytic-prophet"
-description = "Facebook Prophet's fitting engine with a hand-derived analytic gradient in place of Stan's automatic differentiation"
+description = "Prophet's model without Stan, fitted to the optimum that Prophet's own optimizer misses."
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Adly Zaroui" }]
@@ -19,6 +19,12 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: C++",
     "Topic :: Scientific/Engineering :: Mathematics",
 ]

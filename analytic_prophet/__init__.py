@@ -42,7 +42,7 @@ hypothetical -- it is the one test that broke when this package was split, and
 it broke loudly only because the assertion was about behaviour rather than
 about the patch.
 """
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from .forecaster import *          # noqa: F401,F403,E402
 from .forecaster import AnalyticProphet   # noqa: F401,E402  -- the one that matters

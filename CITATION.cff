@@ -1,17 +1,16 @@
 cff-version: 1.2.0
 message: If you use this software, please cite it as below.
 title: >-
-  analytic-prophet: Facebook Prophet's fitting engine with a
-  hand-derived analytic gradient in place of Stan's automatic
-  differentiation
+  analytic-prophet: Prophet's model without Stan, fitted to the optimum
+  that Prophet's own optimizer misses
 abstract: >-
-  A reimplementation of Facebook Prophet's fitting engine that replaces
-  Stan with a closed-form gradient derived by hand and a small C++ core.
-  It fits the same model -- verified against Stan's own log_prob -- and
-  reaches a better optimum by Prophet's own objective at every series
-  length measured, because Prophet's optimizer stops short on the
-  non-differentiable L1 term that its changepoint prior puts in the
-  posterior. Ships with a four-tier evaluation suite: a correctness gate,
+  Prophet's model without Stan, fitted to the optimum that Prophet's own
+  optimizer misses. Prophet's changepoint prior makes its objective
+  non-differentiable exactly where the optimum sits, and the smooth
+  optimizers it uses stop short of it. This package fits the same model --
+  verified against Stan's own log_prob -- with a gradient written out by
+  hand and a small C++ core, and solves an exact reformulation that has no
+  such kink. Ships with a four-tier evaluation suite: a correctness gate,
   parameter recovery on synthetic series, held-out forecast accuracy on a
   frozen census of M4 weekly and daily series, and cost.
 type: software
@@ -23,11 +22,13 @@ authors:
 repository-code: https://github.com/adlyZaroui/analytic-prophet
 url: https://github.com/adlyZaroui/analytic-prophet
 license: MIT
-version: 0.1.0
-date-released: "2026-10-06"
+version: 0.1.1
+date-released: "2026-10-15"
 keywords:
   - forecasting
   - time-series
   - prophet
+  - stan
   - automatic-differentiation
   - optimization
+  - lasso
