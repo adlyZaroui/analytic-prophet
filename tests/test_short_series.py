@@ -318,43 +318,41 @@ def test_the_fallback_can_be_switched_off(peyton_manning_df, cpp_module,
 
 
 def test_the_fallback_fires_where_the_python_path_actually_fails(peyton_manning_df):
-    """Not provoked: the one configuration in this repo that really terminates
-    ABNORMAL.
+    """Not provoked: a configuration that really terminates ABNORMAL.
 
-    Yearly forced at order 10 on 328 days, started from all zeros -- the
-    configuration test_fit_cpp_parity uses to match the two paths' initial
-    values. The auto rule would never select it, and scipy's line search fails
-    on it (#24). It is specific to that start: from `linear_growth_init`, the
-    same model converges.
+    Multiplicative seasonality on the first 100 days, where Prophet's rule
+    picks L-BFGS: an ordinary default fit. In log(sigma_obs), where the Python
+    path has run since #229, scipy's line search fails there after reaching
+    the optimum, and the rule retries with Newton.
 
     The retry converges and lands on the same objective to within 1e-9, so the
     fallback corrects the reported status without moving the answer -- which is
     the best a fallback can do.
+
+    Until #229 this test used yearly forced at order 10 on 328 days, started
+    from all zeros, where the line search failed in sigma_obs (#24). In
+    log(sigma_obs) that configuration converges, and this test skipped on every
+    build; this one fails where that one used to.
     """
-    from conftest import pin_yearly_only
+    df = peyton_manning_df.iloc[:100].reset_index(drop=True)
 
-    df = peyton_manning_df.iloc[:300].reset_index(drop=True)
-    zero_init = {"k": 0.0, "m": 0.0,
-                 "delta": np.zeros(forecaster.N_CHANGE_POINTS),
-                 "beta": np.zeros(2 * forecaster.n_yearly)}
-
-    without = pin_yearly_only(AnalyticProphet())
+    without = AnalyticProphet(seasonality_mode="multiplicative")
     without.newton_fallback = False
-    without.fit(df, backend="python", analytic=True, initial_params=zero_init)
+    without.fit(df, backend="python")
     if without.opt.status != SCIPY_LINE_SEARCH_FAILURE:
         # Which configurations provoke scipy's line search is a property of the
-        # scipy build. This one does on macOS/arm64, and in no CI job on Linux,
-        # where it converges cleanly -- so there is nothing here to fall back
-        # from and nothing for this test to measure (#103). The *mechanism* is
-        # covered either way by the tests above, which drive the status
-        # directly rather than hoping for it.
+        # scipy build and of the coordinates it searches in. This one does on
+        # macOS/arm64; where it converges cleanly there is nothing here to fall
+        # back from and nothing for this test to measure (#103). The
+        # *mechanism* is covered either way by the tests above, which drive the
+        # status directly rather than hoping for it.
         pytest.skip("scipy's line search does not fail on this build: the "
                     f"configuration converged with status {without.opt.status}, "
                     "so there is no real failure to fall back from")
-    assert without.opt.status == SCIPY_LINE_SEARCH_FAILURE
+    assert without.optimizer_used == "LBFGS"
 
-    with_fallback = pin_yearly_only(AnalyticProphet())
-    with_fallback.fit(df, backend="python", analytic=True, initial_params=zero_init)
+    with_fallback = AnalyticProphet(seasonality_mode="multiplicative")
+    with_fallback.fit(df, backend="python")
 
     assert with_fallback.optimizer_used == "Newton"
     assert with_fallback.opt.success

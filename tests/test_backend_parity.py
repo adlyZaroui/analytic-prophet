@@ -64,16 +64,16 @@ def test_the_two_backends_converge_to_same_loss_from_matched_init(peyton_manning
     python_model = pin_yearly_only(AnalyticProphet())
     python_model.fit(small_df, backend="python", analytic=True, initial_params=matched_init)
     # This configuration -- yearly forced at order 10 on 328 days, from an
-    # all-zero start, neither of which the defaults would produce -- is the one
-    # place scipy reports ABNORMAL, which is #24. Since #25 the Newton fallback
-    # catches it: the retry converges on the same objective to 1e-13, so the run
-    # now reports success and the fitted point is unchanged.
+    # all-zero start, neither of which the defaults would produce -- was where
+    # scipy reported ABNORMAL, which is #24, and since #25 the Newton fallback
+    # caught it: the retry converged on the same objective to 1e-13.
     #
-    # *Whether* it reports ABNORMAL is a property of the scipy build and not of
-    # this code. On macOS/arm64 the line search fails here and Newton takes
-    # over; in every CI job on Linux the same configuration converges under
-    # L-BFGS and the fallback never fires. Both land on the same optimum, which
-    # is what this test is about, so the path taken is no longer asserted (#103).
+    # *Whether* it reports ABNORMAL is a property of the scipy build and of the
+    # coordinates, not of this code. In sigma_obs the line search failed here
+    # on macOS/arm64 and converged in every CI job on Linux (#103). In
+    # log(sigma_obs), where the Python path has run since #229, it converges on
+    # macOS/arm64 too. Both paths land on the same optimum, which is what this
+    # test is about, so the path taken is not asserted.
     assert python_model.optimizer_used in ("Newton", "LBFGS")
     assert np.all(np.isfinite(python_model.get_parameters()))
 
@@ -103,10 +103,9 @@ def test_the_two_backends_converge_to_same_loss_from_matched_init(peyton_manning
         np.asarray(cpp_model.loss_over_iterations),
     )
     for name, trajectory in zip(("python", "cpp"), trajectories):
-        # Both traces are monotone by construction here: each records a value
-        # only when one improves. The Python side reached this configuration
-        # through the Newton fallback, whose line search accepts a step only on
-        # a decrease; before #25 it was scipy's per-iteration trace, which rose
+        # Both traces descend. Where the Python side reached this configuration
+        # through the Newton fallback, its line search accepts a step only on a
+        # decrease; before #25 it was scipy's per-iteration trace, which rose
         # once by 8e-5 at step 12 of 170 on the run that reported ABNORMAL. The
         # bound keeps the claim the test is about -- the trajectory descends --
         # rather than pinning which optimizer produced it.
