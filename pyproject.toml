@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "analytic-prophet"
-description = "Prophet's model without Stan, fitted to the optimum that Prophet's own optimizer misses."
+description = "Stan-free Prophet forecasting model using an analytical gradient instead of AutoDiff: faster and lighter on memory."
 readme = "README.md"
 # PEP 639 (#219): an SPDX expression and the files that carry the terms. Both
 # are MIT; LICENSE-PROPHET is Prophet's, for the code derived from it (#199).

@@ -94,7 +94,7 @@ def test_the_figure_exists_and_the_readme_shows_it(readme):
 
     # in the forecasts section, after the sentence and the table it illustrates
     # (#212 put it there; it used to sit above the fold, before the features)
-    section = readme[readme.index("## 3. Forecasts"):]
+    section = readme[readme.index("## 2. Slightly better forecasts"):]
     section = section[:section.index("\n## ", 1)]
     assert "figures/showcase.png" in section
 
