@@ -80,17 +80,24 @@ def test_what_the_discussion_says_of_prophets_newton_holds(census):
     # it is slower: the ratio the text quotes is a slowdown on most series
     ratios = [row["seconds_newton"] / row["seconds_lbfgs"] for row in census]
     assert statistics.median(ratios) > 2
-    # "on N series it even scores above the corrected optimum, by at most ..."
-    above = [-row["shortfall_newton"] for row in census if row["shortfall_newton"] < 0]
-    assert above and max(above) < 0.05, "above the optimum by more than a tolerance"
-    assert "even scores above the corrected optimum" in text
+    # #240: measured from the converged optimum, Newton stays below it everywhere.
+    # From the default fit it scored above on 15 series, which is what that
+    # issue found: the default fit stops by Stan's tests a little short.
+    optimum = {row["series"]: row["lp_converged"] for row in _module("converged").read()}
+    assert all(optimum[row["series"]] > row["lp_newton"] for row in census)
+    assert "it stays below it on every series" in text
+    assert "even scores above the corrected optimum" not in text
 
 
 def test_the_census_macros_are_these_results(census):
     macros = _module("quote_numbers").macros()
+    optimum = {row["series"]: row["lp_converged"] for row in _module("converged").read()}
+    newton = [optimum[row["series"]] - row["lp_newton"] for row in census]
+    # closer than the corrected optimum, this implementation's default fit
     above = sum(1 for row in census if row["shortfall_newton"] < 0)
     assert macros["NewtonCensusSeries"] == f"{len(census)}"
     assert macros["NewtonCensusAbove"] == f"{above}"
+    assert macros["NewtonCensusNewtonMedian"] == f"{statistics.median(newton):.2g}"
     assert float(macros["NewtonCensusLbfgsMedian"]) > 10 * float(macros["NewtonCensusNewtonMedian"])
 
 
