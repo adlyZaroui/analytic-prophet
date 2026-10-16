@@ -58,8 +58,8 @@ def test_where_the_readme_quotes_a_figure_the_paper_quotes_the_same(macros):
     drifted on two, 8.2x at T = 50 against the paper's 7.5x and 0.0967% against
     0.0968%. tests/test_readme_structure.py checks each in its sentence, and
     that the README carries no number without a source. Since #231 the README's
-    fit ratios are a figure drawn from Tier 3, so it no longer quotes
-    \\LimNewtonSpeedup."""
+    fit ratios are a figure drawn from Tier 3, so it no longer quotes the
+    paper's speed-up at T = 50, and #241 removed that macro."""
     readme = " ".join(README.read_text().split())
     for name in ("LimCoverageOurs", "LimCoverageProphet", "LimWorstPool", "LimPoolSize",
                  "LimWidthMedian", "LimWidthWider", "LimWorstCensus", "LimBestCensus",

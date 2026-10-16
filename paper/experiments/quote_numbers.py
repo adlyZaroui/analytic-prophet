@@ -265,8 +265,10 @@ def limitations():
 
     And the cost of calling CmdStan (`overhead.csv`), which the section stated
     until #204 cut its item on speed: the paper makes no claim about speed. The
-    README's cost section still quotes those figures, so they are generated here
-    for it; the two only that item used went with it."""
+    README's cost section still quotes its share and parity figures, so they are
+    generated here for it. The figures only that item used went with it: two in
+    #204, and the speed-up at T = 50, which the README stopped quoting in #231,
+    in #241."""
     report, showcase = _evaluation()
     rows = _rows("tier2_accuracy")
     paired = {row["metric"]: float(row["value"]) for row in rows
@@ -291,8 +293,6 @@ def limitations():
 
     overhead = list(csv.DictReader(open(PAPER_RESULTS / "overhead.csv")))
     lbfgs = [row for row in overhead if row["prophet_algorithm"] == "LBFGS"]
-    newton = min((row for row in overhead if row["prophet_algorithm"] == "Newton"),
-                 key=lambda row: int(row["observations"]))
 
     def share(row):
         return float(row["one_iteration_call"]) / float(row["prophet_fit"])
@@ -324,7 +324,6 @@ def limitations():
         "LimOverheadShareMax": f"{max(map(share, lbfgs)) * 100:.0f}",
         "LimParityMin": f"{min(map(parity, lbfgs)):.1f}",
         "LimParityMax": f"{max(map(parity, lbfgs)):.1f}",
-        "LimNewtonSpeedup": f"{float(newton['prophet_fit']) / float(newton['ours_fit']):.1f}",
     }
 
 
