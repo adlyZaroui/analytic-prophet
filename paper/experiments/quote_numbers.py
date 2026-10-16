@@ -14,7 +14,7 @@ import csv
 import json
 import re
 import statistics
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 PAPER = Path(__file__).resolve().parent.parent
@@ -671,22 +671,30 @@ def inside_stan():
 
 
 def newton_census():
-    """#208: Prophet's own Newton on the census sample, beside its L-BFGS."""
+    """#208: Prophet's own Newton on the census sample, beside its L-BFGS.
+
+    Both are measured from the converged optimum (#240): this implementation's
+    default fit carried on by its own Newton method, from `converged.csv`. The
+    default fit -- the corrected optimum -- stops a little short of it, by
+    Stan's tests, and `Above` counts the series where Prophet's Newton stops
+    closer than that, with by how much at most."""
     rows = list(csv.DictReader(open(PAPER_RESULTS / "newton_census.csv")))
+    optimum = {row["series"]: float(row["lp_converged"])
+               for row in csv.DictReader(open(PAPER_RESULTS / "converged.csv"))}
     ran = [row for row in rows if not row["newton_error"]]
 
-    def values(name):
-        return [float(row[name]) for row in ran]
+    def short(column):
+        return [optimum[row["series"]] - float(row[column]) for row in ran]
 
-    above = [-value for value in values("shortfall_newton") if value < 0]
+    above = [-float(row["shortfall_newton"]) for row in ran if float(row["shortfall_newton"]) < 0]
     ratio = [float(row["seconds_newton"]) / float(row["seconds_lbfgs"]) for row in ran]
     return {
         "NewtonCensusSeries": f"{len(rows)}",
-        "NewtonCensusLbfgsMedian": f"{statistics.median(values('shortfall_lbfgs')):.1f}",
-        "NewtonCensusNewtonMedian": f"{statistics.median(values('shortfall_newton')):.2g}",
-        "NewtonCensusRelaxedMedian": f"{statistics.median(values('relaxed_newton')):.2g}",
         "NewtonCensusAbove": f"{len(above)}",
         "NewtonCensusAboveMax": f"{max(above, default=0.0):.2g}",
+        "NewtonCensusLbfgsMedian": f"{statistics.median(short('lp_lbfgs')):.1f}",
+        "NewtonCensusNewtonMedian": f"{statistics.median(short('lp_newton')):.2g}",
+        "NewtonCensusRelaxedMedian": f"{statistics.median(float(row['relaxed_newton']) for row in ran):.2g}",
         "NewtonCensusTimeRatio": f"{statistics.median(ratio):.0f}",
     }
 
@@ -704,12 +712,33 @@ def frozen():
     }
 
 
+def converged():
+    """#240: what Stan's tests leave between the default fit and the optimum,
+    and the Newton steps it takes to close it: how many most series take, on
+    how many, and the most any takes."""
+    rows = list(csv.DictReader(open(PAPER_RESULTS / "converged.csv")))
+    gain = [float(row["gain"]) for row in rows]
+    relaxed = [float(row["relaxed_converged"]) for row in rows]
+    steps = Counter(int(row["steps_converged"]) for row in rows)
+    (usual, usual_series), = steps.most_common(1)
+    return {
+        "ConvergedGainMedian": _scientific(statistics.median(gain)),
+        "ConvergedGainMax": _scientific(max(gain)),
+        "ConvergedRelaxedMedian": _scientific(statistics.median(relaxed)),
+        # the threshold the text states, 10^{-3}
+        "ConvergedUncertified": _word(sum(1 for value in relaxed if value >= 1e-3)),
+        "ConvergedSteps": _word(usual),
+        "ConvergedStepsSeries": f"{usual_series}",
+        "ConvergedStepsMax": _word(max(steps)),
+    }
+
+
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
     return {**census(), **posterior(), **certificate(), **margin(), **newton(),
             **limitations(), **smoothing(), **stall(), **tau_path(), **multistart(),
             **flat(), **rounding(), **tolerance(), **strength(), **environment(),
-            **inside_stan(), **newton_census(), **frozen()}
+            **inside_stan(), **newton_census(), **frozen(), **converged()}
 
 
 def render(values):
