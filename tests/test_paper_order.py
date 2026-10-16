@@ -173,6 +173,8 @@ def test_the_overhead_figures_are_still_generated_for_the_readme():
         assert f"\\{name}" not in tex, f"the paper quotes {name} again"
     readme = " ".join((REPO / "README.md").read_text().split())
     assert f"takes {macros['LimParityMin']}–{macros['LimParityMax']} times as long" in readme
+    # the speed-up at T = 50 went once nothing quoted it (#241)
+    assert "LimNewtonSpeedup" not in macros
 
 
 def test_the_liblbfgs_paragraph_is_cut():
