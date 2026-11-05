@@ -133,6 +133,12 @@ with nothing but `log_prob` on Prophet's unmodified program, which is how Prophe
 adopt the fix with its Stan model frozen (`results/polish.csv`, about ten minutes,
 almost all of it CmdStan subprocesses).
 
+`experiments/converged.py` (#240) measures what Stan's stopping tests leave between the
+corrected optimum and the exact one. On the same 200 census series it carries each
+default fit on with the compiled projected Newton method and grades both points by
+#170's certificate. Section 7 measures from that converged point
+(`results/converged.csv`, about four minutes on nine workers; needs the M4 cache).
+
 ## Results not yet measured
 
 A `\pending{#issue}{…}` marker renders in red where the paper states something

@@ -60,6 +60,7 @@ experiments:
 	$(PYTHON) experiments/rounding.py
 	$(PYTHON) experiments/newton_census.py
 	$(PYTHON) experiments/polish.py
+	$(PYTHON) experiments/converged.py
 
 # A \pending macro marks a result the paper states but has not measured. It
 # renders in red so a draft is honest about its gaps; this refuses to call a

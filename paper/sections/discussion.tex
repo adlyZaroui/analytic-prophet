@@ -7,16 +7,17 @@ Prophet already ships the method that comes closest. Passing
 on the Peyton Manning series it stops between \NewtonStanMin{} and \NewtonStanMax{}
 nats short of the optimum (\cref{sec:evidence:newton}). We ran it on the
 \NewtonCensusSeries{} census series drawn at random for \cref{sec:evidence:kkt}
-(\code{paper/experiments/newton_census.py}). There, Prophet's default L-BFGS stops a
-median of \NewtonCensusLbfgsMedian{} nats short of the corrected optimum, and its
-Newton method \NewtonCensusNewtonMedian, closer on every one of them, at a median of
-\NewtonCensusTimeRatio{} times the time a fit takes. On \NewtonCensusAbove{} series it
-even scores above the corrected optimum, by at most \NewtonCensusAboveMax{} nats: the
-corrected optimum is this implementation's L-BFGS-B at its stopping tolerance, not
-exact (\cref{sec:evidence:kkt}). Nor is Prophet's Newton the optimum: no rate comes
-out exactly zero, and its relaxed residual has a median of
-\NewtonCensusRelaxedMedian. Tighter tolerances are not a remedy. With all five of
-L-BFGS's stopping tests at machine precision the gap remains
+(\code{paper/experiments/newton_census.py}) and measured each fit from the converged
+point of that section. Prophet's default L-BFGS stops a median of
+\NewtonCensusLbfgsMedian{} nats short of it, and its Newton method
+\NewtonCensusNewtonMedian, closer on every one of them, at a median of
+\NewtonCensusTimeRatio{} times the time a fit takes. Nor is Prophet's Newton the
+optimum: it stays below it on every series, no rate comes out exactly zero, and its
+relaxed residual has a median of \NewtonCensusRelaxedMedian. This implementation's
+fit stops a median of $\ConvergedGainMedian$ nats short, and Prophet's Newton stops
+closer than that on \NewtonCensusAbove{} of the series, by at most
+\NewtonCensusAboveMax{} nats. Tighter tolerances do not rescue Prophet's L-BFGS.
+With all five of its stopping tests at machine precision the gap remains
 (\cref{sec:evidence:lp}), and where that makes the line search fail, Prophet's
 fall-back to Newton passes the same tolerances on, cmdstanpy rejects them for Newton,
 and the fit raises an error.

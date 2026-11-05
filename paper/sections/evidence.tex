@@ -136,9 +136,17 @@ Prophet's strict residual is \KktPeytonProphetStrict{} and its relaxed one
 
 The reformulation's residual is not zero either. At a median of \KktOursMedian{} it is
 about one percent of $1/\tau$, and the largest across the census is \KktOursWorst{}:
-the stopping tolerance of its L-BFGS-B, not exact optimality. What the certificate
-establishes is the comparison, series by series, and that Prophet's points fail the
-conditions under any reading of their rates.
+Stan's stopping tests, which its L-BFGS-B keeps, end the run short of exact
+optimality. On the \KktRoundingSeries{} series drawn at random above, carrying the
+fit on with the projected Newton method of \cref{sec:implementation} ---
+\ConvergedSteps{} steps on \ConvergedStepsSeries{} of them, at most
+\ConvergedStepsMax{} --- brings the relaxed residual to a median of
+$\ConvergedRelaxedMedian$, below $10^{-3}$ on all but \ConvergedUncertified, and
+raises $\lp$ by a median of $\ConvergedGainMedian$ nats and by at most
+$\ConvergedGainMax$ (\code{paper/experiments/converged.py}). \Cref{sec:discussion}
+measures from that converged point. What the certificate establishes is the
+comparison, series by series, and that Prophet's points fail the conditions under
+any reading of their rates.
 
 \subsection{Scatter under convexity}
 \label{sec:evidence:multistart}

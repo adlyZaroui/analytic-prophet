@@ -143,7 +143,9 @@ Newton's method, by a projected Newton method on the same bounds, and it starts 
 Prophet's own initialisation, in which every rate is zero. Both methods keep the
 bounds themselves, projecting onto them, so a rate can come out exactly zero, which
 none of Prophet's does (\cref{sec:model}). The point it returns, carried back to
-$\delta = \delta^+ - \delta^-$, is the corrected optimum.
+$\delta = \delta^+ - \delta^-$, is the corrected optimum. Stan's own stopping tests
+end the run there, a little short of exact optimality; \cref{sec:evidence:kkt}
+measures by how much.
 
 It fits Stan's model, not a transcription of it. Stan reports the log density it
 maximises as \code{lp__}, written $\lp$ here, and for Prophet's program $\lp$ is

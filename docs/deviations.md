@@ -344,10 +344,11 @@ Tracked, deliberate, and not yet closed:
 - **One convergence tolerance on the Python path**
   ([#24](https://github.com/adlyZaroui/analytic-prophet/issues/24)). `fit()` runs under
   Stan's iteration cap and Stan's `tol_grad`; its relative-objective tolerance is
-  **tighter** than Stan's `2.22e-12`, at `1e-16`. Taking Stan's number would put this
-  path 4.43 nats *below* Prophet on the full series — see
+  **tighter** than Stan's `2.22e-12`, at `1e-16`. Taking Stan's number would give back
+  2.58 of the 2.76 nats by which this path beats Prophet at T = 1000 — see
   [What Stan's tolerance costs on the Python path](#what-stans-tolerance-costs-on-the-python-path).
-  The compiled backend, the deliverable, uses Stan's values unchanged.
+  The compiled backend, the deliverable, uses Stan's values unchanged, and
+  [what they leave](#what-stans-tests-leave-on-the-compiled-path) is measured below.
 - **Overall fit**: on series past two years, predictions differ from Prophet's by
   0.17–0.59% of the series scale (history plus a 30-day horizon, measured at T = 730,
   800, 1000, 1500, 2000, 2500, 2905). On shorter series the trend decomposition is
@@ -451,5 +452,53 @@ back most of the margin, with loose floors on the sizes. The directions are the 
 the magnitudes are the illustration. If Stan's `gtol` ever stops being a no-op, or Stan's
 `ftol` stops costing anything where the plateau is, the tests fail rather than the
 reasoning quietly going stale.
+
+---
+
+## What Stan's tests leave on the compiled path
+
+The compiled core stops by Stan's tests, unchanged — the ones Prophet's own fit stops
+by — and they end the run a little short of the exact optimum
+([#240](https://github.com/adlyZaroui/analytic-prophet/issues/240)). The test that ends
+it is the relative-objective one, `tol_rel_obj × eps = 2.22e-12`: a single step that
+gains less than that fraction of the objective stops the run, and at a log density of
+10⁴ that is about 2e-8 nats.
+
+`paper/experiments/converged.py` measured what is left, on the 200 census series of
+the paper's certificate. It carries each default fit on with the compiled projected
+Newton method — `fit(df, algorithm="Newton", initial_params=...)` from the fitted
+point — and scores both points by Stan's density of Prophet's program. On all 200 it
+was the relative test that ended the default fit: none reached the iteration cap (at
+most 7,862 of 10,000), and none came near `tol_grad`, with a relaxed KKT residual of
+at least 0.0019.
+
+| | default fit | carried on by Newton |
+|---|---|---|
+| short of the converged point, median | **3.8e-4 nats** | — |
+| … 90th percentile; largest | 1.5e-3; **9.6e-3 nats** | — |
+| relaxed KKT residual, median | 0.15 | **1.8e-8** |
+| rates exactly zero | — | the same on 192 series, more on 8, fewer on none |
+| time, against the default fit's | — | **11%** at the median, 25% at the 90th percentile |
+
+The Newton run takes two steps on 185 of the series and at most nine. On one,
+D3286 (T = 4197), its first step gains 1.6e-8 nats, under the 2.6e-8 Stan's relative
+test asks at that density, and the run stops there with a residual of 0.81.
+
+**The default does not take the step**, for four reasons:
+
+- It is Stan's rule, the one Prophet's fit stops by. What this project changes is the
+  non-differentiability, so the two fits stay comparable and the difference between
+  them is the kink's. Prophet's L-BFGS stops a median of 5.1 nats short of the same
+  converged point, more than 13,000 times further.
+- The gain is small: a median of 3.8e-4 nats, on log densities of 848 to 35,596 here.
+- It costs time: 11% at the median.
+- It is still not a certificate everywhere. Stan's tests stop the Newton run too, as on
+  D3286.
+
+The paper measures from the converged point wherever a comparison is that fine.
+Prophet's own Newton stops closer than the default fit on 15 of the 200 series, by at
+most 0.0088 nats, and below the converged point on every one (section 7).
+`tests/test_paper_converged.py` holds these numbers to the recorded results, and runs
+the Newton step live on Peyton Manning.
 
 ---
