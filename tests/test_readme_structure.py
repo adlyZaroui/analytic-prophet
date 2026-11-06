@@ -71,13 +71,19 @@ def test_the_structure_is_the_one_agreed(readme):
 
 
 def test_the_pitch_says_what_this_is_in_one_sentence(readme):
-    """#213 repeats this sentence in the PyPI summary, CITATION.cff and the
-    GitHub About, so it is the README's first line of prose. #230 chose it: the
-    package is a faster, lighter Prophet."""
+    """#213 repeats this pitch in the PyPI summary, CITATION.cff and the
+    GitHub About, so it is the README's first line of prose. #230 chose what it
+    leads with: the package is a faster, lighter Prophet. #248 reworded it so
+    that it no longer reads as if the gradient made it faster: the gradient is
+    how it fits, and the speed and the better fit are what it does."""
     first = next(line for line in readme.splitlines()[1:]
                  if line.strip() and not line.startswith("[!["))
-    assert first == ("**Stan-free Prophet forecasting model using an analytical gradient "
-                     "instead of AutoDiff: faster and lighter on memory.**")
+    assert first == ("**Stan-free Prophet: the same model and API, fitted in-process with "
+                     "a hand-derived gradient. Faster, lighter on memory, and fitted to the "
+                     "posterior mode Prophet's optimizer misses.**")
+    # what #248 took out: the gradient as the reason for the speed, and
+    # "analytical", which clashed with the package's own name
+    assert "instead of AutoDiff: faster" not in first and "analytical" not in first
 
 
 # -- every number is generated and tested, or a stated constant -------------
@@ -217,7 +223,7 @@ def test_no_private_term_is_left_undefined(readme):
 def test_the_framing_is_the_packages(readme):
     """#230: the package is a faster, lighter Prophet, and its forecasts are
     slightly better -- in that order, and sized as the paper sizes the gain.
-    The pitch names the analytical gradient; section 1 still says how little of
+    The pitch names the hand-derived gradient as how it fits; section 1 says how little of
     the speed it accounts for, which is mostly not calling CmdStan."""
     one = _one_line(readme)
     lede = one[one.index("**Stan-free"):one.index("**Status: early development.**")]
