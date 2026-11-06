@@ -1,461 +1,127 @@
 # The non-smooth objective
 
-The project's central technical argument: Prophet's posterior is not
-differentiable exactly where its optimum sits, that costs it real accuracy, and
-a reformulation removes the problem rather than working around it.
+Why Prophet's optimizer stops short of its own posterior mode, what this package does
+instead, and where each part is measured. This page is the argument in brief. The paper
+makes it in full, with every number (`paper/`, built with `make`). The
+[evaluation report](../evaluation/results/report.md) has the forecasts. This page's
+earlier, longer version, and the history it carried, are in the
+[changelog](../CHANGELOG.md#what-the-non-smooth-objective-page-used-to-say).
 
 [← back to the README](../README.md)
 
 ---
 
-The Laplace prior on `delta` puts `Σ|δⱼ|/τ` in the objective. That makes the posterior
-**non-differentiable at `δ = 0`** — and the optimum sits exactly on those kinks, because
-the prior is what drives most changepoint rates to zero. L-BFGS assumes a smooth
-objective. This one is not.
+### The kink
 
-This caused four separate, independently-discovered failures here:
+Prophet's trend changes slope at its changepoints, by rates `δⱼ`, and a Laplace prior on
+the rates puts `Σ|δⱼ|/τ` in the objective it optimizes, with `τ` the
+`changepoint_prior_scale`. That term is not differentiable where a rate is zero, and zero
+is where the prior pulls most rates: the optimum sits on the kinks. On the full Peyton
+Manning series, 15 of its 25 rates are exactly zero. Across the 3,008 series of the
+census, the median is 11.
 
-1. **liblbfgs** (the original C++ backend) terminated after ~2 iterations with
-   `LBFGSERR_ROUNDING_ERROR`. More-Thuente narrows an interval of uncertainty until the
-   strong Wolfe conditions hold; across a kink that interval collapses instead. Sweeping
-   `tau` made the mechanism unambiguous — iterations-before-death tracked the L1
-   strength exactly: `1/tau = 20` died at 2 iterations, `1/tau = 1e-6` (an effectively
-   smooth objective) ran 3528.
+### Why a smooth optimizer stops short there
 
-   *Historical, and not rerun.* liblbfgs was linked from the system, never kept in this
-   repository, and the backend has since been replaced, so nothing reruns this sweep and
-   the paper does not quote it. [`paper/experiments/strength.py`](../paper/experiments/strength.py)
-   asks the same question of SciPy's L-BFGS-B, with no bounds, on the natural
-   parameterization (#175): wherever the optimum has no rate at zero it reaches it, and
-   it stops further short the more of the optimum's rates sit on the kink.
-2. **scipy's L-BFGS-B** on the natural parameterization stalled with its **objective
-   17.8% above the minimum** while reporting `success=True`. Not a tolerance problem:
-   with `ftol=0, gtol=0` it still stopped at the same point.
+L-BFGS models the objective from its gradients, and Newton's method from its curvature,
+and both models assume the objective is smooth. Across `δⱼ = 0` the gradient jumps by
+`2/τ` and the curvature is undefined, so the model is wrong exactly where the optimum
+is. Rates near zero overshoot it and change sign, and the steps shrink. The run ends
+short of the optimum, with no rate exactly zero: by Stan's stopping tests, which measure
+progress rather than optimality, or by a line search that can make no more progress.
 
-   *That 17.8% is of the objective being minimized* — the negative log posterior of the
-   normalized series, `y / max|y|`, which is what both backends here optimize. It is
-   **not** a percentage of Stan's `lp__`, which is defined only up to an additive constant
-   and so has no percentages to take. The two are different quantities on different
-   scales and do not compare.
+What was measured, each in the paper under the section named:
 
-   That run, from #8's setting, was not kept either. In `strength.py`'s setting --
-   `sigma_obs` fixed, Prophet's initialization -- removing SciPy's tolerances does move
-   the endpoint, but not to the optimum: at the default `1/tau = 20` on the full series
-   it ends 11.1 nats short with them and 0.18 without (`paper/results/strength.csv`).
-3. **Stan's L-BFGS**, which is what Prophet runs by default, stops short too — and goes
-   on stopping short with its tolerances effectively removed. Developed below.
-4. **Stan's Newton**, which Prophet uses under 100 observations, also lands short, at
-   every size measured. That is the informative one: curvature is exactly what a kink
-   does not have, so a second-order method defeated in the same place says the problem
-   is not L-BFGS. Also below.
+- **Prophet's L-BFGS stops short**, by Prophet's own density, at every series length
+  measured. The tolerances are not the cause: with all five of Stan's stopping tests at
+  machine precision the gap remains ("The optimum, under Prophet's own density").
+- **Its point fails the first-order optimality conditions** on every one of the 3,008
+  census series, even with each rate read in the way most favourable to it
+  ("First-order optimality").
+- **The kink is what stops it.** Smoothing the prior inside Prophet's own Stan program,
+  with nothing else changed, brings the same L-BFGS 8 to 1,592 times closer to the
+  optimum ("Smoothing the prior inside Stan").
+- **A second-order method stops short the same way.** This package's own Newton method,
+  run on the objective as written, oscillates across the kink and stops 1.2 to 7.1 nats
+  short; on the split below, the same code reaches the optimum ("One second-order
+  method, two parameterisations").
+- **Prophet's own Newton method comes closer, not all the way.** On 200 census series it
+  stops a median of 0.0039 nats short, against 5.1 for its L-BFGS, and takes a median of
+  12 times as long ("Discussion").
 
-### The fix: a smooth reformulation
-
-Split `delta` into non-negative parts:
+### The fix: split each rate
 
 ```
-delta = delta_pos − delta_neg,    delta_pos, delta_neg ≥ 0
+δ = δ⁺ − δ⁻,    δ⁺, δ⁻ ≥ 0
 ```
 
-Then `|δ|` becomes `delta_pos + delta_neg`: linear, smooth, with the non-smoothness
-moved into simple box constraints that a bound-constrained solver handles natively. At
-an optimum at most one of each pair is non-zero, so the two problems have the same
-solution. Both fit paths now use this.
+The penalty becomes `Σ(δ⁺ⱼ + δ⁻ⱼ)/τ`, which is linear, and the non-smoothness becomes a
+bound, which a bound-constrained solver handles natively. This package runs L-BFGS-B,
+and a projected Newton method where Prophet's rule runs Newton (below). At an optimum at
+most one of each pair is non-zero, so the two problems have the same minimisers
+("Exactness"), and a rate can land exactly on zero.
 
-### Prophet's optimizer stops short on this objective
+### What it does and does not claim
 
-Scoring both solutions under **Stan's own log density**, fitted on the same model
-specification (Prophet's own `t_change`, so `delta` is comparable). **`T = 2905` — the
-whole Peyton Manning series — with yearly seasonality only:**
+It claims a better optimum of the model Prophet specifies, by Prophet's own posterior
+density, at every series length measured. The forecasts move a little. On 3,008 held-out
+M4 series the RMSE is lower on 1,929 of them, by a median of 0.40%: a real improvement,
+and usually a small one. The intervals are wider, by a median of 0.56% on 2,153 of the
+3,008 series. Both implementations cover far less than the nominal 80%: mean coverage is
+0.345 for this package and 0.341 for Prophet. The
+[evaluation report](../evaluation/results/report.md#tier-2--does-the-better-map-point-forecast-better)
+has every comparison.
 
-| | Stan `lp__` (higher is better) |
-|---|---|
-| Prophet's optimum | 7794.9104 |
-| this implementation | **7797.2523** |
-| difference | **+2.34 nats** |
+It does not claim:
 
-**That is one configuration, and the margin is not the same in others.** The evaluation
-report quotes the default — yearly *and* weekly — where the same 2905 rows give
-**+0.36 nats**, six times smaller. Same series, same protocol, same scorer; only the width of the model
-differs:
-
-| T | default (yearly + weekly) | yearly only |
-|---|---|---|
-| 300 | +1.99 | — |
-| 1000 | +2.76 | +1.26 |
-| 2905 | **+0.36** | **+2.34** |
-
-Neither column is monotone in `T`, and they do not agree on the ordering: at `T = 1000`
-the wider model shows the larger margin, at `T = 2905` the narrower one does. Per
-observation the default column does fall steadily — 0.0066, 0.0028 and 0.00012 nats at
-`T = 300`, 1000 and 2905, a factor of 53 — but only because the margin stands still while
-`T` grows. No share of `lp__` is quoted: Stan defines `lp__` only up to an additive
-constant, so the share would depend on constants nobody chose (#203). **No mechanism for the *size* of the
-margin is claimed here.** What these five cells support is its *direction*, which holds in
-every one of them.
-
-The yearly-only column has no `T = 300` entry deliberately. 300 days is below Prophet's
-own 730-day threshold for yearly seasonality, so forcing it on there is the configuration
-[withdrawn at the end of this file](#one-claim-that-was-withdrawn) rather than a
-measurement of anything.
-
-Prophet does not reach our 7797.2523 even with its stopping rule removed. Run with every
-one of Stan's five tolerances at machine precision or below -- `tol_rel_obj=1` and
-`tol_rel_grad=1` (one machine epsilon), `tol_obj=1e-20`, `tol_grad=1e-20`,
-`tol_param=1e-20` -- it runs 1252 iterations, reaches **7796.96** — still 0.30 nats short
-— and then terminates with:
-
-> `Optimization terminated with error: Line search failed to achieve a sufficient decrease, no more progress can be made`
-
-Its own iteration log shows the cause: repeated `LS failed, Hessian reset` entries, and
-`||grad||` ending at 69, nowhere near a gradient tolerance. That is the same
-non-smoothness, defeating Stan's line search the way it defeated liblbfgs's and scipy's.
-
-All five are needed. This note used to list four, leaving out `tol_rel_grad`, and with
-that one at its default the run stops at iteration 558 with the default's 2.34 nats
-still missing. Prophet itself cannot make the run: the failed line search is an
-abnormal exit, Prophet retries with Newton and passes the tolerances on, and cmdstanpy
-rejects them for Newton. [`paper/experiments/tolerance.py`](../paper/experiments/tolerance.py)
-reruns it through Stan directly, in this configuration and at three lengths of the
-default one (#175); the paper quotes it from there.
-
-**It is not specific to L-BFGS.** Stan also ships a Newton optimizer, which Prophet uses
-on series under 100 observations, and it is genuinely the better of the two *for Prophet*
-— it beats Prophet's own L-BFGS at every size measured. It still lands below this
-implementation's optimum, at every size:
-
-| T | Prophet, Newton | Prophet, L-BFGS | this implementation |
-|---|---|---|---|
-| 20 | 74.40912 | 73.93879 | **74.89546** |
-| 50 | 139.93934 | 139.55784 | **139.95119** |
-| 99 | 246.80793 | 246.38023 | **246.82546** |
-| 150 | 380.44485 | 379.47301 | **380.56898** |
-
-That matters for what can be concluded. A first-order method stopping short is
-consistent with "L-BFGS is a poor fit for this objective" — which would be a statement
-about the algorithm. A *second-order* method stopping short in the same place is not:
-Newton uses curvature, and curvature is exactly what a kink does not have. Two
-different algorithms, both defeated at the same point, is the behaviour the Laplace
-prior's non-differentiability predicts.
-
-The third piece is [flat growth](#flat-growth-is-an-exact-tie-and-that-is-the-point),
-where the trend's flat directions are removed and the disagreement vanishes entirely —
-identical `lp__` to Stan's printed precision. Taken together: two of Prophet's algorithms
-stop short on this objective, and both land exactly where we do once the trend is taken
-out of it. The third piece is evidence that one model is being fitted rather than two; it
-is *not* evidence about the kink specifically, for the reason given in that section.
-
-**Using `lp__` as the yardstick is what made this legible.** When this was written the
-parameters could not be compared directly across the two implementations: the Fourier
-basis started at a different time, and the changepoints sat elsewhere, until #36 and #15
-aligned both. `lp__` was comparable throughout. It is a single scalar,
-reparameterization-invariant, and the quantity the model is actually defined by, so both
-implementations can be scored on it.
-
-### What this does and does not claim
-
-It claims: **this implementation finds a better optimum of the model Prophet
-specifies**, by Prophet's own objective.
-
-For a long time it did **not** claim better forecasts, because that is a different
-question and no held-out evaluation had been done.
-
-**That evaluation has now been done, and this implementation is more accurate.** On 36 M4
-series, rolling-origin, using Prophet's own cutoffs and its own scorer: MAE better on 26
-of 36 (p = 0.0063), RMSE on 25 of 36 (p = 0.0183), with **higher** coverage
-(p = 0.0025) at statistically indistinguishable interval width (p = 0.47).
-→ [Tier 2](../evaluation/results/report.md#tier-2--does-the-better-map-point-forecast-better)
-
-### What the better posterior is actually made of
-
-An earlier version of this section explained it as sparsity — that Prophet fits the
-training data marginally better while this implementation pays less in the Laplace prior.
-**Both halves are backwards**, and the correction is
-[#95](https://github.com/adlyZaroui/analytic-prophet/issues/95).
-
-Measured on the Peyton Manning series with the default configuration, and again with this
-implementation fitted on Prophet's own changepoints so that only the optimizer differs:
-
-| T = 2905, default | Σ\|δ\| | L1 paid | training SSE |
-|---|---|---|---|
-| Prophet | 3.497 | 69.9 nats | 679.4 |
-| this implementation | **3.620** | **72.4 nats** | **678.0** |
-
-| T = 2905, on Prophet's changepoints | Σ\|δ\| | training SSE | exact zeros |
-|---|---|---|---|
-| Prophet | 3.497 | 679.4 | 0 / 25 |
-| this implementation | **3.620** | **678.0** | **15 / 25** |
-
-We pay **more** prior and fit the training data **better**. The account is duller than the
-one it replaces and does not need sparsity at all: this implementation finds a point with
-a higher likelihood, and the extra prior cost is smaller than the likelihood gain.
-
-It is not one series either. Across the 36 M4 series of Tier 2, paired per series:
-
-| | median difference | lower on | p |
-|---|---|---|---|
-| Σ\|δ\| | **+0.552** | 6 / 36 | <0.0001 |
-| L1 paid | **+11.03 nats** | 6 / 36 | <0.0001 |
-| exact zeros | **+14** | 0 / 36 | <0.0001 |
-
-We pay more prior on 30 of the 36, and have more exact zeros on **all 36**. Whatever the
-difference between the two fits is, "we find a sparser trend" is not a description of it.
-
-The numbers the old table quoted — SSE 788.646 against 789.679 — reproduce under neither
-configuration, and its own configuration was never recorded. They predate
-[#15](https://github.com/adlyZaroui/analytic-prophet/issues/15) aligning the changepoints
-and [#23](https://github.com/adlyZaroui/analytic-prophet/issues/23) changing the solver,
-either of which would move them. A number whose configuration is not written down cannot
-be checked, which is why both are named above.
-
-### The difference that is real, and needs no threshold
-
-The last column is the one worth keeping. **This implementation's rates reach exactly
-zero; Prophet's never do** — 15 of 25 against 0 of 25, at every size measured. That is the
-non-smooth objective again: the Laplace prior's kink sits at `δ = 0`, the
-[split reformulation](#the-fix-a-smooth-reformulation) puts it on a bound the optimizer
-can land on exactly, and Prophet's stops nearby instead.
-
-It is also why "active changepoints", counted as `|δ| > 1e-6`, was a bad summary and has
-been dropped. On Prophet's side it is mostly a function of the cutoff:
-
-| threshold | this implementation | Prophet |
-|---|---|---|
-| 1e-8 | 8 | 25 |
-| 1e-6 | 8 | 19 |
-| 1e-4 | 8 | 15 |
-| 1e-3 | 8 | 13 |
-
-Ours is flat across five orders of magnitude because the zeros are exact. Prophet's halves
-because they are not. A count like that measures where the line was drawn, so Σ|δ| and the
-number of exact zeros are reported instead.
-
-**The threshold is a plotting convention, and it gets read as model selection.**
-[prophet#1422](https://github.com/facebook/prophet/issues/1422) is a user describing
-Prophet as selecting "only the changepoints having a delta > 0.01 (**threshold**)" and
-using those "as its breakpoints" for the piecewise linear trend. A contributor corrects
-it twice: the cutoff is "an absolute threshold applied only for visualization and doesn't
-affect the model or its predictions", and "the model never kicks out any estimated
-deltas/estimated slope changes". That is right — `0.01` occurs nowhere but
-`prophet/plot.py`, as `|mean(delta)| >= threshold`, deciding which vertical lines to
-draw.
-
-Cited for the confusion rather than for a defect: upstream answered it correctly, and
-twice. What the thread shows is that a cutoff has to exist at all before anyone can say
-which changepoints matter, and that once it exists it gets mistaken for part of the
-model. It has to exist because Prophet's rates never arrive at zero. Where they do, the
-question answers itself and no number has to be picked — which is the whole of why
-Σ|δ| and a count of exact zeros replaced the `|δ| > 1e-6` summary here.
-
-*The thread says nothing about non-differentiability, and is not evidence for it.* It is
-evidence about a reporting convention.
-
-Two things keep that from being the last word. The corpus is M4, whose series are
-anonymised and therefore barely exercise holidays or day-of-week effects — the features
-Prophet is built for. And **both** implementations badly under-cover: the nominal 80%
-interval contains about 35% of the points, for Prophet as much as for us, which is larger
-than anything separating them.
+- **A mechanism for the size of the margin.** The margin moves with the series length
+  and with the width of the model, and not monotonically in either; only its direction
+  holds everywhere it was measured. No mechanism for the *size* of the margin is claimed
+  here.
+- **That flat growth isolates the kink.** With `growth="flat"` the likelihood never sees
+  the trend, and the two implementations land on the same point to Stan's printed
+  precision. That shows the same model is being fitted. It does not separate the kink
+  from the trend's ill-conditioning, because flat growth removes both ("A negative
+  control: removing the trend").
 
 ### Prophet's rule for short series, and what it costs
 
-Prophet does not always run L-BFGS. Prophet's `models.py`, `CmdStanPyBackend.fit`: `'Newton' if T < 100
-else 'LBFGS'`, one retry with Newton when the first attempt raises — at any length,
-controlled by `newton_fallback` — and an explicit `algorithm=` overriding the choice.
-Both fit paths here follow that rule, including the override
-([#25](https://github.com/adlyZaroui/analytic-prophet/issues/25)).
+Below 100 observations Prophet runs Stan's Newton method rather than L-BFGS, and retries
+with Newton when L-BFGS exits abnormally at any length. This package follows the rule,
+with a projected Newton method on the split problem, so a script ported from Prophet runs
+the optimizer Prophet's documentation describes. Its Newton method and its L-BFGS-B land
+on the same optimum at every length tested (`tests/test_short_series.py`). The rule costs
+time, not accuracy: each Newton step pays `2n` gradient evaluations for its Hessian.
 
-It was implemented **against** the measurement rather than because of it. #25 was filed
-on the premise that running a different algorithm on short series meant we could not
-expect matching parameters there, and proposed measuring before deriving a Hessian. The
-measurement inverted the premise: this implementation's L-BFGS already beats Prophet's
-Newton at every size, including below 100
-([table above](#prophets-optimizer-stops-short-on-this-objective)). Adopting Newton
-there could only match that, not improve on it.
+### What upstream has said
 
-The rule is implemented anyway, because the contract is *the same fit under the same
-data*. Keeping a better-scoring algorithm because it scores better is exactly the silent
-divergence the rest of this file is spent ruling out, and it would mean a script ported
-from Prophet quietly running a different optimizer than Prophet's own documentation
-describes.
+Two Prophet issues come close to this, and neither reports the kink.
 
-**What it costs: nothing.** Scored under Stan's density on Prophet's changepoints, so
-only the optimizer differs:
+- [prophet#1422](https://github.com/facebook/prophet/issues/1422): a user took the
+  cutoff that decides which changepoints a plot marks for the model's choice of
+  breakpoints. A contributor corrected it: the cutoff is "an absolute threshold applied
+  only for visualization and doesn't affect the model or its predictions", and it occurs
+  nowhere but `prophet/plot.py`. The thread says nothing about non-differentiability. It
+  shows why such a cutoff exists at all: Prophet's rates never reach zero, so a line has
+  to be drawn somewhere, and once drawn it gets read as part of the model.
+- [prophet#1280](https://github.com/facebook/prophet/issues/1280): a float32 round-trip
+  of `changepoint_prior_scale` changed forecast accuracy. The reporter has "not been able
+  to reproduce" the headline case. A maintainer offered "One possibility", that "the
+  optimizer was running into issues with one of the changepoint prior scales", and
+  suggested the Newton optimizer as "a bit more robust". The verdict was that the
+  variation "seems inline with expectation". That is a
+  hypothesis offered in a support thread, not a finding, and this page does not upgrade it
+  into one.
 
-| T | rule picks | Prophet, Newton | ours, L-BFGS | ours, Newton (C++) | ours, Newton (Python) |
-|---|---|---|---|---|---|
-| 20 | Newton | 74.40912 | 74.89546 | 74.89546 | 74.89546 |
-| 30 | Newton | 91.61102 | 91.61988 | 91.61988 | 91.61988 |
-| 50 | Newton | 139.93934 | 139.95119 | 139.95119 | 139.95119 |
-| 75 | Newton | 185.66277 | 185.66397 | 185.66397 | 185.66397 |
-| 99 | Newton | 246.80793 | 246.82546 | 246.82546 | 246.82546 |
-| 150 | L-BFGS | 380.44485 | 380.56898 | 380.56898 | 380.56898 |
+### Where each part is measured
 
-All four of our columns agree to five decimals at every size, so a default fit under the
-rule lands exactly where L-BFGS would — still ahead of Prophet at every size. The cost is
-time, not accuracy: Newton converges in 36–85 iterations but pays `2n` gradient
-evaluations per iteration for its Hessian, which makes the compiled path about 6× slower at these
-sizes — 0.016s against 0.003s at T=50, where Prophet takes 0.171s.
-
-That agreement is a property of the damping schedule, not of the objective, and the
-first version of this Newton did not have it: with the Levenberg parameter keyed to
-whether a step was *accepted*, it landed 1.39 nats short at T=20 and 0.05 at T=30, and
-crawled — at T=50, a median of 14 backtracks per step, an accepted step length of 6e-5,
-and 658 iterations. Keying it to whether the step had to be **backtracked** instead — a
-step the line search had to shorten is a step the quadratic model was trusted too far on,
-so the damping rises even though the step succeeded — cut that to 44 iterations and
-removed both shortfalls. `tests/test_short_series.py` asserts the agreement, so it stays
-measured.
-
-**Newton needed the split reformulation too**, and that is the part worth keeping. The
-first version ran on the natural parameterization, with the Laplace prior entering through
-its subgradient (`sign(0) = 0`, as in Stan). It does not reach the optimum. That first
-version was never committed, and the figures first recorded for it here — 66 nats short
-after exhausting Prophet's 10,000-iteration budget — did not survive a rerun.
-`paper/experiments/newton.py` (#174) now runs the shipped `projected_newton`, unchanged,
-on both parameterizations from Prophet's own start, on Peyton Manning at six lengths from
-T = 50 to 2905:
-
-| | natural | [split](#the-fix-a-smooth-reformulation) |
+| question | the paper's section | script |
 |---|---|---|
-| short of the optimum | **1.2 to 7.1 nats** | 0 |
-| iterations | 240 to 1,409 | 44 to 528 |
-| how it stops | Stan's own convergence tests | Stan's own convergence tests |
-| sign changes of the rates in a run | 1,022 to 9,549 | at most 29 |
-| progress per step, last 100 steps (median) | 2.6e-6 to 9.8e-6 | — |
-| rates exactly zero | none | 15 to 25 of 25 |
-
-It oscillates across the kink at `delta = 0`, crawls, and then *declares convergence* — it
-does not need the iteration budget to fail. On the split reformulation, where the L1 term
-is linear and its curvature is exactly zero rather than undefined, the same code reaches
-the optimum and lands where `fit(backend="python", algorithm="Newton")` does — the same
-point to 1e-9, though `fit()` has taken its Newton steps in `log(sigma_obs)` since
-[#229](https://github.com/adlyZaroui/analytic-prophet/issues/229).
-
-That is the [central claim](#prophets-optimizer-stops-short-on-this-objective) measured
-from the other side: one second-order method with an exact gradient, varying only how the
-rates are represented, stops short on the objective as written and reaches the optimum once
-the kink is gone.
-
-**Stan's own Newton is a different method and comes closer.** Its Hessian is a four-point
-finite difference of the gradient with a step of 1e-3, against ~1.5e-8 here, and it damps
-by reflecting negative eigenvalues. Run by Prophet on the same series it stops 0.0021 to
-0.21 nats short — never at the optimum, never with a rate exactly zero. The earlier text
-here said the natural version did "what Stan's Newton does"; that is true of its gradient
-and not of its Hessian, and the difference shows.
-
-The Hessian is not derived in closed form, which is what #25 expected the blocking work
-to be. It is central differences of the **analytic** gradient — `2n` gradient
-evaluations, accurate to about 1e-8. Differencing an exact gradient is a different thing
-from differencing an objective, and at these sizes it is cheap.
-
-**The fallback has something to catch on one backend.** The compiled path still converges
-at every size down to ten observations, so its retry has never fired outside a test.
-`fit(backend="python")` does fail in one configuration — yearly forced at order 10 on 328
-days from an all-zero start, which is `test_backend_parity`'s matched-initialization
-setup and not one the auto rule
-would select. There the retry converges and lands on the same objective to within 1e-9:
-it corrects the reported status without moving the answer.
-
-One boundary worth naming: running out of iterations is **not** a failure. CmdStan
-reports an exhausted `iter` budget as a warning and cmdstanpy raises only on a non-zero
-exit code, so Prophet keeps that fit. Treating it as a failure here made a widened-prior
-fit measurably worse by retrying a run that had not actually failed, which is why
-`SCIPY_LINE_SEARCH_FAILURE` and `CPP_SOLVER_RAISED` name one status each instead of the
-two paths sharing a `status != 0` test.
-
-### Flat growth is an exact tie, and that is the point
-
-Every comparison above ends with our posterior a few nats ahead. Under linear growth two
-things are true of that trend at once: the objective has the Laplace prior's kink at
-`δ = 0`, and `k` trades off against `delta` almost freely, so the surface is flat in
-directions the data does not identify. The margin has been attributed to both.
-
-Flat growth removes the flat directions. `k` and `delta` remain parameters and keep their
-priors, but the likelihood never sees them, so nothing pulls against the shrinkage and
-both go to zero — **exactly** zero, 25 of 25 changepoint rates, for Prophet as much as
-for us. (That is not in tension with Prophet's rates never reaching zero under linear
-growth, [above](#the-difference-that-is-real-and-needs-no-threshold): there the
-likelihood pulls against the prior, and here there is nothing to pull.) What is left is
-well conditioned.
-
-The result is an **exact tie**, at every size measured:
-
-| T | Prophet `lp__` | ours | difference |
-|---|---|---|---|
-| 300 | 720.336510 | 720.336510 | 0 |
-| 1000 | 2698.194700 | 2698.194700 | 0 |
-| 2905 | 7494.870800 | 7494.870800 | 0 |
-
-Not "ours is no worse" — identical to Stan's full printed precision, with `beta` agreeing
-to ~1e-7 and `m` to 1e-5.
-
-**What that establishes is that the same model is being fitted.** Two implementations
-landing on one point to Stan's printed precision cannot be optimizing different
-objectives, so the margin under linear growth is optimizer behaviour and not a
-specification difference. That is the strongest evidence the project has for *that*, and
-it is the claim worth making.
-
-**It does not establish which mechanism costs Prophet the margin,** and the section used
-to read as though it did. Flat growth removes the ill-conditioned `k`/`delta` directions
-and, at the same time, removes any pull against the kink: with the likelihood blind to
-`delta`, the objective in `delta` is `Σ|δ|/τ` alone, a plain V whose vertex is at zero, so
-every method lands on it — which is exactly what the 25 exact zeros on both sides show.
-The kink is still there and has become trivial to find. So the tie is consistent with the
-kink mechanism and equally consistent with ill-conditioning, and cannot separate them.
-
-### The closest thing to upstream corroboration, and its limits
-
-[prophet#1280](https://github.com/facebook/prophet/issues/1280) reports that moving
-`changepoint_prior_scale` from `0.01` to `0.009999999776482582` changed forecast accuracy
-by about 2%. That second value is exactly `numpy.float32(0.01)`, so the "rounding error"
-the reporter describes is a float32 round-trip — a difference of 2.2e-10 in the parameter
-that sets the L1 strength.
-
-The thread establishes less than its title and more than nothing:
-
-- **The headline number did not reproduce.** The reporter says so: "I have not been able
-  to reproduce the 2% case." A simplified case gave 0.8%, and the two forecast plots are
-  "virtually identical".
-- **A maintainer's hypothesis points at the optimizer.** "One possibility is that in the
-  earlier dataset the optimizer was running into issues with one of the changepoint prior
-  scales; you might try the Newton optimizer which I have found to be a bit more robust
-  than the default."
-- **The verdict is that it is normal.** "There can certainly be some variation ...
-  otherwise this seems inline with expectation to me."
-
-The middle point is the same shape as the `tau` sweep above, reached independently and
-from the other side. Here, iterations-before-death under liblbfgs tracked the L1 strength
-exactly. There, the parameter said to give the default optimizer trouble is the one that
-sets that strength, and the suggested remedy is to stop using L-BFGS — which is also what
-Prophet's own algorithm rule does below 100 observations
-([#25](https://github.com/adlyZaroui/analytic-prophet/issues/25)).
-
-**That is a hypothesis offered in a support thread, not a finding, and this file does not
-upgrade it into one.** Nobody there says "non-differentiable"; the residual variation is
-treated as expected; and the measurement that would decide it was never made. Read it as
-the nearest independent observation that the default optimizer can struggle on this
-parameter, and nothing further.
-
-What would settle it is reproducing the sensitivity and attributing it, and the
-instruments are here: two backends, Stan's own `log_prob` to score both, and a smooth
-reformulation to compare against a natural one. It has not been done and is not claimed.
-
-### One claim that was withdrawn
-
-An earlier version of this file recorded a **111%** forecast disagreement on a 328-day
-slice, explained as the model being under-identified below Prophet's own 730-day
-threshold for yearly seasonality. The explanation was right about the mechanism and
-wrong about the cause.
-
-Prophet's rule *disables* yearly under 730 days. The benchmarks were forcing it on for
-both sides, because yearly was the only component this implementation could fit.
-Comparing against a configuration Prophet would never choose is not a measurement of
-disagreement. With the selection rule implemented, both sides fit weekly-only at that
-length and agree to **0.709%**.
-
-What survives is smaller and is about the trend rather than the seasonality — see
-**Overall fit** under [Known differences](deviations.md#known-differences-from-prophet). The general
-lesson is recorded because it recurred: on this project, a large disagreement has so far
-always been a difference in what was being compared, not a defect in the gradient.
+| Does Prophet stop short, by its own density? | The optimum, under Prophet's own density | [`margin.py`](../paper/experiments/margin.py) |
+| Is it the stopping tolerances? | The optimum, under Prophet's own density | [`tolerance.py`](../paper/experiments/tolerance.py) |
+| Does its point satisfy the optimality conditions? | First-order optimality | [`kkt.py`](../paper/experiments/kkt.py), [`rounding.py`](../paper/experiments/rounding.py) |
+| Is it the kink, or L-BFGS? | Smoothing the prior inside Stan | [`smoothing.py`](../paper/experiments/smoothing.py) |
+| Does a second-order method stop short too? | One second-order method, two parameterisations | [`newton.py`](../paper/experiments/newton.py) |
+| Is the same model being fitted? | A negative control: removing the trend | [`flat.py`](../paper/experiments/flat.py) |
+| Do the forecasts move? | Consequences, and Appendix A | [`evaluation/`](../evaluation/), Tier 2 |
 
 ---

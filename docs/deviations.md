@@ -68,7 +68,7 @@ puts it, the cost is zero.
 And the fits agree. Trend-plus-noise under flat growth, at T = 300, 400 and 1000:
 identical `lp__` to Stan's full printed precision and identical forecasts. Under linear
 growth ours is ahead by 1.3–3.8 nats, which is the usual margin on the trend's flat
-directions — the same thing [flat growth](non-smooth-objective.md#flat-growth-is-an-exact-tie-and-that-is-the-point)
+directions — the same thing [flat growth](non-smooth-objective.md#what-it-does-and-does-not-claim)
 shows from the other side.
 
 ### The Fourier basis is evaluated in a different order

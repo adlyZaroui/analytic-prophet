@@ -221,7 +221,7 @@ The evidence, each piece reproducible and written up in the paper:
   brings the same L-BFGS 8 to 1,592 times closer to the optimum**: the kink is what stops
   it ([in the paper](https://github.com/adlyZaroui/analytic-prophet/blob/main/paper/sections/evidence.tex)).
 
-→ [the paper](#paper--citing), and the argument in prose:
+→ [the paper](#paper--citing), and the argument in brief:
 [the non-smooth objective](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/non-smooth-objective.md)
 
 ## Limitations
@@ -246,7 +246,7 @@ The evidence, each piece reproducible and written up in the paper:
 | | |
 |---|---|
 | [The model](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/model.md) | what is fitted, term for term, and the proof that it is Stan's objective |
-| [The non-smooth objective](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/non-smooth-objective.md) | the central argument: where Prophet's optimizer stops short, and why |
+| [The non-smooth objective](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/non-smooth-objective.md) | the argument in brief: the kink, why Prophet's optimizer stops short there, the fix, and where the paper measures each part |
 | [Deviations from Prophet](https://github.com/adlyZaroui/analytic-prophet/blob/main/docs/deviations.md) | deliberate divergences, and the behavioural differences still open |
 | [Evaluation report](https://github.com/adlyZaroui/analytic-prophet/blob/main/evaluation/results/report.md) | every measured number, generated from committed results |
 | [Evaluation suite](https://github.com/adlyZaroui/analytic-prophet/tree/main/evaluation/) | the claim-level study and its methodology |

@@ -1688,8 +1688,9 @@ class AnalyticProphet:
         # kwargs)` does there. It is Prophet's behaviour being reproduced rather
         # than this project's preference, and measured it costs no accuracy:
         # Newton lands where L-BFGS lands at every size tested. It does cost
-        # time -- 2n gradient evaluations an iteration for the Hessian. See the
-        # README, "Prophet's rule for short series, and what it costs".
+        # time -- 2n gradient evaluations an iteration for the Hessian. See
+        # docs/non-smooth-objective.md, "Prophet's rule for short series, and
+        # what it costs".
         #
         # `optimizer` names the scipy method behind the L-BFGS branch; naming a
         # different one is a request for that method, not for Newton.
@@ -1790,8 +1791,8 @@ class AnalyticProphet:
         # than this project's preference, and measured it costs no accuracy:
         # Newton lands where L-BFGS lands at every size tested. It does cost
         # time -- 2n gradient evaluations an iteration for the Hessian, which
-        # makes a short fit about 6x slower. See the README, "Prophet's rule
-        # for short series, and what it costs".
+        # makes a short fit about 6x slower. See docs/non-smooth-objective.md,
+        # "Prophet's rule for short series, and what it costs".
         self.optimizer_used = algorithm or ("Newton" if self.T < NEWTON_BELOW
                                             else "LBFGS")
         if self.optimizer_used == "Newton":

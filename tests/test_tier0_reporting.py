@@ -28,9 +28,9 @@ which no constant moves, and nothing may quote a share of lp__ again.
 #212 took the margins table out of the README, which now claims only the
 direction -- higher at every series length measured -- and leaves the numbers
 to the paper and the evaluation report. These tests hold that claim to
-`tier0_agreement.csv`. The doc's yearly-only figures are not in a committed
-tier, so they are checked for internal consistency only -- the grid has to
-agree with the single table above it, which is the error that started this.
+`tier0_agreement.csv`. #242 took the doc's tables out too, so neither page
+carries a margin of its own any more, and the doc keeps the one sentence that
+declines to explain its size.
 """
 import csv
 from pathlib import Path
@@ -79,18 +79,12 @@ def test_the_readme_claims_the_direction_the_results_show(readme, margins):
     assert "nats" not in readme, "the README quotes a margin again; the paper owns them"
 
 
-def test_the_doc_labels_its_table(doc):
-    """The fault this issue is about: the headline table carried no T and no
-    configuration, while the one below it was labelled."""
-    assert "with yearly seasonality only" in doc
-    assert "`T = 2905`" in doc
-
-
-def test_the_docs_grid_agrees_with_the_table_above_it(doc):
-    """The grid's 2905 cells have to be the two numbers the file already
-    states -- +2.34 from its own table, +0.36 from the README's."""
-    assert "| 2905 | **+0.36** | **+2.34** |" in doc
-    assert "+2.34 nats" in doc, "the single table and the grid disagree at T = 2905"
+def test_the_doc_carries_no_margin_table(doc):
+    """The fault this issue was about -- a headline table with no T and no
+    configuration -- cannot recur on a page with no table of margins. #242
+    left the margins to the paper."""
+    for figure in ("7797.2523", "7794.9104", "+2.34", "+0.36"):
+        assert figure not in doc, f"the doc quotes a margin again: {figure}"
 
 
 def test_the_doc_claims_no_mechanism_for_the_size(doc):
