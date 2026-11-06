@@ -74,7 +74,7 @@ def test_we_pay_more_prior_not_less(both):
 
     assert ours.sum() > theirs.sum(), (
         f"Σ|δ| ours {ours.sum():.5f} vs prophet {theirs.sum():.5f} -- if this "
-        f"reverses, the correction in docs/non-smooth-objective.md is wrong")
+        f"reverses, the correction CHANGELOG.md records for #95 is wrong")
     assert ours.sum() / TAU > theirs.sum() / TAU
 
 
@@ -192,9 +192,9 @@ def test_flat_growth_drives_both_sides_to_exact_zeros(prophet_comparison,
 def test_the_flat_growth_claim_is_narrowed_to_what_it_shows(document):
     """It used to read as confirmation of the kink mechanism, which the
     experiment cannot give: removing the flat directions removes the kink's
-    bite at the same time."""
-    assert "What that establishes is that the same model is being fitted" in document
-    assert "does not establish which mechanism costs Prophet the margin" in document
-    assert "cannot separate them" in document
+    bite at the same time. #242 shortened the page; the narrowing stays."""
+    assert "That shows the same model is being fitted" in document
+    assert "It does not separate the kink from the trend's ill-conditioning" in document
+    assert "flat growth removes both" in document
     assert "strongest evidence the project has that the margin" not in document, (
         "the un-narrowed claim is back")

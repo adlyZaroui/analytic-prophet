@@ -360,14 +360,18 @@ def test_the_pre_reformulation_failures_are_counted_in_one_place():
     the reformulation, and enumerated them differently: the README's third item
     was Stan's Newton, the doc's "Stan itself", developed below as *both* its
     L-BFGS and its Newton. #212 took the list out of the README, which now
-    leads with evidence a reader can reproduce, so the doc is the one place."""
+    leads with evidence a reader can reproduce, and #242 took it out of the
+    doc, which now points to the paper. The changelog is the one place."""
     doc = " ".join(NON_SMOOTH.read_text().split())
     readme = " ".join((REPO / "README.md").read_text().split())
+    changelog = " ".join((REPO / "CHANGELOG.md").read_text().split())
+    history = changelog[changelog.index("## What the non-smooth objective page used to say"):]
 
-    assert "four separate, independently-discovered failures" in doc
+    assert "four separate, independently-discovered failures" in history
     for optimizer in ("liblbfgs", "scipy's L-BFGS-B", "Stan's L-BFGS", "Stan's Newton"):
-        assert optimizer in doc, f"the doc's list no longer covers {optimizer}"
+        assert optimizer in history, f"the changelog's list no longer covers {optimizer}"
 
     assert "liblbfgs" not in readme and "and so did three others" not in readme
+    assert "liblbfgs" not in doc, "the doc tells the history again"
     assert "The README lists the same four" not in doc, (
         "the doc reconciles its count with a list the README no longer has")
