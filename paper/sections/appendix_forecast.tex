@@ -42,4 +42,18 @@ implementation's value is lower against those where it is higher, with ties drop
 \LimHolmSurvivors{} of them survive it (\cref{sec:limitations}), which at this $n$ says
 only that the direction is consistent.
 The medians and the counts carry the result: RMSE is lower on \RmseWins{} of the
-\CensusSeries{} series, by a median of \RmseAdvantage\%.
+\CensusSeries{} series, by a median of \RmseAdvantage\%. \Cref{tab:forecast} gives
+all \LimHolmComparisons.
+
+\begin{table}[ht]
+  \centering
+  \small
+  \caption{The \LimHolmComparisons{} paired comparisons on the \CensusSeries{} series of
+    the census. The median difference is this implementation's value over Prophet's
+    minus one, in percent, for the errors and the interval width, and the plain
+    difference for coverage. Lower, higher and tied count the series where this
+    implementation's value is below, above or equal to Prophet's; the sign test drops
+    the ties. The $p$-values are Holm-adjusted across the \LimHolmComparisons.}
+  \label{tab:forecast}
+  \input{generated/forecast}
+\end{table}

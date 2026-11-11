@@ -57,9 +57,10 @@ the hash of the commit that contains it.
 
 **None is typed into a `.tex` file.** `experiments/quote_numbers.py` reads the
 committed evaluation results and writes `generated/numbers.tex`, a set of
-`\newcommand` macros that the prose uses, and `generated/lengths.tex`, the table of
-section 5's results at its three lengths, whose cells are those macros rather than
-their values (#209). Regenerate an experiment and the
+`\newcommand` macros that the prose uses, and two tables whose cells are those macros
+rather than their values: `generated/lengths.tex`, section 5's results at its three
+lengths (#209), and `generated/forecast.tex`, Appendix A's six forecast comparisons
+(#243). Regenerate an experiment and the
 sentences that quote it follow; leave a result uncomputable and the document
 fails to compile rather than printing a stale value. This is the rule
 `evaluation/report.py` already follows, and the one whose absence turned the
