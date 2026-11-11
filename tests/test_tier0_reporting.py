@@ -69,14 +69,26 @@ def margins():
 def test_the_readme_claims_the_direction_the_results_show(readme, margins):
     """The lede: "By Prophet's own posterior density, its fits score higher at
     every series length measured". True of every committed margin, and the
-    README quotes no margin itself, so it cannot go stale on one."""
+    README quotes no margin itself, so it cannot go stale on one.
+
+    One figure in nats is allowed, and only one (#250): how far Prophet's own
+    Newton stops short, for readers who stay on Prophet. It is a paper macro,
+    held in its sentence by tests/test_readme_structure.py, so it cannot go
+    stale either."""
     assert margins, "no committed margins to hold the claim to"
     assert all(ours > theirs for theirs, ours in margins.values()), (
         "a committed margin is no longer positive, so the lede's 'at every "
         "series length measured' is wrong")
     lede = readme[:readme.index("**Status: early development.**")]
     assert "score higher at every series length measured" in lede
-    assert "nats" not in readme, "the README quotes a margin again; the paper owns them"
+    for size, (theirs, ours) in margins.items():
+        for figure in (f"{ours - theirs:.3f}", f"{ours - theirs:.2f}"):
+            assert figure not in readme, (
+                f"the README quotes Tier 0's margin at T = {size} again; the paper owns them")
+    one = " ".join(readme.split())
+    assert one.count("nats") == 1, "a margin in nats beyond Prophet's own Newton's"
+    staying = one.index("**Staying on Prophet?**")
+    assert staying < one.index("nats") < one.index("([in the paper](#paper--citing))", staying)
 
 
 def test_the_doc_carries_no_margin_table(doc):
