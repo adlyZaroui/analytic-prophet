@@ -96,3 +96,47 @@ changed is recorded here instead.
   78.7% higher than Prophet's (620 against 347). It now says what each panel is.
 - **Speed.** The README quoted the evaluation's cost tier, 8.2× at T = 50; the paper
   measures the same comparison as 7.5×, and the README now quotes the paper's figures.
+
+---
+
+## What the non-smooth objective page used to say
+
+`docs/non-smooth-objective.md` made the project's argument in prose before the paper did.
+It is now a short explainer that points to the paper and the evaluation report
+([#242](https://github.com/adlyZaroui/analytic-prophet/issues/242)). What it used to
+carry is recorded here.
+
+- **It opened with four separate, independently-discovered failures** of the optimizers
+  tried before the reformulation:
+  1. liblbfgs, the original C++ backend, died after about two iterations on a rounding
+     error, and a sweep of τ tied the iterations it survived to the L1 strength;
+  2. scipy's L-BFGS-B on the natural parameterization stalled 17.8% above the minimum of
+     its objective while reporting success;
+  3. Stan's L-BFGS, which Prophet runs, stopped short with its tolerances effectively
+     removed;
+  4. Stan's Newton, which Prophet runs below 100 observations, stopped short too.
+
+  The first two runs were not kept, and liblbfgs cannot be rerun.
+  `paper/experiments/strength.py` asks the second's question of SciPy instead
+  ([#175](https://github.com/adlyZaroui/analytic-prophet/issues/175)). The last two are
+  the paper's evidence now.
+- **"That costs it real accuracy"**, and "this implementation is more accurate", on 36 M4
+  series. Across the 3,008-series census the gain is real and usually small, and the
+  intervals are wider, as the README and the paper say
+  ([#212](https://github.com/adlyZaroui/analytic-prophet/issues/212)).
+- **The margins in nats**, with a yearly-only configuration beside the default
+  ([#146](https://github.com/adlyZaroui/analytic-prophet/issues/146)), the margin per
+  observation ([#203](https://github.com/adlyZaroui/analytic-prophet/issues/203)), and
+  the tolerance run that leaves a gap. The paper owns the margins.
+- **What the better posterior is made of**
+  ([#95](https://github.com/adlyZaroui/analytic-prophet/issues/95)): this implementation
+  pays *more* in the Laplace prior than Prophet and fits the training data better, which
+  reversed an earlier account in terms of sparsity. Counting "active changepoints" as
+  `|δ| > 1e-6` measured the cutoff, so Σ|δ| and the count of exact zeros replaced it.
+  `tests/test_sparsity_reporting.py` still holds those facts.
+- **Prophet's rule for short series** in detail
+  ([#25](https://github.com/adlyZaroui/analytic-prophet/issues/25)): the timings, and
+  the damping schedule that made the Newton method land where L-BFGS does.
+- **A withdrawn claim**: a 111% forecast disagreement on a 328-day slice. It came from
+  forcing yearly seasonality on both sides below Prophet's 730-day threshold; with
+  Prophet's selection rule both sides agree to 0.709%.

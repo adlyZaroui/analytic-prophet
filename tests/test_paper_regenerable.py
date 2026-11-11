@@ -124,15 +124,16 @@ def test_four_tolerances_are_not_enough(tolerance_rows):
 
 
 def test_the_notes_run_reproduces(tolerance_rows):
-    """docs/non-smooth-objective.md's figures are the yearly-only cell's."""
+    """The yearly-only run docs/non-smooth-objective.md quoted until #242 cut
+    its numbers: with all five tolerances at machine precision it still stops
+    short, on a failed line search. The page now says that much, in words."""
     row = next(r for r in tolerance_rows if r["configuration"] == "yearly_only"
                and r["tolerances"] == "five")
-    doc = (REPO / "docs" / "non-smooth-objective.md").read_text()
-    assert f"it runs {row['iterations']} iterations" in doc
-    assert f"**{row['lp']:.2f}**" in doc
-    assert f"still {row['shortfall']:.2f} nats short" in doc
+    assert row["shortfall"] > 0
     assert "Line search failed" in row["stopped_by"]
-    assert f"{row['reference_lp']:.4f}" in doc
+    doc = " ".join((REPO / "docs" / "non-smooth-objective.md").read_text().split())
+    assert "with all five of Stan's stopping tests at machine precision the gap remains" in doc
+    assert "a line search that can make no more progress" in doc
 
 
 def test_prophet_cannot_make_the_run(tolerance_rows):

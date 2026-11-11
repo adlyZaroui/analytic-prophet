@@ -179,7 +179,7 @@ def test_the_overhead_figures_are_still_generated_for_the_readme():
 
 def test_the_liblbfgs_paragraph_is_cut():
     """Project history the paper does not rely on; the record stays in
-    docs/non-smooth-objective.md."""
+    CHANGELOG.md, where #242 moved it from docs/non-smooth-objective.md."""
     for path in [PAPER / "main.tex", *SECTIONS.glob("*.tex")]:
         assert "liblbfgs" not in path.read_text(), path.name
-    assert "liblbfgs" in (REPO / "docs" / "non-smooth-objective.md").read_text()
+    assert "liblbfgs" in (REPO / "CHANGELOG.md").read_text()
