@@ -7,9 +7,9 @@ mechanism, controls and a fix.
 > delegates optimization to solvers designed for smooth objectives, and
 > consequently returns, as its MAP estimate, a point that is not the posterior
 > mode. This is diagnosable and removable by an exact reformulation; of four
-> long-standing reports in the issue tracker it accounts for part of one and
-> plausibly underlies a second; and its consequences for the optimum and for
-> predictive performance are discussed here.
+> long-standing reports in the issue tracker it plausibly underlies one and
+> accounts for the early stop L-BFGS still makes on another's reproducer; and its
+> consequences for the optimum and for predictive performance are discussed here.
 
 The forecast-accuracy results corroborate that the gap matters a little in
 practice; they are not the thesis.

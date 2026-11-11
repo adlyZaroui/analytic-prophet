@@ -180,7 +180,8 @@ def test_no_upstream_report_is_put_down_to_the_kink_beyond_the_experiments():
 # than the sections show (#205). Each phrase below said so; none may return.
 OVERCLAIMS = ("consistent with user reports", "user-visible consequences reported",
               "attribution of long-standing user reports",
-              "the non-smooth directions are removed", "prophet reaches it from none")
+              "the non-smooth directions are removed", "prophet reaches it from none",
+              "part of one")
 SUMMARY = (PAPER / "main.tex", PAPER / "sections" / "introduction.tex", PAPER / "README.md")
 
 
@@ -205,15 +206,23 @@ def test_the_summary_claims_no_more_than_the_sections_show(phrase):
 
 
 def test_the_summary_counts_the_reports_section_6_reads():
-    """Four reports, read in section 6: it accounts for part of one (prophet#842),
-    plausibly underlies a second (prophet#1280), and explains neither of the
-    others (prophet#1422, prophet#1032)."""
+    """Four reports, read in section 6: it plausibly underlies one (prophet#1280),
+    explains neither of two (prophet#1422, prophet#1032), and on prophet#842
+    accounts for what section 6 shows it accounts for (#246). That thread's
+    stall no longer reproduces, so not "part of" the report: the early stop
+    L-BFGS still makes on its reproducer when forced, which smoothing the prior
+    alone closes."""
     consequences = (PAPER / "sections" / "consequences.tex").read_text()
     assert len(set(re.findall(r"\\prophetissue\{(\d+)\}", consequences))) == 4
     for page in SUMMARY:
         text = _summary(page)
         assert "four long-standing" in text, page.name
-        assert "part of one" in text and "plausibly underlies" in text, page.name
+        assert "plausibly underlies one" in text, page.name
+        assert "the early stop l-bfgs still makes" in text, page.name
+    stalls = _normalise(_paragraph(consequences, "Stalls"))
+    assert "the reproducer no longer stalls" in stalls
+    assert "with l-bfgs forced" in stalls and r"\stalllbfgsshort" in stalls
+    assert r"\stallsmoothshort" in stalls and "the kink is what stops it" in stalls
 
 
 def test_the_abstract_says_what_ran_the_random_starts():
