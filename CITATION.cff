@@ -1,11 +1,12 @@
 cff-version: 1.2.0
 message: If you use this software, please cite it as below.
 title: >-
-  analytic-prophet: Stan-free Prophet forecasting model using an analytical
-  gradient instead of AutoDiff: faster and lighter on memory
+  analytic-prophet: Stan-free Prophet: the same model and API, fitted
+  in-process with a hand-derived gradient
 abstract: >-
-  Stan-free Prophet forecasting model using an analytical gradient instead
-  of AutoDiff: faster and lighter on memory. It fits Prophet's model --
+  Stan-free Prophet: the same model and API, fitted in-process with a
+  hand-derived gradient. Faster, lighter on memory, and fitted to the
+  posterior mode Prophet's optimizer misses. It fits Prophet's model --
   verified against Stan's own log_prob -- with the log posterior and its
   gradient written out by hand and a small C++ core, so it needs no Stan
   toolchain and starts no CmdStan subprocess. It also solves an exact

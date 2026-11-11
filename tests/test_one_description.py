@@ -37,8 +37,10 @@ def test_the_pypi_summary_is_the_readmes_pitch():
 
 
 def test_the_citation_says_the_same_thing():
+    """The title is the pitch's first sentence: a title carries no full stop,
+    and since #248 the pitch has two."""
     citation = yaml.safe_load((REPO / "CITATION.cff").read_text())
-    assert citation["title"] == "analytic-prophet: " + _pitch().rstrip(".")
+    assert citation["title"] == "analytic-prophet: " + _pitch().split(". ")[0]
     assert " ".join(citation["abstract"].split()).startswith(_pitch())
 
 

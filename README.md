@@ -5,11 +5,11 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/analytic-prophet)](https://pypi.org/project/analytic-prophet/)
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](https://github.com/adlyZaroui/analytic-prophet/blob/main/LICENSE)
 
-**Stan-free Prophet forecasting model using an analytical gradient instead of AutoDiff: faster and lighter on memory.**
+**Stan-free Prophet: the same model and API, fitted in-process with a hand-derived gradient. Faster, lighter on memory, and fitted to the posterior mode Prophet's optimizer misses.**
 
 A reimplementation of [Prophet](https://github.com/facebook/prophet)'s fitting engine
-without Stan: the same model and the same API, with the log posterior and its gradient
-written out by hand and compiled into a small C++ core. `pip install` needs no Stan
+without Stan, with the log posterior and its gradient written out by hand and compiled
+into a small C++ core. `pip install` needs no Stan
 toolchain, a fit never starts a CmdStan subprocess, and fits are faster and lighter on
 memory at every series length measured.
 
