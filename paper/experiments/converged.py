@@ -16,8 +16,8 @@ Prophet's changepoints:
                its own wall time and the Newton steps it accepted.
 
 The steps are counted from the loss trace, which gains one entry per accepted
-step and one per saddle escape. The core's `n_iterations` leaves out a last
-step that Stan's objective or parameter tests end the run on, so it would read
+step and one per saddle escape. Until #255 the core's `n_iterations` left out a
+last step that Stan's objective or parameter tests ended the run on, so it read
 0 where one step was taken.
 
 Both points are scored by Stan's log density of Prophet's compiled program and

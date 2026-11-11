@@ -867,7 +867,17 @@ OptimizeResult newton(Eigen::VectorXd params,
     int escapes = 0;
 
     while (true) {
-        for (; iteration < stan_convergence::MAX_ITERATIONS; ++iteration) {
+        // `iteration` counts accepted steps, as the Python twin's does (#255):
+        // a step is counted as soon as it is accepted, so the one Stan's tests
+        // end the run on is counted too. The cap is the twin's while-else: it
+        // is reported when the loop comes round with no step left, and not
+        // when a test held on the last step it allowed.
+        bool capped = false;
+        while (true) {
+            if (iteration >= stan_convergence::MAX_ITERATIONS) {
+                capped = true;
+                break;
+            }
             // Projected gradient: a bounded coordinate sitting at its bound and
             // pushed further into it is already as good as it gets, so it does not
             // count toward stationarity and is held out of the Newton system.
@@ -955,12 +965,13 @@ OptimizeResult newton(Eigen::VectorXd params,
             value = trial_value;
             gradient = trial_gradient;
             loss_trace.push_back(value);
+            ++iteration;
             if (converged) {
                 break;
             }
         }
 
-        if (iteration >= stan_convergence::MAX_ITERATIONS) {
+        if (capped) {
             status = -2;
             message = "reached the iteration cap without converging";
         }
@@ -1176,7 +1187,11 @@ PYBIND11_MODULE(analytic_prophet_cpp, m) {
                       "LBFGSpp has no per-iteration hook, so this samples evaluations "
                       "rather than iterations and is generally a little longer than "
                       "n_iterations.")
-        .def_readonly("n_iterations", &OptimizeResult::n_iterations)
+        .def_readonly("n_iterations", &OptimizeResult::n_iterations,
+                      "Iterations run. From optimize(), LBFGSpp's own count. From "
+                      "newton(), the Newton steps accepted, the last one included "
+                      "when a stopping test ends the run on it, and saddle escapes "
+                      "not included (#255): len(loss_trace) - 1 - saddle_escapes.")
         .def_readonly("status", &OptimizeResult::status,
                       "0 when a convergence test was met. Otherwise 1 if LBFGSpp's "
                       "L-BFGS-B raised (its line search failing, typically), 2 if "
