@@ -81,6 +81,12 @@ neither of the others. On a frozen census of \CensusSeries{}
 held-out M4 series, the corrected optimum forecasts better on \RmseWinRate\% of
 them, by a median of \RmseAdvantage\% in RMSE: the optimization defect is real,
 and its cost to forecast accuracy is usually small.
+Users who stay on Prophet can come close: its own \code{algorithm="Newton"} stops a
+median of \NewtonCensusNewtonMedian{} nats short of the optimum on
+\NewtonCensusSeries{} census series, against \NewtonCensusLbfgsMedian{} for the default
+L-BFGS, at a median of \NewtonCensusTimeRatio{} times the default's fit time. The fix
+itself runs with Prophet's Stan model unchanged: from Prophet's estimate, a solver given
+only the model's \code{log_prob} reaches the optimum.
 \end{abstract}
 
 \input{sections/introduction}
