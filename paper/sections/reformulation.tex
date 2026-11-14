@@ -163,12 +163,13 @@ against the first-order optimality conditions with Stan's gradient
 (\cref{sec:evidence:kkt}), so no claim depends on this implementation's gradient
 being right.
 
-The solver runs outside Stan because the fix cannot run inside it. Stan can state the
-split only by declaring both parts non-negative, and it optimises such parameters
-through their logarithms, so a zero is approached and never reached; both parts of a
-zero rate must also start above zero. We restated it that way in Prophet's program
-and ran it on Stan's L-BFGS with Prophet's settings
-(\code{paper/experiments/inside_stan.py}). From Prophet's initialisation, with both
+The solver runs outside Stan because inside it the fix cannot reach the optimum's
+exact zeros. Stan can state the split only by declaring both parts non-negative, and it
+optimises such parameters through their logarithms, so a zero is approached and never
+reached; both parts of a zero rate must also start above zero. Stated that way, the fix
+does run inside Stan. We restated it that way in Prophet's program and ran it on Stan's
+L-BFGS with Prophet's settings (\code{paper/experiments/inside_stan.py}). From
+Prophet's initialisation, with both
 parts of every rate starting at $\tau$, it ends
 \InsideSplitStartMin--\InsideSplitStartMax{} nats short of the optimum, and up to
 \InsideSplitFloorWorst{} with the other starting values tried, without setting a

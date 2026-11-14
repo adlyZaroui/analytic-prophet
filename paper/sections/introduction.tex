@@ -32,10 +32,11 @@ interface between the two reports that it has not.
 Prophet specifies a posterior whose optimum sits on a non-differentiable set,
 delegates its optimization to solvers designed for smooth objectives, and
 consequently returns, as its MAP estimate, a point that is not the posterior mode. This is diagnosable and
-removable by an exact reformulation, and it accounts for part of one long-standing
-report in Prophet's issue tracker and plausibly underlies another
-(\cref{sec:consequences}); we report its consequences for the optimum and for
-predictive performance. Prophet's estimate is measured against the optimum computed
+removable by an exact reformulation. It plausibly underlies one long-standing report in
+Prophet's issue tracker. On another, whose reported stall no longer reproduces, it
+accounts for the early stop L-BFGS still makes when forced, a gap that smoothing the
+prior alone all but closes (\cref{sec:consequences}). We report its consequences for
+the optimum and for predictive performance. Prophet's estimate is measured against the optimum computed
 by an implementation of the reformulation outside Stan, \emph{this implementation} in
 what follows (\cref{sec:implementation}), and we call that optimum the
 \emph{corrected optimum}. The implementation is the instrument, not a contribution,
@@ -66,8 +67,9 @@ think, more useful for being stated precisely:
         model;
   \item an exact fix; and
   \item a reading of four long-standing user reports against the mechanism, each
-        cited for what its thread shows: it accounts for part of one, plausibly
-        underlies a second, and explains neither of the others.
+        cited for what its thread shows: it plausibly underlies one, accounts for the
+        early stop L-BFGS still makes on another's reproducer, and explains neither of
+        the others.
 \end{enumerate}
 
 \paragraph{The size of it.}

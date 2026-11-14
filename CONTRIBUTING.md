@@ -154,8 +154,9 @@ Two workflows, under [`.github/workflows/`](.github/workflows):
 
 - **`tests.yml`**, on every push and pull request: the suite across Python 3.9–3.14,
   which is what gives `requires-python = ">=3.9"` any basis — before it, the suite had
-  only ever run on one version. One further job installs `prophet` and runs the
-  comparisons against the original; it is the only one that pays for cmdstan.
+  only ever run on one version. The 3.9 job runs on Ubuntu 24.04, the last image GitHub
+  builds 3.9 for, and the others on the latest. One further job installs `prophet` and
+  runs the comparisons against the original; it is the only one that pays for cmdstan.
 - **`evaluation.yml`**, manual or monthly: `evaluation/run.py` and a regenerated report,
   uploaded as an artifact rather than committed. Tier 0 is a gate and fails the job.
   These tiers are deliberately not per-push — Tier 2 alone is about eleven minutes and
