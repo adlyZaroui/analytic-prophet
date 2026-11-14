@@ -38,11 +38,19 @@ jobs:
     # The matrix is what gives `requires-python = ">=3.9"` any basis: until
     # this existed, the suite had only ever run on one version (#103).
     name: python ${{ matrix.python }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
         python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        # #264: setup-python downloads a Python built for the runner's Ubuntu
+        # release, and 3.9, past its end of life, was never built for 26.04,
+        # which `ubuntu-latest` became in November 2026. That one job keeps
+        # the last image that has it; the rest follow `ubuntu-latest`. When
+        # GitHub retires ubuntu-24.04, 3.9 has to be dropped.
+        include:
+          - python: "3.9"
+            runner: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
