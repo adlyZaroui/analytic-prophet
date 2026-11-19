@@ -128,7 +128,12 @@ def test_the_implementation_paragraph_says_what_the_issue_asks():
     assert "Nor does it grade itself" in paragraph
     assert "no claim depends on this implementation's gradient being right" in paragraph
     # why a solver outside Stan: #202's result for the split, generated
-    assert "The solver runs outside Stan because the fix cannot run inside it" in paragraph
+    # #246: the fix does run inside Stan; what it cannot do there is reach a zero
+    assert ("The solver runs outside Stan because inside it the fix cannot reach the "
+            "optimum's exact zeros") in " ".join(paragraph.split())
+    assert "Stated that way, the fix does run inside Stan." in paragraph
+    assert "without setting a single rate exactly to zero" in " ".join(paragraph.split())
+    assert "cannot run inside" not in paragraph
     for macro in ("InsideSplitStartMin", "InsideSplitStartMax", "InsideSplitFloorWorst"):
         assert f"\\{macro}" in paragraph, macro
     assert "\\code{paper/experiments/inside_stan.py}" in paragraph

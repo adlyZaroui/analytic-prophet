@@ -76,8 +76,8 @@ Run from \MultiTotal{} random starts on Prophet's program with $\sigma$ held fix
 where the optimum is unique, Stan's L-BFGS with Prophet's settings reaches it from
 none. The defect is diagnosable and is removed by an exact reformulation that splits
 each rate into non-negative parts. Of four long-standing reports in Prophet's issue
-tracker, it accounts for part of one and plausibly underlies a second; it explains
-neither of the others. On a frozen census of \CensusSeries{}
+tracker, it plausibly underlies one and accounts for the early stop L-BFGS still makes
+on another's reproducer; it explains neither of the others. On a frozen census of \CensusSeries{}
 held-out M4 series, the corrected optimum forecasts better on \RmseWinRate\% of
 them, by a median of \RmseAdvantage\% in RMSE: the optimization defect is real,
 and its cost to forecast accuracy is usually small.
