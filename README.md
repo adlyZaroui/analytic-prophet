@@ -111,6 +111,11 @@ is fitted — without Stan, and to its optimum — and Prophet's maintainers wro
 "at this moment we do not plan to make any more changes to the underlying Stan model"
 ([facebook/prophet in 2023 and beyond](https://medium.com/@cuongduong_35162/facebook-prophet-in-2023-and-beyond-c5086151c138)).
 
+**Staying on Prophet?** Its own `fit(df, algorithm="Newton")` comes far closer to the
+optimum, at a price in time: on 200 M4 series it stops a median of 0.0039 nats of log
+posterior density short of it, against 5.1 for the default L-BFGS, and takes a median of
+12 times as long ([in the paper](#paper--citing)).
+
 ## 1. A faster, lighter Prophet
 
 Prophet compiles its model with Stan and reaches it through CmdStan, a subprocess for every

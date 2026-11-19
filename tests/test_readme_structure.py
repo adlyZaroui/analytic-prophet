@@ -104,7 +104,8 @@ FROM_THE_PAPER = ("CensusSeries", "RmseAdvantage", "RmseWins", "RmseWinRate", "M
                   "LimOverheadShareMin", "LimOverheadShareMax", "LimParityMin", "LimParityMax",
                   "LimPoolSize", "LimBestCensus", "LimWorstPool", "LimWorstCensus",
                   "LimWidthMedian", "LimWidthWider", "LimCoverageOurs", "LimCoverageProphet",
-                  "LimMfourSeries")
+                  "LimMfourSeries", "NewtonCensusSeries", "NewtonCensusNewtonMedian",
+                  "NewtonCensusLbfgsMedian", "NewtonCensusTimeRatio")
 
 # Measured, and held to the committed results by the test named beside each.
 TESTED_ELSEWHERE = {
@@ -176,7 +177,12 @@ def test_the_paper_figures_are_quoted_where_they_belong(readme, macros):
             f"mean coverage **{macros['LimCoverageOurs']}** for ours and "
             f"**{macros['LimCoverageProphet']}** for Prophet's",
             f"3,008 series of M4's {macros['LimMfourSeries']}",
-            f"**{macros['LimPoolSize']} where a Prophet-shaped model fits at all**"):
+            f"**{macros['LimPoolSize']} where a Prophet-shaped model fits at all**",
+            # #250: Prophet's own Newton, for those who stay on Prophet
+            f"on {macros['NewtonCensusSeries']} M4 series it stops a median of "
+            f"{macros['NewtonCensusNewtonMedian']} nats of log posterior density short of "
+            f"it, against {macros['NewtonCensusLbfgsMedian']} for the default L-BFGS, and "
+            f"takes a median of {macros['NewtonCensusTimeRatio']} times as long"):
         assert sentence in one, sentence
 
 
@@ -285,3 +291,17 @@ def test_why_a_separate_package_quotes_prophets_plan_verbatim(readme):
     record = _one_line((PAPER / "citations.md").read_text())
     assert quoted in record
     assert "Why a separate package" in _section(readme, "Coming from Prophet")
+
+
+def test_those_staying_on_prophet_are_told_what_its_newton_does(readme):
+    """#250: one paragraph for a reader who does not switch packages. Its
+    figures are checked in test_the_paper_figures_are_quoted_where_they_belong;
+    here, that it sits beside the reasons to switch, and that the call it names
+    is the one the experiment made, through Prophet's own `fit`."""
+    section = _one_line(_section(readme, "Coming from Prophet"))
+    assert '**Staying on Prophet?** Its own `fit(df, algorithm="Newton")`' in section
+    assert "([in the paper](#paper--citing))" in section
+    script = (PAPER / "experiments" / "newton_census.py").read_text()
+    assert '_timed_fit(df, algorithm="Newton")' in script
+    bridge = (REPO / "benchmark" / "_prophet_bridge.py").read_text()
+    assert "prophet_model.fit(df, **fit_kwargs)" in bridge
