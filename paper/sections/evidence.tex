@@ -38,6 +38,23 @@ factor of \LpPerObsDecline{} across the range. The margin itself does not declin
 depends on the width of the model as much as its length: with yearly seasonality alone
 the margin at $T = 2905$ is \MarginYearlyLong{} nats rather than \LpMarginLong.
 
+The posterior's own spread gives these margins a scale. Under a Gaussian
+approximation at the mode, the $\lp$ of a posterior draw falls short of the mode's by
+half a $\chi^2$ variable on $d$ degrees of freedom, $d$ being the number of parameters,
+so a typical draw sits $d/2$ nats below the mode. The kinks at the zero rates do not
+shrink that scale. Near the mode $\lp$ falls by $f(u) = q(u) + \ell(u)$ at a
+displacement $u$, where $q(u) = \tfrac{1}{2} u^\top H u$ comes from the smooth part and
+$\ell \ge 0$ collects each zero rate's $\lvert u_j\rvert/\tau$ with its first-order
+term, which is non-negative at the optimum and positively homogeneous of degree one.
+Integrating $u \cdot \nabla f = 2q + \ell$ against $e^{-f}$ gives
+$\mathbb{E}[2q + \ell] = d$, so $\mathbb{E} f = d - \mathbb{E} q \ge d/2$, with equality
+only when there are no kinks. Here $d$ counts the changepoint rates, the seasonal
+columns, and $k$, $m$ and $\sigma$, and \cref{tab:lengths} gives $d$ and $d/2$ at each
+length, $d$ being smaller at the shortest, which has no yearly term. Prophet's estimate sits
+\LpMarginLeast{} to \LpMarginMost{} nats below the mode, at most \LpTypicalShare\% of
+$d/2$ at any length: the defect is real, and small on the posterior's own scale, which
+is consistent with how little the forecasts move (\cref{sec:consequences}).
+
 \begin{figure}[t]
   \centering
   \includegraphics[width=\textwidth]{figures/margin_vs_length}

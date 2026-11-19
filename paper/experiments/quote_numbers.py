@@ -84,13 +84,22 @@ def census():
     }
 
 
-def posterior():
-    """Tier 0: the posterior margin at each length, under Stan's own density."""
+LENGTHS = {300: "Short", 1000: "Mid", 2905: "Long"}
+
+
+def _margins():
+    """Tier 0's lp__ margin of the corrected optimum over Prophet's, by length."""
     by = defaultdict(dict)
     for row in _rows("tier0_agreement"):
         if row["metric"] == "lp__" and row["series"].startswith("peyton"):
             size = int(row["series"].split("[:")[1].rstrip("]"))
             by[size][row["implementation"]] = float(row["value"])
+    return {size: cell["analytic_prophet"] - cell["prophet"]
+            for size, cell in sorted(by.items())}
+
+
+def posterior():
+    """Tier 0: the posterior margin at each length, under Stan's own density."""
     import math
 
     # lp__ is defined only up to an additive constant -- Stan's `~` drops
@@ -98,9 +107,8 @@ def posterior():
     # never quoted as a share of it (#203). Per observation, and as a ratio of
     # posterior densities, it is free of every such constant.
     out, per_observation = {}, {}
-    for size, cell in sorted(by.items()):
-        margin = cell["analytic_prophet"] - cell["prophet"]
-        tag = {300: "Short", 1000: "Mid", 2905: "Long"}.get(size)
+    for size, margin in _margins().items():
+        tag = LENGTHS.get(size)
         if tag:
             per_observation[tag] = margin / size
             out[f"LpMargin{tag}"] = f"{margin:+.3f}"
@@ -108,6 +116,44 @@ def posterior():
             out[f"LpDensity{tag}"] = f"{100 * math.exp(-margin):.0f}"
     if {"Short", "Long"} <= per_observation.keys():
         out["LpPerObsDecline"] = f"{per_observation['Short'] / per_observation['Long']:.0f}"
+    return out
+
+
+def dimensions(size):
+    """The model Tier 0 fits at `size`, as its parameter layout: what d counts.
+
+    Read from the model rather than typed: `preprocess` places the changepoints
+    and registers the seasonalities exactly as `fit` does, and stops there.
+    """
+    _evaluation()
+    import corpora
+    from analytic_prophet import AnalyticProphet
+
+    model = AnalyticProphet()
+    model.preprocess(corpora.peyton_manning(size))
+    return model
+
+
+def scale():
+    """#244: a scale for the margins, from the posterior's own spread.
+
+    Under a Gaussian approximation at the mode a posterior draw's lp falls
+    short of the mode's by half a chi-squared variable on d degrees of freedom,
+    d/2 nats on average, and the kinks at the zero rates only raise that
+    average (section 5.1 gives the argument). d is the layout's size: the
+    changepoint rates, the regressor columns, and k, m and sigma.
+    """
+    margins = _margins()
+    out, shares = {}, []
+    for size, tag in LENGTHS.items():
+        d = dimensions(size).layout.size
+        out[f"LpParams{tag}"] = f"{d}"
+        out[f"LpTypical{tag}"] = f"{d / 2:g}"
+        shares.append(margins[size] / (d / 2))
+    sizes = [margins[size] for size in LENGTHS]
+    out["LpMarginLeast"] = f"{min(sizes):.2g}"
+    out["LpMarginMost"] = f"{max(sizes):.2g}"
+    out["LpTypicalShare"] = f"{100 * max(shares):.0f}"
     return out
 
 
@@ -766,11 +812,11 @@ def forecast():
 
 def macros():
     """Every quoted number, by macro name. What the paper says, as data."""
-    return {**census(), **posterior(), **certificate(), **margin(), **newton(),
-            **limitations(), **smoothing(), **stall(), **tau_path(), **multistart(),
-            **flat(), **rounding(), **tolerance(), **strength(), **environment(),
-            **inside_stan(), **newton_census(), **frozen(), **converged(),
-            **forecast()}
+    return {**census(), **posterior(), **scale(), **certificate(), **margin(),
+            **newton(), **limitations(), **smoothing(), **stall(), **tau_path(),
+            **multistart(), **flat(), **rounding(), **tolerance(), **strength(),
+            **environment(), **inside_stan(), **newton_census(), **frozen(),
+            **converged(), **forecast()}
 
 
 def render(values):
@@ -795,6 +841,8 @@ TABLE_ROWS = (
     (r"margin in $\lp$", r"\LpMargin{t}"),
     (r"Prophet's density, as \% of the optimum's", r"\LpDensity{t}"),
     (r"margin per observation", r"\LpPerObs{t}"),
+    (r"parameters, $d$", r"\LpParams{t}"),
+    (r"\quad a typical posterior draw below the mode, at least $d/2$", r"\LpTypical{t}"),
     (r"Stan's L-BFGS with its five stopping tolerances at machine precision "
      r"(\cref{sec:evidence:lp})", None),
     (r"shortfall at Prophet's tolerances", r"\TolDefaultShort{t}"),

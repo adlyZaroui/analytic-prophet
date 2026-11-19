@@ -11,6 +11,9 @@ bring that back and no test would fail. Hence this file.
 It also pins the two things that have to agree with something else in the
 repo: the matrix floor against `requires-python`, and the set of
 `--require-*` options against the ones conftest.py actually registers.
+
+#264 added one that has to agree with something outside it: each Python in the
+matrix runs on a runner image that GitHub has a build of that Python for.
 """
 import os
 import re
@@ -122,6 +125,63 @@ def test_the_matrix_floor_is_the_version_pyproject_claims(pyproject_text):
     as_tuples = sorted(tuple(int(part) for part in v.split(".")) for v in versions)
     assert as_tuples[0] == tuple(int(part) for part in floor.split("."))
     assert len(as_tuples) == len(set(as_tuples))
+
+
+# #264: the Ubuntu images actions/python-versions has a build of each matrix
+# version for. setup-python can install a version nowhere else. Read from its
+# versions-manifest.json on 2026-11-12, when `ubuntu-latest` was 26.04; 3.9
+# reached its end of life before 26.04 and was never built for it.
+LATEST = "ubuntu-26.04"
+BUILT_FOR = {
+    "3.9": {"ubuntu-22.04", "ubuntu-24.04"},
+    **dict.fromkeys(["3.10", "3.11", "3.12", "3.13", "3.14"],
+                    {"ubuntu-22.04", "ubuntu-24.04", "ubuntu-26.04"}),
+}
+
+
+def _runners():
+    """{python version: the runner its job in the suite runs on}, resolved as
+    GitHub resolves them.
+
+    An `include` entry whose `python` is a matrix version adds its keys to that
+    version's job. One that matches no version would add a seventh job, which is
+    not what a runner pin means, so it is an error here.
+    """
+    job = _load("tests.yml")["jobs"]["suite"]
+    matrix = job["strategy"]["matrix"]
+    keys = {version: {} for version in matrix["python"]}
+    for extra in matrix.get("include", []):
+        assert extra.get("python") in keys, f"this include adds a job rather than pinning one: {extra}"
+        keys[extra["python"]].update(extra)
+    runs_on = job["runs-on"]
+    default = re.fullmatch(r"\$\{\{ matrix\.runner \|\| '([\w.-]+)' \}\}", runs_on)
+    if default:
+        return {version: extra.get("runner", default.group(1)) for version, extra in keys.items()}
+    assert "${{" not in runs_on, f"runs-on is an expression this test cannot read: {runs_on}"
+    return dict.fromkeys(keys, runs_on)
+
+
+def test_every_python_runs_on_an_image_it_was_built_for():
+    """#264: once `ubuntu-latest` was 26.04, the 3.9 job failed in setup-python
+    before a single test ran, on main and on every pull request, so the floor
+    `requires-python` claims went untested. It now runs on the last image 3.9
+    was built for.
+
+    A version added to the matrix needs a line in BUILT_FOR, from
+    https://github.com/actions/python-versions/blob/main/versions-manifest.json.
+    """
+    for version, runner in _runners().items():
+        assert version in BUILT_FOR, f"look up which images have a build of python {version}"
+        image = LATEST if runner == "ubuntu-latest" else runner
+        assert image in BUILT_FOR[version], f"python {version} runs on {runner}, which has no build of it"
+
+
+def test_only_a_job_that_needs_an_older_image_is_pinned():
+    """The other jobs follow `ubuntu-latest`, so the suite keeps running on the
+    newest image, and a pin is there only while a version needs it."""
+    for version, runner in _runners().items():
+        if LATEST in BUILT_FOR[version]:
+            assert runner == "ubuntu-latest", f"python {version} is pinned to {runner} without needing it"
 
 
 def test_the_evaluation_tiers_are_not_in_the_push_workflow():
